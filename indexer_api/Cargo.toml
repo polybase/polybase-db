@@ -1,0 +1,12 @@
+[package]
+name = "indexer_api"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+actix-web = "4"
+indexer = { path = "../indexer" }
+polylang = { git = "https://github.com/polybase/polylang", version = "0.1.0", branch = "eng-283-indexer" }
+tokio = { version = "1", features = ["full"] }
