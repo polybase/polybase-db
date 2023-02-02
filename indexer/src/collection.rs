@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap, error::Error};
 
 use jsonwebtoken::jwk::Jwk;
+use once_cell::sync::Lazy;
 use polylang::stableast;
 use prost::Message;
 
@@ -10,6 +11,61 @@ use crate::{
     store::{self, RecordValue, StoreRecordValue},
     where_query,
 };
+
+static COLLECTION_COLLECTION_RECORD: Lazy<String> = Lazy::new(|| {
+    let mut hm: store::RecordValue = HashMap::new();
+
+    hm.insert(
+        Cow::Borrowed("id"),
+        keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Borrowed("collections"))),
+    );
+
+    let code = r#"
+@public
+collection Collection {
+    id: string;
+    name?: string;
+    lastRecordUpdated?: string;
+    code?: string;
+    ast?: string;
+    publicKey?: PublicKey;
+
+    @index(publicKey);
+    @index([lastRecordUpdated, desc]);
+
+    constructor (id: string, code: string) {
+        this.id = id;
+        this.code = code;
+        this.ast = parse(code, id);
+        if (ctx.publicKey) this.publicKey = ctx.publicKey;
+    }
+
+    updateCode (code: string) {
+        if (this.publicKey != ctx.publicKey) {
+            throw error('invalid owner');
+        }
+        this.code = code;
+        this.ast = parse(code, this.id);
+    }
+}
+"#;
+
+    hm.insert(
+        Cow::Borrowed("code"),
+        keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Borrowed(code))),
+    );
+
+    let mut program = None;
+    let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
+    hm.insert(
+        Cow::Borrowed("ast"),
+        keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+            serde_json::to_string(&stable_ast).unwrap(),
+        ))),
+    );
+
+    serde_json::to_string(&hm).unwrap()
+});
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Authorization<'a> {
@@ -295,7 +351,9 @@ impl<'a> Collection<'a> {
         user: Option<&AuthUser>,
     ) -> Result<Option<StoreRecordValue>, Box<dyn Error + Send + Sync + 'static>> {
         if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(StoreRecordValue::new_from_static(b"{ }")?));
+            return Ok(Some(StoreRecordValue::new_from_static(
+                COLLECTION_COLLECTION_RECORD.as_bytes(),
+            )?));
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;

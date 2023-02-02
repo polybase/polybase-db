@@ -1003,6 +1003,7 @@ version = "0.1.0"
 dependencies = [
  "cid",
  "jsonwebtoken",
+ "once_cell",
  "ouroboros",
  "polylang",
  "prost",
@@ -1507,7 +1508,7 @@ dependencies = [
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#2cca84b7623df26f261144c362009a01a5b8bf8e"
+source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#a7e3ec2c33cd0d329bdc469a51a47dd459222abb"
 dependencies = [
  "base64 0.21.0",
  "console_error_panic_hook",
@@ -1521,7 +1522,7 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#2cca84b7623df26f261144c362009a01a5b8bf8e"
+source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#a7e3ec2c33cd0d329bdc469a51a47dd459222abb"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
