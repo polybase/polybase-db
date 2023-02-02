@@ -1509,6 +1509,7 @@ name = "polybase"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "indexer",
  "tokio",
 ]
 
