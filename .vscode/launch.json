@@ -7,9 +7,9 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug indexer_api",
+            "name": "Debug polybase",
             "cargo": {
-                "args": ["build", "--bin=indexer_api"],
+                "args": ["build", "--bin=polybase"],
                 "filter": {
                     "kind": "bin"
                 }

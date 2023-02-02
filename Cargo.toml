@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
+    "polybase",
     "indexer",
     "indexer_api",
 ]
