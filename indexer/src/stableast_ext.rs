@@ -19,7 +19,7 @@ impl<'ast> FieldWalker<'ast> for stableast::Collection<'ast> {
             _ => None,
         }) {
             path.push(prop.name.as_ref());
-            f(&path, &prop.type_);
+            f(path, &prop.type_);
             prop.type_.walk_fields(path, f);
             path.pop();
         }
@@ -32,15 +32,12 @@ impl<'ast> FieldWalker<'ast> for stableast::Type<'ast> {
         path: &mut Vec<&'ast str>,
         f: &mut impl FnMut(&[&'ast str], &stableast::Type<'ast>),
     ) {
-        match self {
-            stableast::Type::Object(o) => {
-                for field in &o.fields {
-                    path.push(field.name.as_ref());
-                    f(&path, &field.type_);
-                    path.pop();
-                }
+        if let stableast::Type::Object(o) = self {
+            for field in &o.fields {
+                path.push(field.name.as_ref());
+                f(path, &field.type_);
+                path.pop();
             }
-            _ => {}
         }
     }
 }

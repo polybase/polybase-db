@@ -32,7 +32,7 @@ pub struct StoreRecordValue<'db> {
     slice: RecordBacking<'db>,
     #[borrows(slice)]
     #[covariant]
-    record: RecordValue<'this>,
+    pub record: RecordValue<'this>,
 }
 
 impl StoreRecordValue<'_> {
@@ -40,17 +40,13 @@ impl StoreRecordValue<'_> {
         StoreRecordValueTryBuilder {
             slice: RecordBacking::Static(slice),
             record_builder: |slice| {
-                Ok(serde_json::from_slice(match slice {
-                    RecordBacking::Pinnable(p) => &p,
+                serde_json::from_slice(match slice {
+                    RecordBacking::Pinnable(p) => p.as_ref(),
                     RecordBacking::Static(s) => s,
-                })?)
+                })
             },
         }
         .try_build()
-    }
-
-    pub fn deref<'this>(&'this self) -> &'this RecordValue<'this> {
-        self.borrow_record()
     }
 
     pub fn get_slice(&self) -> &[u8] {
@@ -111,15 +107,15 @@ impl Store {
                 StoreRecordValueTryBuilder {
                     slice: RecordBacking::Pinnable(slice),
                     record_builder: |slice| {
-                        Ok::<_, serde_json::Error>(serde_json::from_slice(match slice {
-                            RecordBacking::Pinnable(p) => &p,
+                        serde_json::from_slice(match slice {
+                            RecordBacking::Pinnable(p) => p.as_ref(),
                             RecordBacking::Static(s) => s,
-                        })?)
+                        })
                     },
                 }
                 .try_build()?,
             )),
-            None => return Ok(None),
+            None => Ok(None),
         }
     }
 

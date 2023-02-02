@@ -1016,16 +1016,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "indexer_api"
-version = "0.1.0"
-dependencies = [
- "actix-web",
- "indexer",
- "polylang",
- "tokio",
-]
-
-[[package]]
 name = "indexmap"
 version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1510,6 +1500,7 @@ version = "0.1.0"
 dependencies = [
  "actix-web",
  "indexer",
+ "serde_json",
  "tokio",
 ]
 

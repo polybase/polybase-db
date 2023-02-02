@@ -1,4 +1,6 @@
-use std::{borrow::Cow, cmp::Ordering, collections::HashMap, fmt, io::Write, ops::Deref};
+use std::{
+    borrow::Cow, cmp::Ordering, collections::HashMap, error::Error, fmt, io::Write, ops::Deref,
+};
 
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
@@ -61,7 +63,7 @@ pub(crate) fn comparator(key1: &[u8], key2: &[u8]) -> Ordering {
     }
 
     for i in 0.. {
-        if k1.len() == 0 || k2.len() == 0 {
+        if k1.is_empty() || k2.is_empty() {
             match (key1_is_wildcard, key2_is_wildcard) {
                 (true, true) => return Ordering::Equal,
                 (true, false) => return Ordering::Greater,
@@ -79,7 +81,7 @@ pub(crate) fn comparator(key1: &[u8], key2: &[u8]) -> Ordering {
 
         match field_1.cmp(field_2) {
             Ordering::Equal => {}
-            x if directions.len() > 0 && directions[i] == u8::from(Direction::Descending) => {
+            x if !directions.is_empty() && directions[i] == u8::from(Direction::Descending) => {
                 return x.reverse()
             }
             x => return x,
@@ -107,7 +109,7 @@ fn eat_field(start: &[u8]) -> (&[u8], &[u8]) {
 
 fn generate_cid(data: &[u8], out: &mut Vec<u8>) -> Result<(), cid::Error> {
     let mut hasher = cid::multihash::Sha2_256::default();
-    hasher.update(&data);
+    hasher.update(data);
     let hash = cid::multihash::Code::Sha2_256.wrap(hasher.finalize())?;
     let cid = cid::Cid::new_v1(MULTICODEC_PROTOBUF, hash);
 
@@ -132,13 +134,13 @@ pub(crate) enum Key<'a> {
 impl<'a> fmt::Debug for Key<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Key::Wildcard(k) => write!(f, "Wildcard({:?})", k),
-            Key::Data { cid } => write!(f, "Data({:?})", cid),
+            Key::Wildcard(k) => write!(f, "Wildcard({k:?})"),
+            Key::Data { cid } => write!(f, "Data({cid:?})"),
             Key::Index {
                 cid,
                 directions,
                 values,
-            } => write!(f, "Index({:?}, {:?}, {:?})", cid, directions, values),
+            } => write!(f, "Index({cid:?}, {directions:?}, {values:?})"),
         }
     }
 }
@@ -261,7 +263,7 @@ impl<'a> Key<'a> {
                     },
                 })
             }
-            _ => Err(format!("Invalid key type: {}", key_type).into()),
+            _ => Err(format!("Invalid key type: {key_type}").into()),
         }
     }
 
@@ -269,8 +271,8 @@ impl<'a> Key<'a> {
         self,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
         match self {
-            Key::Wildcard(key) => return Err("Wildcard keys have no values".into()),
-            Key::Data { cid } => return Err("Data keys have no values".into()),
+            Key::Wildcard(_) => Err("Wildcard keys have no values".into()),
+            Key::Data { .. } => Err("Data keys have no values".into()),
             Key::Index {
                 cid,
                 directions,
@@ -309,13 +311,14 @@ impl TryFrom<u8> for Direction {
         match d {
             0x00 => Ok(Direction::Ascending),
             0x01 => Ok(Direction::Descending),
-            _ => Err(format!("invalid direction: {}", d)),
+            _ => Err(format!("invalid direction: {d}")),
         }
     }
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
+#[serde_as]
 pub enum IndexValue<'a> {
     #[serde(borrow)]
     String(Cow<'a, str>),
@@ -323,8 +326,7 @@ pub enum IndexValue<'a> {
     Boolean(bool),
     Bytes(Cow<'a, [u8]>),
     Null,
-    #[serde(borrow)]
-    PublicKey(Cow<'a, jsonwebtoken::jwk::Jwk>),
+    PublicKey(#[serde_as(as = "Box<BorrowCow>")] Box<Cow<'a, jsonwebtoken::jwk::Jwk>>),
 }
 
 trait SerializeStable {
@@ -413,15 +415,11 @@ pub enum RecordValue<'a> {
 }
 
 impl RecordValue<'_> {
-    pub(crate) fn walk<'a>(
+    pub(crate) fn walk<'a, E: Error>(
         &'a self,
         current_path: &mut Vec<&'a str>,
-        f: &mut (dyn FnMut(
-            &[&str],
-            &'a IndexValue,
-        ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>>
-                  + '_),
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+        f: &mut impl FnMut(&[&str], &'a IndexValue) -> Result<(), E>,
+    ) -> Result<(), E> {
         match self {
             RecordValue::IndexValue(v) => {
                 f(current_path, v)?;
@@ -454,7 +452,7 @@ where
 
     let mut found_values = vec![];
     for (k, v) in record {
-        v.walk(&mut vec![k], &mut |path, value| {
+        v.walk::<std::convert::Infallible>(&mut vec![k], &mut |path, value| {
             if let Some(found) = paths.iter().find(|p| p == &&path) {
                 found_values.push((found, value));
             }
@@ -474,7 +472,7 @@ where
                     let mut s = String::new();
                     for p in x.iter() {
                         s.push_str(p.as_ref());
-                        s.push_str(".");
+                        s.push('.');
                     }
                     s.pop();
                     s
@@ -543,7 +541,7 @@ mod test {
     #[test]
     fn test_record_index_value_string_serde_deserialize() {
         let serialized = r#""hello""#;
-        let deserialized = serde_json::from_str(&serialized).unwrap();
+        let deserialized = serde_json::from_str(serialized).unwrap();
 
         match deserialized {
             RecordValue::IndexValue(IndexValue::String(Cow::Owned(_))) => {
@@ -557,7 +555,7 @@ mod test {
     #[test]
     fn test_record_value_map_serde_deserialize() {
         let serialized = r#"{"hello": "world"}"#;
-        let deserialized: RecordValue = serde_json::from_str(&serialized).unwrap();
+        let deserialized: RecordValue = serde_json::from_str(serialized).unwrap();
 
         match deserialized {
             RecordValue::Map(m) => {
@@ -566,14 +564,14 @@ mod test {
 
                 match k {
                     Cow::Borrowed("hello") => {}
-                    Cow::Borrowed(s) => panic!("should be hello, got {}", s),
+                    Cow::Borrowed(s) => panic!("should be hello, got {s}"),
                     Cow::Owned(_) => panic!("should not be owned"),
                 }
 
                 match v {
                     RecordValue::IndexValue(IndexValue::String(Cow::Borrowed("world"))) => {}
                     RecordValue::IndexValue(IndexValue::String(Cow::Borrowed(s))) => {
-                        panic!("should be world, got {}", s)
+                        panic!("should be world, got {s}")
                     }
                     RecordValue::IndexValue(IndexValue::String(Cow::Owned(_))) => {
                         panic!("should not be owned")

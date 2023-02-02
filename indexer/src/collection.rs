@@ -1,14 +1,8 @@
-use std::{
-    borrow::{Borrow, Cow},
-    collections::HashMap,
-    error::Error,
-    ops::Deref,
-};
+use std::{borrow::Cow, collections::HashMap, error::Error};
 
 use jsonwebtoken::jwk::Jwk;
 use polylang::stableast;
 use prost::Message;
-use rocksdb::DBPinnableSlice;
 
 use crate::{
     index, keys, proto,
@@ -91,7 +85,7 @@ impl<'a> Collection<'a> {
             return Err("Collection not found".into());
         };
 
-        let record = collection.deref();
+        let record = collection.borrow_record();
         let id = match record.get("id") {
             Some(keys::RecordValue::IndexValue(keys::IndexValue::String(id))) => id,
             Some(_) => return Err("Collection record id is not a string".into()),
@@ -100,17 +94,14 @@ impl<'a> Collection<'a> {
 
         let ast: stableast::Root = match record.get("ast") {
             Some(keys::RecordValue::IndexValue(keys::IndexValue::String(ast))) => {
-                serde_json::from_str(&ast)?
+                serde_json::from_str(ast)?
             }
             Some(_) => return Err("Collection record AST is not a string".into()),
             None => return Err("Collection record missing AST".into()),
         };
 
-        let short_collection_name = id.split("/").last().unwrap();
-        let Some(collection_ast) = ast.0.iter().find(|ast| match ast {
-            stableast::RootNode::Collection(c) if c.name == short_collection_name => true,
-            _ => false,
-        }) else {
+        let short_collection_name = id.split('/').last().unwrap();
+        let Some(collection_ast) = ast.0.iter().find(|ast| matches!(ast, stableast::RootNode::Collection(c) if c.name == short_collection_name)) else {
             return Err("Collection record AST does not contain collection".into());
         };
 
@@ -147,8 +138,8 @@ impl<'a> Collection<'a> {
             .chain([index::CollectionIndex::new(vec![])].into_iter())
             .collect::<Vec<_>>();
 
-        collection_ast.walk_fields(&mut vec![], &mut |path, type_| match type_ {
-            stableast::Type::Primitive(_) => {
+        collection_ast.walk_fields(&mut vec![], &mut |path, type_| {
+            if let stableast::Type::Primitive(_) = type_ {
                 let new_index = |direction| {
                     index::CollectionIndex::new(vec![index::CollectionIndexField::new(
                         path.iter().map(|p| Cow::Owned(p.to_string())).collect(),
@@ -162,13 +153,9 @@ impl<'a> Collection<'a> {
                     indexes.push(new_index_asc);
                 }
             }
-            _ => {}
         });
 
-        let is_public = collection_ast.attributes.iter().any(|attr| match attr {
-            stableast::CollectionAttribute::Directive(d) if d.name == "public" => true,
-            _ => false,
-        });
+        let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
 
         Ok(Self {
             store,
@@ -186,12 +173,12 @@ impl<'a> Collection<'a> {
                             _ => None,
                         })
                         .filter_map(|prop| {
-                            match prop.directives.iter().find(|dir| dir.name == "read") {
-                                Some(_) => Some(where_query::FieldPath(vec![Cow::Owned(
-                                    prop.name.to_string(),
-                                )])),
-                                None => None,
-                            }
+                            prop.directives
+                                .iter()
+                                .find(|dir| dir.name == "read")
+                                .map(|_| {
+                                    where_query::FieldPath(vec![Cow::Owned(prop.name.to_string())])
+                                })
                         })
                         .collect::<Vec<_>>(),
                 })
@@ -213,14 +200,14 @@ impl<'a> Collection<'a> {
         let mut authorized = false;
         for (key, value) in record {
             value
-                .walk(&mut vec![&key], &mut |path, value| {
-                    if let None = read_fields.iter().find(|rf| rf.0 == path) {
+                .walk::<std::convert::Infallible>(&mut vec![key], &mut |path, value| {
+                    if !read_fields.iter().any(|rf| rf.0 == path) {
                         return Ok(());
                     }
 
                     match value {
                         keys::IndexValue::PublicKey(record_pk)
-                            if record_pk.as_ref() == &user.public_key =>
+                            if record_pk.as_ref().as_ref() == &user.public_key =>
                         {
                             authorized = true;
                         }
@@ -249,7 +236,7 @@ impl<'a> Collection<'a> {
                 (None, _) => Ok(true),
                 (Some(_), None) => Ok(false),
                 (Some(old_value), Some(auth_user)) => {
-                    Ok(self.user_can_read(&old_value, &Some(auth_user)))
+                    Ok(self.user_can_read(old_value, &Some(auth_user)))
                 }
             },
         }
@@ -273,10 +260,10 @@ impl<'a> Collection<'a> {
             None => return Err("id is required".into()),
         }
 
-        let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
+        let data_key = keys::Key::new_data(self.collection_id.clone(), id)?;
         let store_record_value = self.store.get(&data_key)?;
         if !self.user_can_read_lazy(
-            || Ok(store_record_value.as_ref().map(|sv| sv.deref())),
+            || Ok(store_record_value.as_ref().map(|sv| sv.borrow_record())),
             auth_user,
         )? {
             return Err("unauthorized".into());
@@ -311,12 +298,12 @@ impl<'a> Collection<'a> {
             return Ok(Some(StoreRecordValue::new_from_static(b"{ }")?));
         }
 
-        let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
+        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
         let Some(value) = self.store.get(&key)? else {
             return Ok(None);
         };
 
-        if !self.user_can_read(value.deref(), &user) {
+        if !self.user_can_read(value.borrow_record(), &user) {
             return Err("unauthorized".into());
         }
 
@@ -373,14 +360,14 @@ impl<'a> Collection<'a> {
                 |r| -> Option<Result<_, Box<dyn Error + Send + Sync + 'static>>> {
                     match r {
                         Ok(sv) => {
-                            if !self.user_can_read(sv.deref(), user) {
+                            if !self.user_can_read(sv.borrow_record(), user) {
                                 // Skip records that the user can't read
                                 return None;
                             }
 
                             Some(Ok(sv))
                         }
-                        Err(e) => return Some(Err(e)),
+                        Err(e) => Some(Err(e)),
                     }
                 },
             )
@@ -390,8 +377,6 @@ impl<'a> Collection<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::ops::{Deref, DerefMut};
-
     use jsonwebtoken::jwk;
 
     use crate::store::tests::TestStore;
@@ -416,7 +401,7 @@ mod tests {
     }
 
     fn create_collection<'a>(store: &'a TestStore, ast: stableast::Root) -> Vec<Collection<'a>> {
-        let collection_collection = Collection::load(&store, "Collection".to_string()).unwrap();
+        let collection_collection = Collection::load(store, "Collection".to_string()).unwrap();
 
         let ast_json = serde_json::to_string(&ast).unwrap();
 
@@ -427,7 +412,7 @@ mod tests {
         }) {
             let mut id = collection.namespace.value.to_string();
             if !id.is_empty() {
-                id.push_str("/");
+                id.push('/');
             }
 
             id.push_str(&collection.name);
@@ -457,7 +442,7 @@ mod tests {
                 )
                 .unwrap();
 
-            collections.push(Collection::load(&store, id).unwrap());
+            collections.push(Collection::load(store, id).unwrap());
         }
 
         collections
@@ -556,11 +541,11 @@ mod tests {
 
         let record = collection.get("1".into(), None).unwrap().unwrap();
         assert_eq!(
-            record.deref().get("id").unwrap(),
+            record.borrow_record().get("id").unwrap(),
             &keys::RecordValue::IndexValue(keys::IndexValue::String("1".into()))
         );
         assert_eq!(
-            record.deref().get("name").unwrap(),
+            record.borrow_record().get("name").unwrap(),
             &keys::RecordValue::IndexValue(keys::IndexValue::String("test".into()))
         );
     }
@@ -630,8 +615,8 @@ mod tests {
         let second = results.pop().unwrap();
         let first = results.pop().unwrap();
 
-        assert_eq!(first.deref(), &value_2);
-        assert_eq!(second.deref(), &value_1);
+        assert_eq!(first.borrow_record(), &value_2);
+        assert_eq!(second.borrow_record(), &value_1);
     }
 
     #[test]
@@ -665,8 +650,8 @@ mod tests {
                     ),
                     (
                         "owner".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(Cow::Borrowed(
-                            &auth_user.public_key,
+                        keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(Box::new(
+                            Cow::Borrowed(&auth_user.public_key),
                         ))),
                     ),
                 ]
@@ -728,8 +713,8 @@ mod tests {
                     ),
                     (
                         "owner".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(Cow::Borrowed(
-                            &auth_user.public_key,
+                        keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(Box::new(
+                            Cow::Borrowed(&auth_user.public_key),
                         ))),
                     ),
                     (

@@ -18,7 +18,7 @@ impl StoreExt for indexer::Store {
         &self,
         name: String,
     ) -> Result<indexer::Collection, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        indexer::Collection::load(&self, name)
+        indexer::Collection::load(self, name)
     }
 }
 
@@ -42,7 +42,7 @@ async fn get_record<'a>(
         let record = collection.get(id, None)?;
 
         Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(
-            record.map(|r| r.get_slice().to_vec()),
+            record.map(|r| serde_json::to_string(r.borrow_record()).unwrap()),
         )
     })
     .await?;

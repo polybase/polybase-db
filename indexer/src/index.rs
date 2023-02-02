@@ -184,16 +184,12 @@ fn index_requirements<'a>(
                 path: sort.path.clone(),
                 direction: opposite_direction,
             });
-        } else {
-            if requirements
-                .last()
-                .map(|r| {
-                    r.inequality && r.left.path == sort.path && r.left.direction != sort.direction
-                })
-                .unwrap_or(false)
-            {
-                return Err("Can only sort by inequality if it's the same direction".into());
-            }
+        } else if requirements
+            .last()
+            .map(|r| r.inequality && r.left.path == sort.path && r.left.direction != sort.direction)
+            .unwrap_or(false)
+        {
+            return Err("Can only sort by inequality if it's the same direction".into());
         }
 
         if let Some(last_req) = requirements.last_mut() {

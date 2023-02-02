@@ -79,7 +79,7 @@ impl WhereQuery<'_> {
 
         let mut ineq_found = false;
         for (path, direction) in paths.iter().zip(directions.iter()) {
-            if let Some((_, node)) = self.0.iter().find(|(field_path, _)| *path == &field_path.0) {
+            if let Some((_, node)) = self.0.iter().find(|(field_path, _)| *path == field_path.0) {
                 if ineq_found {
                     return Err("Inequality can only be the last condition".into());
                 }
