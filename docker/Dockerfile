@@ -72,8 +72,8 @@ STOPSIGNAL SIGTERM
 
 EXPOSE 8080
 
-# HEALTHCHECK --interval=5s --timeout=5s --retries=3 CMD \
-#     curl -f http://localhost:8080/v0/health || exit 1
+HEALTHCHECK --interval=5s --timeout=5s --retries=3 CMD \
+    curl -f http://localhost:8080/v0/health || exit 1
 
 ENTRYPOINT ["/usr/bin/polybase"]
 

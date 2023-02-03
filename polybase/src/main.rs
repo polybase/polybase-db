@@ -7,9 +7,14 @@ async fn root() -> impl Responder {
         .body(r#"{ "server": "Polybase", "version": "0.1.0" }"#)
 }
 
+#[get("/v0/health")]
+async fn health() -> impl Responder {
+    HttpResponse::Ok()
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    HttpServer::new(|| App::new().service(root))
+    HttpServer::new(|| App::new().service(root).service(health))
         .bind("0.0.0.0:8080")?
         .run()
         .await
