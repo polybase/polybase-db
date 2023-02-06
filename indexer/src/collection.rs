@@ -117,7 +117,7 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub fn load(
+    pub(crate) fn load(
         store: &'a store::Store,
         id: String,
     ) -> Result<Self, Box<dyn Error + Send + Sync + 'static>> {
@@ -242,6 +242,14 @@ impl<'a> Collection<'a> {
         })
     }
 
+    pub fn id(&self) -> &str {
+        &self.collection_id
+    }
+
+    pub fn name(&self) -> &str {
+        self.collection_id.split('/').last().unwrap()
+    }
+
     pub(crate) fn user_can_read(&self, record: &RecordValue, user: &Option<&AuthUser>) -> bool {
         let read_fields = match &self.authorization {
             Authorization::Public => return true,
@@ -256,22 +264,25 @@ impl<'a> Collection<'a> {
         let mut authorized = false;
         for (key, value) in record {
             value
-                .walk::<std::convert::Infallible>(&mut vec![key], &mut |path, value| {
-                    if !read_fields.iter().any(|rf| rf.0 == path) {
-                        return Ok(());
-                    }
-
-                    match value {
-                        keys::IndexValue::PublicKey(record_pk)
-                            if record_pk.as_ref().as_ref() == &user.public_key =>
-                        {
-                            authorized = true;
+                .walk::<std::convert::Infallible>(
+                    &mut vec![Cow::Borrowed(key)],
+                    &mut |path, value| {
+                        if !read_fields.iter().any(|rf| rf.0 == path) {
+                            return Ok(());
                         }
-                        _ => {}
-                    }
 
-                    Ok(())
-                })
+                        match value {
+                            keys::IndexValue::PublicKey(record_pk)
+                                if record_pk.as_ref().as_ref() == &user.public_key =>
+                            {
+                                authorized = true;
+                            }
+                            _ => {}
+                        }
+
+                        Ok(())
+                    },
+                )
                 .unwrap(); // We never return an error
         }
 
@@ -298,7 +309,7 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub(crate) fn set(
+    pub fn set(
         &self,
         id: String,
         value: &HashMap<Cow<str>, keys::RecordValue>,
@@ -443,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_collection_collection_load() {
-        let store = TestStore::new();
+        let store = TestStore::default();
         let collection = Collection::load(&store, "Collection".to_string()).unwrap();
 
         assert_eq!(collection.collection_id, "Collection");
@@ -508,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_create_collection() {
-        let store = TestStore::new();
+        let store = TestStore::default();
 
         let collection_account = create_collection(
             &store,
@@ -588,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_collection_set_get() {
-        let store = TestStore::new();
+        let store = TestStore::default();
         let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
 
         let value_json = r#"{"id": "1", "name": "test" }"#;
@@ -610,7 +621,7 @@ mod tests {
 
     #[test]
     fn test_collection_set_list() {
-        let store = TestStore::new();
+        let store = TestStore::default();
         let collection = Collection::new(
             &store,
             "test".to_string(),
@@ -679,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_collection_auth() {
-        let store = TestStore::new();
+        let store = TestStore::default();
         let collection = Collection::new(
             &store,
             "test".to_string(),

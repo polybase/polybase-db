@@ -412,13 +412,14 @@ pub enum RecordValue<'a> {
     #[serde(borrow)]
     IndexValue(IndexValue<'a>),
     Map(#[serde_as(as = "HashMap<BorrowCow, _>")] HashMap<Cow<'a, str>, RecordValue<'a>>),
+    Array(Vec<RecordValue<'a>>),
 }
 
 impl RecordValue<'_> {
     pub(crate) fn walk<'a, E: Error>(
         &'a self,
-        current_path: &mut Vec<&'a str>,
-        f: &mut impl FnMut(&[&str], &'a IndexValue) -> Result<(), E>,
+        current_path: &mut Vec<Cow<'a, str>>,
+        f: &mut impl FnMut(&[Cow<str>], &'a IndexValue) -> Result<(), E>,
     ) -> Result<(), E> {
         match self {
             RecordValue::IndexValue(v) => {
@@ -426,7 +427,14 @@ impl RecordValue<'_> {
             }
             RecordValue::Map(m) => {
                 for (k, v) in m.iter() {
-                    current_path.push(k);
+                    current_path.push(Cow::Borrowed(k));
+                    v.walk(current_path, f)?;
+                    current_path.pop();
+                }
+            }
+            RecordValue::Array(a) => {
+                for (i, v) in a.iter().enumerate() {
+                    current_path.push(Cow::Owned(i.to_string()));
                     v.walk(current_path, f)?;
                     current_path.pop();
                 }
@@ -452,8 +460,13 @@ where
 
     let mut found_values = vec![];
     for (k, v) in record {
-        v.walk::<std::convert::Infallible>(&mut vec![k], &mut |path, value| {
-            if let Some(found) = paths.iter().find(|p| p == &&path) {
+        v.walk::<std::convert::Infallible>(&mut vec![Cow::Borrowed(k)], &mut |path, value| {
+            if let Some(found) = paths.iter().find(|p| {
+                p.len() == path.len()
+                    && p.iter()
+                        .zip(path.iter())
+                        .all(|(p, v)| p.as_ref() == v.as_ref())
+            }) {
                 found_values.push((found, value));
             }
 

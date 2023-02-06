@@ -16,7 +16,7 @@ use crate::{
     proto,
 };
 
-pub struct Store {
+pub(crate) struct Store {
     db: rocksdb::DB,
 }
 
@@ -25,6 +25,7 @@ pub type RecordValue<'a> = HashMap<Cow<'a, str>, keys::RecordValue<'a>>;
 enum RecordBacking<'a> {
     Pinnable(DBPinnableSlice<'a>),
     Static(&'static [u8]),
+    Vec(Vec<u8>),
 }
 
 #[ouroboros::self_referencing]
@@ -43,6 +44,21 @@ impl StoreRecordValue<'_> {
                 serde_json::from_slice(match slice {
                     RecordBacking::Pinnable(p) => p.as_ref(),
                     RecordBacking::Static(s) => s,
+                    RecordBacking::Vec(v) => v.as_slice(),
+                })
+            },
+        }
+        .try_build()
+    }
+
+    pub fn new_from_vec(slice: Vec<u8>) -> Result<Self, serde_json::Error> {
+        StoreRecordValueTryBuilder {
+            slice: RecordBacking::Vec(slice),
+            record_builder: |slice| {
+                serde_json::from_slice(match slice {
+                    RecordBacking::Pinnable(p) => p.as_ref(),
+                    RecordBacking::Static(s) => s,
+                    RecordBacking::Vec(v) => v.as_slice(),
                 })
             },
         }
@@ -53,6 +69,7 @@ impl StoreRecordValue<'_> {
         match self.borrow_slice() {
             RecordBacking::Pinnable(p) => p.deref(),
             RecordBacking::Static(s) => s,
+            RecordBacking::Vec(v) => v.deref(),
         }
     }
 }
@@ -110,6 +127,7 @@ impl Store {
                         serde_json::from_slice(match slice {
                             RecordBacking::Pinnable(p) => p.as_ref(),
                             RecordBacking::Static(s) => s,
+                            RecordBacking::Vec(v) => v.as_slice(),
                         })
                     },
                 }
@@ -165,8 +183,8 @@ pub(crate) mod tests {
 
     pub(crate) struct TestStore(Option<Store>);
 
-    impl TestStore {
-        pub(crate) fn new() -> Self {
+    impl Default for TestStore {
+        fn default() -> Self {
             let temp_dir = std::env::temp_dir();
             let path = temp_dir.join(format!(
                 "test-indexer-rocksdb-store-{}",
@@ -201,7 +219,7 @@ pub(crate) mod tests {
 
     #[test]
     fn test_store_index() {
-        let store = TestStore::new();
+        let store = TestStore::default();
 
         let index = Key::new_index(
             "ns".to_string(),

@@ -823,6 +823,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fslock"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57eafdd0c16f57161105ae1b98a1238f97645f2f588438b2949c99a2af9616bf"
+dependencies = [
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -850,6 +860,18 @@ dependencies = [
  "futures-task",
  "pin-project-lite",
  "pin-utils",
+]
+
+[[package]]
+name = "gateway"
+version = "0.1.0"
+dependencies = [
+ "indexer",
+ "polylang",
+ "rand",
+ "serde",
+ "serde_json",
+ "v8",
 ]
 
 [[package]]
@@ -1500,7 +1522,9 @@ name = "polybase"
 version = "0.1.0"
 dependencies = [
  "actix-web",
+ "gateway",
  "indexer",
+ "serde",
  "serde_json",
  "tokio",
 ]
@@ -1508,7 +1532,7 @@ dependencies = [
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#a7e3ec2c33cd0d329bdc469a51a47dd459222abb"
+source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#e44a6f90724054aa1e82bcf8f8a198b5b709105e"
 dependencies = [
  "base64 0.21.0",
  "console_error_panic_hook",
@@ -1522,7 +1546,7 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#a7e3ec2c33cd0d329bdc469a51a47dd459222abb"
+source = "git+https://github.com/polybase/polylang?branch=eng-283-indexer#e44a6f90724054aa1e82bcf8f8a198b5b709105e"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
@@ -2255,6 +2279,18 @@ dependencies = [
  "form_urlencoded",
  "idna",
  "percent-encoding",
+]
+
+[[package]]
+name = "v8"
+version = "0.62.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a317c7a8a25e2cf54acd715038c50f52c0e26aca888b85b62d472f59e221282"
+dependencies = [
+ "bitflags",
+ "fslock",
+ "lazy_static",
+ "which",
 ]
 
 [[package]]
