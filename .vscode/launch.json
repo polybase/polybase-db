@@ -12,6 +12,9 @@
                 "args": ["build", "--bin=polybase"],
                 "filter": {
                     "kind": "bin"
+                },
+                "env": {
+                    "DEV_SKIP_SIGNATURE_VERIFICATION": "1"
                 }
             },
             "terminal": "console",

@@ -241,7 +241,6 @@ pub(crate) mod tests {
             let key = Key::deserialize(&key_box[..]).unwrap();
             let value = proto::IndexRecord::decode(&value_box[..]).unwrap();
 
-            dbg!(&key);
             // This doesn't work, not sure why.
             // assert_eq!(&key, &index);
             assert_eq!(value, proto::IndexRecord::default());

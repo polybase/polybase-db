@@ -1,12 +1,12 @@
 use std::{borrow::Cow, collections::HashMap, error::Error};
 
-use jsonwebtoken::jwk::Jwk;
 use once_cell::sync::Lazy;
 use polylang::stableast;
 use prost::Message;
 
 use crate::{
     index, keys, proto,
+    publickey::PublicKey,
     stableast_ext::FieldWalker,
     store::{self, RecordValue, StoreRecordValue},
     where_query,
@@ -86,19 +86,23 @@ pub struct Collection<'a> {
     authorization: Authorization<'a>,
 }
 
-pub(crate) struct ListQuery<'a> {
-    pub(crate) limit: Option<usize>,
-    pub(crate) where_query: where_query::WhereQuery<'a>,
-    pub(crate) order_by: &'a [index::CollectionIndexField<'a>],
+pub struct ListQuery<'a> {
+    pub limit: Option<usize>,
+    pub where_query: &'a where_query::WhereQuery<'a>,
+    pub order_by: &'a [index::CollectionIndexField<'a>],
 }
 
 pub struct AuthUser {
-    public_key: Jwk,
+    public_key: PublicKey,
 }
 
 impl AuthUser {
-    pub(crate) fn new(public_key: Jwk) -> Self {
+    pub fn new(public_key: PublicKey) -> Self {
         Self { public_key }
+    }
+
+    pub fn public_key(&self) -> &PublicKey {
+        &self.public_key
     }
 }
 
@@ -250,6 +254,14 @@ impl<'a> Collection<'a> {
         self.collection_id.split('/').last().unwrap()
     }
 
+    pub fn namespace(&self) -> &str {
+        let Some(slash_index) = self.collection_id.rfind('/') else {
+            return "";
+        };
+
+        &self.collection_id[0..slash_index]
+    }
+
     pub(crate) fn user_can_read(&self, record: &RecordValue, user: &Option<&AuthUser>) -> bool {
         let read_fields = match &self.authorization {
             Authorization::Public => return true,
@@ -379,7 +391,7 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
-    pub(crate) fn list(
+    pub fn list(
         &'a self,
         query: &ListQuery,
         user: &'a Option<&'a AuthUser>,
@@ -446,9 +458,7 @@ impl<'a> Collection<'a> {
 
 #[cfg(test)]
 mod tests {
-    use jsonwebtoken::jwk;
-
-    use crate::store::tests::TestStore;
+    use crate::{publickey, store::tests::TestStore};
 
     use super::*;
 
@@ -654,7 +664,7 @@ mod tests {
             .list(
                 &ListQuery {
                     limit: None,
-                    where_query: where_query::WhereQuery(
+                    where_query: &where_query::WhereQuery(
                         [(
                             where_query::FieldPath(vec!["name".into()]),
                             where_query::WhereNode::Equality(where_query::WhereValue::String(
@@ -701,12 +711,7 @@ mod tests {
         );
 
         let auth_user = AuthUser {
-            public_key: Jwk {
-                common: jwk::CommonParameters::default(),
-                algorithm: jwk::AlgorithmParameters::EllipticCurve(
-                    jwk::EllipticCurveKeyParameters::default(),
-                ),
-            },
+            public_key: publickey::PublicKey::random(),
         };
 
         collection
@@ -729,6 +734,7 @@ mod tests {
             )
             .unwrap();
 
+        // Update without a key fails
         assert_eq!(
             collection
                 .set(
@@ -745,6 +751,7 @@ mod tests {
             "unauthorized"
         );
 
+        // Update with a different key fails
         assert_eq!(
             collection
                 .set(
@@ -755,15 +762,7 @@ mod tests {
                     )]
                     .into(),
                     Some(&AuthUser {
-                        public_key: Jwk {
-                            common: jwk::CommonParameters::default(),
-                            algorithm: jwk::AlgorithmParameters::EllipticCurve(
-                                jwk::EllipticCurveKeyParameters {
-                                    x: "1".to_string(),
-                                    ..Default::default()
-                                }
-                            ),
-                        },
+                        public_key: publickey::PublicKey::random(),
                     }),
                 )
                 .unwrap_err()

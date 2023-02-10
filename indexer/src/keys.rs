@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::value::Index;
 use serde_with::{serde_as, BorrowCow};
 
-use crate::proto;
+use crate::{proto, publickey};
 
 const MULTICODEC_PROTOBUF: u64 = 0x50;
 
@@ -326,21 +326,7 @@ pub enum IndexValue<'a> {
     Boolean(bool),
     Bytes(Cow<'a, [u8]>),
     Null,
-    PublicKey(#[serde_as(as = "Box<BorrowCow>")] Box<Cow<'a, jsonwebtoken::jwk::Jwk>>),
-}
-
-trait SerializeStable {
-    fn serialize_stable(
-        &self,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync + 'static>>;
-}
-
-impl SerializeStable for jsonwebtoken::jwk::Jwk {
-    fn serialize_stable(
-        &self,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        todo!()
-    }
+    PublicKey(#[serde_as(as = "Box<BorrowCow>")] Box<Cow<'a, publickey::PublicKey>>),
 }
 
 impl<'a> IndexValue<'a> {
@@ -372,7 +358,7 @@ impl<'a> IndexValue<'a> {
             },
             IndexValue::Bytes(b) => Cow::Borrowed(b),
             IndexValue::Null => Cow::Borrowed(&[0x00]),
-            IndexValue::PublicKey(jwk) => Cow::Owned(jwk.serialize_stable()?),
+            IndexValue::PublicKey(jwk) => Cow::Owned(jwk.to_indexable()),
         };
 
         let len = 1 + u16::try_from(value.len())?;
@@ -415,8 +401,8 @@ pub enum RecordValue<'a> {
     Array(Vec<RecordValue<'a>>),
 }
 
-impl RecordValue<'_> {
-    pub(crate) fn walk<'a, E: Error>(
+impl<'rv> RecordValue<'rv> {
+    pub fn walk<'a, E: Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,
         f: &mut impl FnMut(&[Cow<str>], &'a IndexValue) -> Result<(), E>,
@@ -436,6 +422,37 @@ impl RecordValue<'_> {
                 for (i, v) in a.iter().enumerate() {
                     current_path.push(Cow::Owned(i.to_string()));
                     v.walk(current_path, f)?;
+                    current_path.pop();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn walk_maps_mut<E>(
+        &mut self,
+        current_path: &mut Vec<Cow<'rv, str>>,
+        f: &mut impl FnMut(
+            &[Cow<'rv, str>],
+            &mut HashMap<Cow<'rv, str>, RecordValue<'rv>>,
+        ) -> Result<(), E>,
+    ) -> Result<(), E> {
+        match self {
+            RecordValue::IndexValue(_) => {}
+            RecordValue::Map(m) => {
+                f(current_path, m)?;
+                let keys = m.keys().cloned().collect::<Vec<_>>();
+                for (k, v) in keys.into_iter().zip(m.values_mut()) {
+                    current_path.push(k);
+                    v.walk_maps_mut(current_path, f)?;
+                    current_path.pop();
+                }
+            }
+            RecordValue::Array(a) => {
+                for (i, v) in a.iter_mut().enumerate() {
+                    current_path.push(Cow::Owned(i.to_string()));
+                    v.walk_maps_mut(current_path, f)?;
                     current_path.pop();
                 }
             }

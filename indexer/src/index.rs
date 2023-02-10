@@ -7,7 +7,7 @@ use crate::{
 };
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct CollectionIndexField<'a> {
+pub struct CollectionIndexField<'a> {
     pub(crate) path: Vec<Cow<'a, str>>,
     pub(crate) direction: keys::Direction,
 }

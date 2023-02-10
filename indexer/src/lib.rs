@@ -5,14 +5,20 @@ mod collection;
 mod index;
 mod keys;
 mod proto;
+mod publickey;
 mod stableast_ext;
 mod store;
 mod where_query;
 
+pub use collection::AuthUser;
 pub use collection::Collection;
+pub use collection::ListQuery;
 pub use keys::IndexValue;
 pub use keys::RecordValue;
+pub use publickey::PublicKey;
+pub use stableast_ext::FieldWalker;
 pub use store::StoreRecordValue;
+pub use where_query::WhereQuery;
 
 pub struct Indexer {
     store: store::Store,

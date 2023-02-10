@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::keys::{self, Direction};
 
-#[derive(Serialize, Deserialize, Debug, Eq, PartialEq, Hash, Clone)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub(crate) struct FieldPath<'a>(pub(crate) Vec<Cow<'a, str>>);
 
 impl PartialEq<&[&str]> for FieldPath<'_> {
@@ -13,8 +13,38 @@ impl PartialEq<&[&str]> for FieldPath<'_> {
     }
 }
 
+impl<'de, 'a> Deserialize<'de> for FieldPath<'a> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = Cow::<'de, str>::deserialize(deserializer)?;
+        let mut path = Vec::new();
+        for part in s.split('.') {
+            path.push(Cow::Owned(part.to_string()));
+        }
+        Ok(FieldPath(path))
+    }
+}
+
+impl Serialize for FieldPath<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut s = String::new();
+        for (i, part) in self.0.iter().enumerate() {
+            if i > 0 {
+                s.push('.');
+            }
+            s.push_str(part);
+        }
+        serializer.serialize_str(&s)
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
-pub(crate) struct WhereQuery<'a>(pub(crate) HashMap<FieldPath<'a>, WhereNode<'a>>);
+pub struct WhereQuery<'a>(pub(crate) HashMap<FieldPath<'a>, WhereNode<'a>>);
 
 #[derive(Serialize, Deserialize)]
 #[serde(untagged)]

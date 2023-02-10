@@ -1,6 +1,6 @@
 use polylang::stableast;
 
-pub(crate) trait FieldWalker<'ast> {
+pub trait FieldWalker<'ast> {
     fn walk_fields(
         &'ast self,
         path: &mut Vec<&'ast str>,
