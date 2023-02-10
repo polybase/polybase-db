@@ -81,7 +81,8 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
     }
 
     pub fn insert(&mut self, key: T, value: H::Digest) {
-        if self.has(key) {
+        if let Some(id) = self.find(key) {
+            self.nodes[id].value = value;
             return
         }
 
