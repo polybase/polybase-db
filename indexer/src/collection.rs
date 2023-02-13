@@ -1,19 +1,22 @@
 use std::{borrow::Cow, collections::HashMap, error::Error};
 
 use once_cell::sync::Lazy;
-use polylang::stableast;
+use polylang::stableast::{self, Record};
 use prost::Message;
 
 use crate::{
-    index, keys, proto,
+    index,
+    keys::{self, PathFinder},
+    proto,
     publickey::PublicKey,
     stableast_ext::FieldWalker,
     store::{self, RecordValue, StoreRecordValue},
-    where_query,
+    where_query::{self, FieldPath},
+    IndexValue, RecordReference,
 };
 
 static COLLECTION_COLLECTION_RECORD: Lazy<String> = Lazy::new(|| {
-    let mut hm: store::RecordValue = HashMap::new();
+    let mut hm = HashMap::new();
 
     hm.insert(
         Cow::Borrowed("id"),
@@ -76,6 +79,7 @@ pub(crate) enum Authorization<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PrivateAuthorization<'a> {
     pub(crate) read_fields: Vec<where_query::FieldPath<'a>>,
+    pub(crate) delegate_fields: Vec<where_query::FieldPath<'a>>,
 }
 
 #[derive(Clone)]
@@ -92,6 +96,7 @@ pub struct ListQuery<'a> {
     pub order_by: &'a [index::CollectionIndexField<'a>],
 }
 
+#[derive(Debug)]
 pub struct AuthUser {
     public_key: PublicKey,
 }
@@ -198,8 +203,8 @@ impl<'a> Collection<'a> {
             .chain([index::CollectionIndex::new(vec![])].into_iter())
             .collect::<Vec<_>>();
 
-        collection_ast.walk_fields(&mut vec![], &mut |path, type_| {
-            if let stableast::Type::Primitive(_) = type_ {
+        collection_ast.walk_fields(&mut vec![], &mut |path, field| {
+            if let stableast::Type::Primitive(_) = field.type_() {
                 let new_index = |direction| {
                     index::CollectionIndex::new(vec![index::CollectionIndexField::new(
                         path.iter().map(|p| Cow::Owned(p.to_string())).collect(),
@@ -241,6 +246,21 @@ impl<'a> Collection<'a> {
                                 })
                         })
                         .collect::<Vec<_>>(),
+                    delegate_fields: {
+                        let mut delegate_fields = vec![];
+
+                        collection_ast.walk_fields(&mut vec![], &mut |path, field| {
+                            if let crate::stableast_ext::Field::Property(p) = field {
+                                if p.directives.iter().any(|dir| dir.name == "delegate") {
+                                    delegate_fields.push(where_query::FieldPath(
+                                        path.iter().map(|p| Cow::Owned(p.to_string())).collect(),
+                                    ));
+                                }
+                            };
+                        });
+
+                        delegate_fields
+                    },
                 })
             },
         })
@@ -262,21 +282,24 @@ impl<'a> Collection<'a> {
         &self.collection_id[0..slash_index]
     }
 
-    pub(crate) fn user_can_read(&self, record: &RecordValue, user: &Option<&AuthUser>) -> bool {
+    pub(crate) fn user_can_read(
+        &self,
+        record: &RecordValue,
+        user: &Option<&AuthUser>,
+    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let read_fields = match &self.authorization {
-            Authorization::Public => return true,
+            Authorization::Public => return Ok(true),
             Authorization::Private(pa) => &pa.read_fields,
         };
 
-        let user = match user {
-            Some(user) => user,
-            None => return false,
+        let Some(user) = user else {
+            return Ok(false);
         };
 
         let mut authorized = false;
         for (key, value) in record {
             value
-                .walk::<std::convert::Infallible>(
+                .walk_all::<std::convert::Infallible>(
                     &mut vec![Cow::Borrowed(key)],
                     &mut |path, value| {
                         if !read_fields.iter().any(|rf| rf.0 == path) {
@@ -284,10 +307,30 @@ impl<'a> Collection<'a> {
                         }
 
                         match value {
-                            keys::IndexValue::PublicKey(record_pk)
-                                if record_pk.as_ref().as_ref() == &user.public_key =>
-                            {
+                            keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(
+                                record_pk,
+                            )) if record_pk.as_ref().as_ref() == &user.public_key => {
                                 authorized = true;
+                            }
+                            keys::RecordValue::Map(_) => {
+                                let Ok(record_reference) = keys::RecordReference::try_from(value) else {
+                                    return Ok(());
+                                };
+
+                                let Ok(collection) = record_reference.collection_id.map_or(Ok(Cow::Borrowed(self)), |collection_id| {
+                                    Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Cow::Owned(Collection::load(self.store, collection_id)?))
+                                }) else {
+                                    // TODO: log the error
+                                    return Ok(());
+                                };
+
+                                let Ok(Some(record)) = collection.get(record_reference.id, Some(user)) else {
+                                    return Ok(());
+                                };
+
+                                if collection.has_delegate_access(record.borrow_record(), &Some(user)).unwrap_or(false) {
+                                    authorized = true;
+                                }
                             }
                             _ => {}
                         }
@@ -298,7 +341,12 @@ impl<'a> Collection<'a> {
                 .unwrap(); // We never return an error
         }
 
-        authorized
+        if !authorized {
+            authorized =
+                self.has_delegate_access(&keys::RecordValue::Map(record.clone()), &Some(user))?;
+        }
+
+        Ok(authorized)
     }
 
     fn user_can_read_lazy<'b>(
@@ -315,10 +363,64 @@ impl<'a> Collection<'a> {
                 (None, _) => Ok(true),
                 (Some(_), None) => Ok(false),
                 (Some(old_value), Some(auth_user)) => {
-                    Ok(self.user_can_read(old_value, &Some(auth_user)))
+                    Ok(self.user_can_read(old_value, &Some(auth_user))?)
                 }
             },
         }
+    }
+
+    pub fn has_delegate_access<'b>(
+        &self,
+        record: &impl PathFinder<'b>,
+        user: &Option<&AuthUser>,
+    ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
+        let delegate_fields = match &self.authorization {
+            Authorization::Public => return Ok(true),
+            Authorization::Private(pa) => &pa.delegate_fields,
+        };
+        dbg!(&delegate_fields);
+
+        let Some(user) = user else { return Ok(false) };
+
+        for delegate_value in delegate_fields.iter().map(|df| record.find_path(&df.0)) {
+            let Some(delegate_value) = delegate_value else {
+                continue;
+            };
+
+            match delegate_value {
+                keys::RecordValue::IndexValue(IndexValue::PublicKey(pk))
+                    if pk.as_ref().as_ref() == &user.public_key =>
+                {
+                    return Ok(true);
+                }
+                keys::RecordValue::Map(_) => {
+                    let Ok(record_ref) = RecordReference::try_from(delegate_value) else {
+                        continue;
+                    };
+
+                    let collection = match record_ref.collection_id {
+                        Some(collection_id) => {
+                            Cow::Owned(Collection::load(self.store, collection_id)?)
+                        }
+                        None => Cow::Borrowed(self),
+                    };
+
+                    let Some(record) = collection.get(record_ref.id, Some(user))? else {
+                        continue;
+                    };
+
+                    if collection
+                        .has_delegate_access(record.borrow_record(), &Some(user))
+                        .unwrap_or(false)
+                    {
+                        return Ok(true);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(false)
     }
 
     pub fn set(
@@ -351,6 +453,7 @@ impl<'a> Collection<'a> {
         self.store
             .set(&data_key, &store::Value::DataValue(Cow::Borrowed(value)))?;
 
+        // TODO: ignore index failures
         let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: data_key.serialize()?,
         });
@@ -384,7 +487,7 @@ impl<'a> Collection<'a> {
             return Ok(None);
         };
 
-        if !self.user_can_read(value.borrow_record(), &user) {
+        if !self.user_can_read(value.borrow_record(), &user)? {
             return Err("unauthorized".into());
         }
 
@@ -441,7 +544,11 @@ impl<'a> Collection<'a> {
                 |r| -> Option<Result<_, Box<dyn Error + Send + Sync + 'static>>> {
                     match r {
                         Ok(sv) => {
-                            if !self.user_can_read(sv.borrow_record(), user) {
+                            if !self
+                                .user_can_read(sv.borrow_record(), user)
+                                // TODO: should we propagate this error?
+                                .unwrap_or(false)
+                            {
                                 // Skip records that the user can't read
                                 return None;
                             }
@@ -580,7 +687,8 @@ mod tests {
         assert_eq!(
             collection_account.authorization,
             Authorization::Private(PrivateAuthorization {
-                read_fields: vec![]
+                read_fields: vec![],
+                delegate_fields: vec![],
             })
         );
         assert_eq!(collection_account.indexes.len(), 3);
@@ -707,6 +815,7 @@ mod tests {
             vec![],
             Authorization::Private(PrivateAuthorization {
                 read_fields: vec![where_query::FieldPath(vec!["owner".into()])],
+                delegate_fields: vec![],
             }),
         );
 

@@ -5,7 +5,8 @@ use std::{
     collections::HashMap,
 };
 
-use indexer::{FieldWalker, IndexValue, Indexer, RecordValue};
+use indexer::PathFinder;
+use indexer::{FieldWalker, IndexValue, Indexer, RecordReference, RecordValue};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionOutput {
@@ -278,10 +279,12 @@ fn dereference_args<'a>(
                 let foreign_collection = indexer.collection(foreign_collection_id.clone())?;
                 let record = foreign_collection
                     .get(record_id.clone(), auth)?
-                    .ok_or(format!(
-                        "Record {} not found in collection {}",
-                        record_id, &foreign_collection_id
-                    ))?;
+                    .ok_or_else(|| {
+                        format!(
+                            "Record {} not found in collection {}",
+                            record_id, &foreign_collection_id
+                        )
+                    })?;
                 let value = indexer::RecordValue::deserialize(serde_json::from_slice::<
                     serde_json::Value,
                 >(
@@ -302,9 +305,11 @@ fn find_record_fields<'a>(
 ) -> Vec<(Vec<&'a str>, polylang::stableast::Type<'a>)> {
     let mut fields = Vec::new();
 
-    collection.walk_fields(&mut vec![], &mut |path, ty| match ty {
-        polylang::stableast::Type::Record(_) => fields.push((path.to_vec(), ty.clone())),
-        polylang::stableast::Type::ForeignRecord(_) => fields.push((path.to_vec(), ty.clone())),
+    collection.walk_fields(&mut vec![], &mut |path, ty| match ty.type_() {
+        ty @ polylang::stableast::Type::Record(_) => fields.push((path.to_vec(), ty.clone())),
+        ty @ polylang::stableast::Type::ForeignRecord(_) => {
+            fields.push((path.to_vec(), ty.clone()))
+        }
         _ => {}
     });
 
@@ -427,8 +432,76 @@ fn has_permission_to_call(
     record: &HashMap<Cow<str>, indexer::RecordValue>,
     auth: Option<&indexer::AuthUser>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync + 'static>> {
-    // TODO: implement this
-    Ok(true)
+    let is_col_public = collection_ast.attributes.iter().any(|attr| matches!(attr, polylang::stableast::CollectionAttribute::Directive(d) if d.name == "public"));
+    if is_col_public {
+        return Ok(true);
+    }
+
+    if method_ast.name == "constructor" {
+        return Ok(true);
+    }
+
+    let Some(callers) = method_ast.attributes.iter().find_map(|attr| match attr {
+        polylang::stableast::MethodAttribute::Directive(d) if d.name == "call" => Some(
+            d.arguments
+                .iter()
+                .filter_map(|a| match a {
+                    polylang::stableast::DirectiveArgument::FieldReference(fr) => {
+                        Some(fr.path.clone())
+                    }
+                    polylang::stableast::DirectiveArgument::Unknown => None,
+                })
+                .collect::<Vec<_>>(),
+        ),
+        _ => None,
+    }) else {
+        return Ok(false);
+    };
+
+    let Some(auth) = auth else {
+        return Ok(false);
+    };
+
+    for caller in callers {
+        let Some(value) = record.find_path(&caller) else {
+            continue;
+        };
+
+        match value {
+            indexer::RecordValue::IndexValue(indexer::IndexValue::PublicKey(pk))
+                if pk.as_ref().as_ref() == auth.public_key() =>
+            {
+                return Ok(true);
+            }
+            indexer::RecordValue::Map(_) => {
+                let Ok(record_ref) = RecordReference::try_from(value) else {
+                    continue;
+                };
+
+                let collection = match record_ref.collection_id {
+                    Some(collection_id) => Cow::Owned(indexer.collection(collection_id)?),
+                    None => Cow::Borrowed(collection),
+                };
+
+                let record = collection
+                    .get(record_ref.id.clone(), Some(auth))?
+                    .ok_or_else(|| {
+                        format!(
+                            "Record {} not found in collection {}",
+                            record_ref.id,
+                            collection.id()
+                        )
+                    })?;
+
+                if collection.has_delegate_access(record.borrow_record(), &Some(auth))? {
+                    return Ok(true);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(false)
 }
 
 impl Gateway {
@@ -502,7 +575,7 @@ impl Gateway {
             &instance_record,
             auth,
         )? {
-            todo!();
+            return Err("You do not have permission to call this function".into());
         }
 
         type_check_args(method, &args)?;
@@ -667,8 +740,16 @@ impl Gateway {
                         };
 
                         let mut program = None;
-                        let (_, stable_ast) =
-                            polylang::parse(&code, &namespace, &mut program).unwrap();
+                        let (_, stable_ast) = match polylang::parse(&code, &namespace, &mut program)
+                        {
+                            Ok(x) => x,
+                            Err(e) => {
+                                let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
+                                let exception = v8::Exception::type_error(scope, error);
+                                scope.throw_exception(exception);
+                                return;
+                            }
+                        };
                         let json = serde_json::to_string(&stable_ast).unwrap();
 
                         retval.set(v8::String::new(scope, &json).unwrap().into());
