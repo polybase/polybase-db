@@ -1,4 +1,8 @@
+mod config;
+
 use actix_web::{get, App, HttpResponse, HttpServer, Responder};
+use clap::Parser;
+use crate::config::Config;
 
 #[get("/")]
 async fn root() -> impl Responder {
@@ -14,8 +18,10 @@ async fn health() -> impl Responder {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let config = Config::parse();
+
     HttpServer::new(|| App::new().service(root).service(health))
-        .bind("0.0.0.0:8080")?
+        .bind(config.rpc_laddr)?
         .run()
         .await
 }
