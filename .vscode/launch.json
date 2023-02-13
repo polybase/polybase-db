@@ -12,9 +12,25 @@
                 "args": ["build", "--bin=polybase"],
                 "filter": {
                     "kind": "bin"
+                },
+                "env": {
+                    "DEV_SKIP_SIGNATURE_VERIFICATION": "1"
                 }
             },
             "terminal": "console",
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug indexer tests",
+            "cargo": {
+                "args": ["test", "--no-run", "--bin=indexer"],
+                "filter": {
+                    "kind": "bin"
+                }
+            },
             "args": [],
             "cwd": "${workspaceFolder}"
         }
