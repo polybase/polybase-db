@@ -1,4 +1,5 @@
 mod auth;
+mod config;
 
 use std::{
     cmp::{max, min},
@@ -10,6 +11,8 @@ use gateway::Gateway;
 use indexer::Indexer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
+use clap::Parser;
+use crate::config::Config;
 
 struct AppState {
     indexer: Arc<Indexer>,
@@ -174,8 +177,15 @@ async fn call_function(
     }
 }
 
+#[get("/v0/health")]
+async fn health() -> impl Responder {
+    HttpResponse::Ok()
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let config = Config::parse();
+    
     let indexer = Arc::new(
         Indexer::new(format!(
             "{}/polybase-indexer-data",
@@ -201,7 +211,7 @@ async fn main() -> std::io::Result<()> {
                     .service(call_function),
             )
     })
-    .bind("127.0.0.1:8080")?
+    .bind(config.rpc_laddr)?
     .run()
     .await
 }

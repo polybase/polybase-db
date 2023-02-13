@@ -17,3 +17,4 @@ hex = "0.4.3"
 futures = "0.3.26"
 sha3 = "0.10.6"
 secp256k1 = { version = "0.26", features = ["recovery", "global-context"] }
+clap = { version = "4.1.4", features = ["env", "derive"]}
