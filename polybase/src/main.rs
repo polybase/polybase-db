@@ -12,7 +12,7 @@ use std::{
 use crate::config::Config;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
-use gateway::Gateway;
+use gateway::{Change, Gateway};
 use indexer::Indexer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
@@ -304,14 +304,43 @@ async fn post_record(
     let gateway = Arc::clone(&state.gateway);
 
     let res = web::block(move || {
-        gateway.call(
+        let auth = auth.map(|a| a.into());
+
+        let changes = match gateway.call(
             &indexer,
             collection,
             "constructor",
             "".to_string(),
             body.args,
-            auth.map(|a| a.into()).as_ref(),
-        )
+            auth.as_ref(),
+        ) {
+            Ok(changes) => changes,
+            Err(e) => return Err(e),
+        };
+
+        for change in changes {
+            match change {
+                Change::Create {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Update {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Delete { record_id } => todo!(),
+            }
+        }
+
+        Ok(())
     })
     .await?;
 
@@ -335,14 +364,43 @@ async fn call_function(
     let gateway = Arc::clone(&state.gateway);
 
     let res = web::block(move || {
-        gateway.call(
+        let auth = auth.map(|a| a.into());
+
+        let changes = match gateway.call(
             &indexer,
             collection,
             &function,
             record,
             body.args,
-            auth.map(|a| a.into()).as_ref(),
-        )
+            auth.as_ref(),
+        ) {
+            Ok(changes) => changes,
+            Err(e) => return Err(e),
+        };
+
+        for change in changes {
+            match change {
+                Change::Create {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Update {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Delete { record_id } => todo!(),
+            }
+        }
+
+        Ok(())
     })
     .await?;
 
