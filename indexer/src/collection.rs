@@ -1,8 +1,10 @@
 use std::{borrow::Cow, collections::HashMap, error::Error};
 
+use base64::Engine;
 use once_cell::sync::Lazy;
 use polylang::stableast::{self, Record};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     index,
@@ -94,6 +96,8 @@ pub struct ListQuery<'a> {
     pub limit: Option<usize>,
     pub where_query: &'a where_query::WhereQuery<'a>,
     pub order_by: &'a [index::CollectionIndexField<'a>],
+    pub cursor_before: Option<Cursor>,
+    pub cursor_after: Option<Cursor>,
 }
 
 #[derive(Debug)]
@@ -108,6 +112,44 @@ impl AuthUser {
 
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Cursor(keys::Key<'static>);
+
+impl Cursor {
+    fn new(key: keys::Key<'static>) -> Result<Self, String> {
+        match key {
+            keys::Key::Index { .. } => {}
+            _ => return Err("Invalid key type, expected index".to_string()),
+        }
+
+        Ok(Self(key))
+    }
+}
+
+impl Serialize for Cursor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let buf = self.0.serialize().map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&base64::engine::general_purpose::URL_SAFE.encode(buf))
+    }
+}
+
+impl<'de> Deserialize<'de> for Cursor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let buf = base64::engine::general_purpose::URL_SAFE
+            .decode(s.as_bytes())
+            .map_err(serde::de::Error::custom)?;
+        let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
+        Self::new(key.to_static()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -496,13 +538,18 @@ impl<'a> Collection<'a> {
 
     pub fn list(
         &'a self,
-        query: &ListQuery,
+        query: ListQuery,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<
-        impl Iterator<Item = Result<StoreRecordValue<'a>, Box<dyn Error + Send + Sync + 'static>>> + '_,
+        impl Iterator<
+                Item = Result<
+                    (Cursor, StoreRecordValue<'a>),
+                    Box<dyn Error + Send + Sync + 'static>,
+                >,
+            > + '_,
         Box<dyn Error + Send + Sync + 'static>,
     > {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(&query.where_query, &[])) else {
+        let Some(index) = self.indexes.iter().find(|index| index.matches(query.where_query, query.order_by)) else {
             return Err("No index found matching the query".into());
         };
 
@@ -515,16 +562,37 @@ impl<'a> Collection<'a> {
             )
             .map_err(|e| e.to_string())?;
 
+        let key_range = where_query::KeyRange {
+            lower: key_range.lower.to_static(),
+            upper: key_range.upper.to_static(),
+        };
+
+        let mut reverse = index.should_list_in_reverse(query.order_by);
+        let key_range = match (query.cursor_after, query.cursor_before) {
+            (Some(mut after), _) => {
+                after.0.immediate_successor_value_mut()?;
+                where_query::KeyRange {
+                    lower: after.0,
+                    upper: key_range.upper,
+                }
+            }
+            (_, Some(before)) => {
+                reverse = !reverse;
+                where_query::KeyRange {
+                    lower: key_range.lower,
+                    upper: before.0,
+                }
+            }
+            (None, None) => key_range,
+        };
+
         Ok(self
             .store
-            .list(
-                &key_range.lower,
-                &key_range.upper,
-                index.should_list_in_reverse(query.order_by),
-            )?
+            .list(&key_range.lower, &key_range.upper, reverse)?
             .map(|res| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
-                let (_, v) = res?;
+                let (k, v) = res?;
 
+                let index_key = Cursor::new(keys::Key::deserialize(&k)?.to_static())?;
                 let index_record = proto::IndexRecord::decode(&v[..])?;
                 let data_key = keys::Key::deserialize(&index_record.id)?;
                 let data = match self.store.get(&data_key)? {
@@ -532,7 +600,7 @@ impl<'a> Collection<'a> {
                     None => return Ok(None),
                 };
 
-                Ok(Some(data))
+                Ok(Some((index_key, data)))
             })
             .filter_map(|r| match r {
                 // Skip records that we couldn't find by the data key
@@ -543,7 +611,7 @@ impl<'a> Collection<'a> {
             .filter_map(
                 |r| -> Option<Result<_, Box<dyn Error + Send + Sync + 'static>>> {
                     match r {
-                        Ok(sv) => {
+                        Ok((cursor, sv)) => {
                             if !self
                                 .user_can_read(sv.borrow_record(), user)
                                 // TODO: should we propagate this error?
@@ -553,7 +621,7 @@ impl<'a> Collection<'a> {
                                 return None;
                             }
 
-                            Some(Ok(sv))
+                            Some(Ok((cursor, sv)))
                         }
                         Err(e) => Some(Err(e)),
                     }
@@ -770,7 +838,7 @@ mod tests {
 
         let mut results = collection
             .list(
-                &ListQuery {
+                ListQuery {
                     limit: None,
                     where_query: &where_query::WhereQuery(
                         [(
@@ -791,6 +859,8 @@ mod tests {
                             direction: keys::Direction::Descending,
                         },
                     ],
+                    cursor_before: None,
+                    cursor_after: None,
                 },
                 &None,
             )
@@ -799,8 +869,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(results.len(), 2);
-        let second = results.pop().unwrap();
-        let first = results.pop().unwrap();
+        let (_, second) = results.pop().unwrap();
+        let (_, first) = results.pop().unwrap();
 
         assert_eq!(first.borrow_record(), &value_2);
         assert_eq!(second.borrow_record(), &value_1);

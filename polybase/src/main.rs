@@ -2,17 +2,19 @@ mod auth;
 mod config;
 
 use std::{
+    borrow::Cow,
     cmp::{max, min},
+    collections::HashMap,
     sync::Arc,
 };
 
+use crate::config::Config;
 use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use clap::Parser;
 use gateway::Gateway;
 use indexer::Indexer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use clap::Parser;
-use crate::config::Config;
 
 struct AppState {
     indexer: Arc<Indexer>,
@@ -55,6 +57,23 @@ async fn get_record(
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum Direction {
+    #[serde(rename = "asc")]
+    Ascending,
+    #[serde(rename = "desc")]
+    Descending,
+}
+
+impl From<Direction> for indexer::Direction {
+    fn from(dir: Direction) -> Self {
+        match dir {
+            Direction::Ascending => indexer::Direction::Ascending,
+            Direction::Descending => indexer::Direction::Descending,
+        }
+    }
+}
+
 #[serde_as]
 #[derive(Deserialize)]
 struct ListQuery {
@@ -62,6 +81,18 @@ struct ListQuery {
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
     where_query: indexer::WhereQuery<'static>,
+    #[serde(default)]
+    #[serde_as(as = "serde_with::json::JsonString")]
+    sort: Vec<(String, Direction)>,
+    before: Option<indexer::Cursor>,
+    after: Option<indexer::Cursor>,
+}
+
+#[derive(Serialize)]
+struct ListResponse<'a> {
+    data: Vec<&'a HashMap<Cow<'a, str>, indexer::RecordValue<'a>>>,
+    cursor_before: Option<indexer::Cursor>,
+    cursor_after: Option<indexer::Cursor>,
 }
 
 #[get("/{collection}/records")]
@@ -74,17 +105,30 @@ async fn get_records(
     let collection = path.into_inner();
     let auth = body.auth;
 
+    let sort_indexes = query
+        .sort
+        .iter()
+        .map(|(path, dir)| {
+            indexer::CollectionIndexField::new(
+                path.split('.').map(|p| Cow::Owned(p.to_string())).collect(),
+                (*dir).into(),
+            )
+        })
+        .collect::<Vec<_>>();
+
     let indexer = Arc::clone(&state.indexer);
-    let records = web::block(move || {
+    let list_response = web::block(move || {
         let collection = indexer.collection(collection)?;
         let auth = auth.map(indexer::AuthUser::from);
         let auth_ref = &auth.as_ref();
         let records = collection
             .list(
-                &indexer::ListQuery {
+                indexer::ListQuery {
                     limit: Some(min(1000, query.limit.unwrap_or(1000))),
                     where_query: &query.where_query,
-                    order_by: &[],
+                    order_by: &sort_indexes,
+                    cursor_after: query.after.clone(),
+                    cursor_before: query.before.clone(),
                 },
                 auth_ref,
             )?
@@ -92,19 +136,23 @@ async fn get_records(
 
         let borrowed_records = records
             .iter()
-            .map(|r| r.borrow_record())
+            .map(|(_, r)| r.borrow_record())
             .collect::<Vec<_>>();
 
         Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(serde_json::to_string(
-            &borrowed_records,
+            &ListResponse {
+                data: borrowed_records,
+                cursor_before: records.first().map(|(c, _)| c.clone()),
+                cursor_after: records.last().map(|(c, _)| c.clone()),
+            },
         )?)
     })
     .await?;
 
-    match records {
-        Ok(records) => Ok(HttpResponse::Ok()
+    match list_response {
+        Ok(list_response) => Ok(HttpResponse::Ok()
             .content_type("application/json")
-            .body(records)),
+            .body(list_response)),
         Err(e) => Err(e),
     }
 }
@@ -185,7 +233,7 @@ async fn health() -> impl Responder {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let config = Config::parse();
-    
+
     let indexer = Arc::new(
         Indexer::new(format!(
             "{}/polybase-indexer-data",

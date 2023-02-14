@@ -5,7 +5,6 @@ use std::{
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use serde_json::value::Index;
 use serde_with::{serde_as, BorrowCow};
 
 use crate::{proto, publickey};
@@ -267,30 +266,54 @@ impl<'a> Key<'a> {
         }
     }
 
-    pub(crate) fn immediate_successor_value(
-        self,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub(crate) fn to_static(self) -> Key<'static> {
+        match self {
+            Key::Wildcard(k) => Key::Wildcard(Box::new(k.to_static())),
+            Key::Data { cid } => Key::Data {
+                cid: Cow::Owned(cid.into_owned()),
+            },
+            Key::Index {
+                cid,
+                directions,
+                values,
+            } => Key::Index {
+                cid: Cow::Owned(cid.into_owned()),
+                directions: Cow::Owned(directions.into_owned()),
+                values: values
+                    .into_iter()
+                    .map(|v| Cow::Owned(v.into_owned().to_static()))
+                    .collect(),
+            },
+        }
+    }
+
+    pub(crate) fn immediate_successor_value_mut(
+        &mut self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         match self {
             Key::Wildcard(_) => Err("Wildcard keys have no values".into()),
             Key::Data { .. } => Err("Data keys have no values".into()),
             Key::Index {
                 cid,
                 directions,
-                mut values,
+                values,
             } => {
                 values.push(Cow::Borrowed(&IndexValue::Null));
-                Ok(Key::Index {
-                    cid,
-                    directions,
-                    values,
-                })
+                Ok(())
             }
         }
+    }
+
+    pub(crate) fn immediate_successor_value(
+        mut self,
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+        self.immediate_successor_value_mut()?;
+        Ok(self)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Direction {
+pub enum Direction {
     Ascending,
     Descending,
 }
@@ -390,6 +413,19 @@ impl<'a> IndexValue<'a> {
         };
 
         Ok(value)
+    }
+
+    fn to_static(&self) -> IndexValue<'static> {
+        match self {
+            IndexValue::String(s) => IndexValue::String(Cow::Owned(s.to_string())),
+            IndexValue::Number(n) => IndexValue::Number(*n),
+            IndexValue::Boolean(b) => IndexValue::Boolean(*b),
+            IndexValue::Bytes(b) => IndexValue::Bytes(Cow::Owned(b.to_vec())),
+            IndexValue::Null => IndexValue::Null,
+            IndexValue::PublicKey(p) => {
+                IndexValue::PublicKey(Box::new(Cow::Owned(p.as_ref().as_ref().to_owned())))
+            }
+        }
     }
 }
 
@@ -875,6 +911,25 @@ mod test {
                 Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
+        )
+        .unwrap(),
+        Ordering::Greater
+    );
+
+    test_comparator!(
+        test_comparator_index_key_greater_string,
+        Key::new_index(
+            "namespace".to_string(),
+            &[&["a"]],
+            &[Direction::Ascending, Direction::Ascending],
+            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello2")))]
+        )
+        .unwrap(),
+        Key::new_index(
+            "namespace".to_string(),
+            &[&["a"]],
+            &[Direction::Ascending, Direction::Ascending],
+            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello")))]
         )
         .unwrap(),
         Ordering::Greater

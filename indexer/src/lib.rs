@@ -10,8 +10,9 @@ mod stableast_ext;
 mod store;
 mod where_query;
 
-pub use collection::{AuthUser, Collection, ListQuery};
-pub use keys::{IndexValue, PathFinder, RecordReference, RecordValue};
+pub use collection::{AuthUser, Collection, Cursor, ListQuery};
+pub use index::CollectionIndexField;
+pub use keys::{Direction, IndexValue, PathFinder, RecordReference, RecordValue};
 pub use publickey::PublicKey;
 pub use stableast_ext::FieldWalker;
 pub use store::StoreRecordValue;

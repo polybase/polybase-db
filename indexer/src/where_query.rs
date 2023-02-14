@@ -83,6 +83,7 @@ pub(crate) struct WhereInequality<'a> {
     pub(crate) lte: Option<WhereValue<'a>>,
 }
 
+#[derive(Debug)]
 pub(crate) struct KeyRange<'a> {
     pub(crate) lower: keys::Key<'a>,
     pub(crate) upper: keys::Key<'a>,
