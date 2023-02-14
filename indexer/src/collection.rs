@@ -1,4 +1,9 @@
-use std::{borrow::Cow, collections::HashMap, error::Error};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    error::Error,
+    time::{Duration, SystemTime},
+};
 
 use base64::Engine;
 use once_cell::sync::Lazy;
@@ -90,6 +95,14 @@ pub struct Collection<'a> {
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
     authorization: Authorization<'a>,
+}
+
+pub struct CollectionMetadata {
+    pub last_record_updated_at: SystemTime,
+}
+
+pub struct RecordMetadata {
+    pub updated_at: SystemTime,
 }
 
 pub struct ListQuery<'a> {
@@ -465,6 +478,99 @@ impl<'a> Collection<'a> {
         Ok(false)
     }
 
+    fn update_metadata(&self, time: &SystemTime) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let collection_metadata_key =
+            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
+
+        self.store.set(
+            &collection_metadata_key,
+            &store::Value::DataValue(Cow::Owned(
+                [(
+                    "lastRecordUpdatedAt".into(),
+                    keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+                        time.duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_millis()
+                            .to_string(),
+                    ))),
+                )]
+                .into(),
+            )),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_metadata(&self) -> Result<Option<CollectionMetadata>, Box<dyn Error + Send + Sync>> {
+        let collection_metadata_key =
+            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
+
+        let Some(record) = self.store.get(&collection_metadata_key)? else {
+            return Ok(None);
+        };
+
+        let last_record_updated_at =
+            match record.borrow_record().find_path(&["lastRecordUpdatedAt"]) {
+                Some(keys::RecordValue::IndexValue(keys::IndexValue::String(s))) => {
+                    SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+                }
+                _ => return Err("Invalid metadata, missing lastRecordUpdatedAt".into()),
+            };
+
+        Ok(Some(CollectionMetadata {
+            last_record_updated_at,
+        }))
+    }
+
+    pub fn set_record_metadata(
+        &self,
+        record_id: String,
+        updated_at: &SystemTime,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let record_metadata_key = keys::Key::new_system_data(format!(
+            "{}/records/{}/metadata",
+            &self.collection_id, record_id
+        ))?;
+
+        self.store.set(
+            &record_metadata_key,
+            &store::Value::DataValue(Cow::Owned(
+                [(
+                    "updatedAt".into(),
+                    keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+                        updated_at
+                            .duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_millis()
+                            .to_string(),
+                    ))),
+                )]
+                .into(),
+            )),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_record_metadata(
+        &self,
+        record_id: &str,
+    ) -> Result<Option<RecordMetadata>, Box<dyn Error + Send + Sync>> {
+        let record_metadata_key = keys::Key::new_system_data(format!(
+            "{}/records/{}/metadata",
+            &self.collection_id, record_id
+        ))?;
+
+        let Some(record) = self.store.get(&record_metadata_key)? else {
+            return Ok(None);
+        };
+
+        let updated_at = match record.borrow_record().find_path(&["updatedAt"]) {
+            Some(keys::RecordValue::IndexValue(keys::IndexValue::String(s))) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+            }
+            _ => return Err("Invalid metadata, missing updatedAt".into()),
+        };
+
+        Ok(Some(RecordMetadata { updated_at }))
+    }
+
     pub fn set(
         &self,
         id: String,
@@ -483,7 +589,7 @@ impl<'a> Collection<'a> {
             None => return Err("id is required".into()),
         }
 
-        let data_key = keys::Key::new_data(self.collection_id.clone(), id)?;
+        let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
         let store_record_value = self.store.get(&data_key)?;
         if !self.user_can_read_lazy(
             || Ok(store_record_value.as_ref().map(|sv| sv.borrow_record())),
@@ -494,6 +600,9 @@ impl<'a> Collection<'a> {
 
         self.store
             .set(&data_key, &store::Value::DataValue(Cow::Borrowed(value)))?;
+
+        self.update_metadata(&SystemTime::now())?;
+        self.set_record_metadata(id, &SystemTime::now())?;
 
         // TODO: ignore index failures
         let index_value = store::Value::IndexValue(proto::IndexRecord {

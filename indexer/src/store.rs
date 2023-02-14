@@ -106,6 +106,7 @@ impl Store {
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         match (key, value) {
             (Key::Data { .. }, Value::DataValue(_)) => {}
+            (Key::SystemData { .. }, Value::DataValue(_)) => {}
             (Key::Index { .. }, Value::IndexValue(_)) => {}
             _ => return Err("invalid key/value combination".into()),
         }

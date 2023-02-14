@@ -6,10 +6,11 @@ use std::{
     cmp::{max, min},
     collections::HashMap,
     sync::Arc,
+    time::{Duration, SystemTime},
 };
 
 use crate::config::Config;
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use gateway::Gateway;
 use indexer::Indexer;
@@ -28,14 +29,70 @@ async fn root() -> impl Responder {
         .body(r#"{ "server": "Polybase", "version": "0.1.0" }"#)
 }
 
+#[derive(Deserialize)]
+struct GetRecordQuery {
+    since: Option<f64>,
+    #[serde(rename = "waitFor", default = "Seconds::sixty")]
+    wait_for: Seconds,
+}
+
 #[get("/{collection}/records/{id}")]
 async fn get_record(
     state: web::Data<AppState>,
     path: web::Path<(String, String)>,
+    query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let (collection, id) = path.into_inner();
     let auth = body.auth;
+
+    if let Some(since) = query.since {
+        enum UpdateCheckResult {
+            Updated,
+            NotFound,
+            NotModified,
+        }
+
+        let was_updated = web::block({
+            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
+            let wait_until = SystemTime::now() + wait_for;
+            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
+            let indexer = Arc::clone(&state.indexer);
+            let collection = collection.clone();
+            let record_id = id.clone();
+
+            move || {
+                let collection = indexer.collection(collection)?;
+                let mut record_exists = false;
+                while wait_until > SystemTime::now() {
+                    if let Some(metadata) = collection.get_record_metadata(&record_id)? {
+                        record_exists = true;
+                        if metadata.updated_at > since {
+                            return Ok(UpdateCheckResult::Updated);
+                        }
+                    }
+
+                    std::thread::sleep(Duration::from_millis(1000));
+                }
+
+                Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(if record_exists {
+                    UpdateCheckResult::NotModified
+                } else {
+                    UpdateCheckResult::NotFound
+                })
+            }
+        })
+        .await?;
+
+        match was_updated {
+            Ok(UpdateCheckResult::Updated) => {}
+            Ok(UpdateCheckResult::NotModified) => {
+                return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish())
+            }
+            Ok(UpdateCheckResult::NotFound) => return Ok(HttpResponse::NotFound().finish()),
+            Err(e) => return Err(e),
+        }
+    }
 
     let indexer = Arc::clone(&state.indexer);
     let record = web::block(move || {
@@ -74,6 +131,38 @@ impl From<Direction> for indexer::Direction {
     }
 }
 
+/// Deserialized from "<number>s"
+#[derive(Clone, Copy)]
+struct Seconds(u64);
+
+impl Seconds {
+    fn sixty() -> Self {
+        Self(60)
+    }
+}
+
+impl From<Seconds> for std::time::Duration {
+    fn from(s: Seconds) -> Self {
+        std::time::Duration::from_secs(s.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Seconds {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        if !s.ends_with('s') {
+            return Err(serde::de::Error::custom("missing 's'"));
+        }
+        let s = &s[..s.len() - 1];
+        let s = s.parse::<u64>().map_err(serde::de::Error::custom)?;
+
+        Ok(Seconds(s))
+    }
+}
+
 #[serde_as]
 #[derive(Deserialize)]
 struct ListQuery {
@@ -86,6 +175,10 @@ struct ListQuery {
     sort: Vec<(String, Direction)>,
     before: Option<indexer::Cursor>,
     after: Option<indexer::Cursor>,
+    /// UNIX timestamp in seconds
+    since: Option<f64>,
+    #[serde(rename = "waitFor", default = "Seconds::sixty")]
+    wait_for: Seconds,
 }
 
 #[derive(Serialize)]
@@ -115,6 +208,40 @@ async fn get_records(
             )
         })
         .collect::<Vec<_>>();
+
+    if let Some(since) = query.since {
+        let was_updated = web::block({
+            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
+            let wait_until = SystemTime::now() + wait_for;
+            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
+            let indexer = Arc::clone(&state.indexer);
+            let collection = collection.clone();
+
+            move || {
+                let collection = indexer.collection(collection)?;
+                while wait_until > SystemTime::now() {
+                    if collection
+                        .get_metadata()?
+                        .map(|m| m.last_record_updated_at > since)
+                        .unwrap_or(false)
+                    {
+                        return Ok(true);
+                    }
+
+                    std::thread::sleep(Duration::from_millis(1000));
+                }
+
+                Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(false)
+            }
+        })
+        .await?;
+
+        match was_updated {
+            Ok(true) => {}
+            Ok(false) => return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish()),
+            Err(e) => return Err(e),
+        }
+    }
 
     let indexer = Arc::clone(&state.indexer);
     let list_response = web::block(move || {

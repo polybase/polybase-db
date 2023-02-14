@@ -19,6 +19,7 @@ const KEY_COMPARE_PREFIX: usize = 1 + 36;
 const BYTE_DATA: u8 = 0x01;
 const BYTE_INDEX: u8 = 0x02;
 const BYTE_WILDCARD: u8 = 0x03;
+const BYTE_SYSTEM_DATA: u8 = 0x04;
 
 // Data type prefixes
 const BYTE_NULL: u8 = 0x00;
@@ -123,6 +124,9 @@ pub(crate) enum Key<'a> {
     Data {
         cid: Cow<'a, [u8]>,
     },
+    SystemData {
+        cid: Cow<'a, [u8]>,
+    },
     Index {
         cid: Cow<'a, [u8]>,
         directions: Cow<'a, [Direction]>,
@@ -135,6 +139,7 @@ impl<'a> fmt::Debug for Key<'a> {
         match self {
             Key::Wildcard(k) => write!(f, "Wildcard({k:?})"),
             Key::Data { cid } => write!(f, "Data({cid:?})"),
+            Key::SystemData { cid } => write!(f, "SystemData({cid:?})"),
             Key::Index {
                 cid,
                 directions,
@@ -151,6 +156,16 @@ impl<'a> Key<'a> {
         generate_cid(&data.encode_to_vec(), &mut cid)?;
 
         Ok(Key::Data {
+            cid: Cow::Owned(cid),
+        })
+    }
+
+    pub(crate) fn new_system_data(id: String) -> Result<Self, cid::Error> {
+        let data = proto::SystemDataKey { id };
+        let mut cid = Vec::with_capacity(36);
+        generate_cid(&data.encode_to_vec(), &mut cid)?;
+
+        Ok(Key::SystemData {
             cid: Cow::Owned(cid),
         })
     }
@@ -202,6 +217,12 @@ impl<'a> Key<'a> {
             Key::Data { cid } => {
                 let mut key = Vec::with_capacity(cid.len() + 1);
                 key.push(BYTE_DATA);
+                key.extend_from_slice(cid);
+                Ok(key)
+            }
+            Key::SystemData { cid } => {
+                let mut key = Vec::with_capacity(cid.len() + 1);
+                key.push(BYTE_SYSTEM_DATA);
                 key.extend_from_slice(cid);
                 Ok(key)
             }
@@ -272,6 +293,9 @@ impl<'a> Key<'a> {
             Key::Data { cid } => Key::Data {
                 cid: Cow::Owned(cid.into_owned()),
             },
+            Key::SystemData { cid } => Key::SystemData {
+                cid: Cow::Owned(cid.into_owned()),
+            },
             Key::Index {
                 cid,
                 directions,
@@ -293,6 +317,7 @@ impl<'a> Key<'a> {
         match self {
             Key::Wildcard(_) => Err("Wildcard keys have no values".into()),
             Key::Data { .. } => Err("Data keys have no values".into()),
+            Key::SystemData { .. } => Err("SystemData keys have no values".into()),
             Key::Index {
                 cid,
                 directions,
