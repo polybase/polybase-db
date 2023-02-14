@@ -13,7 +13,7 @@ pub struct CollectionIndexField<'a> {
 }
 
 impl<'a> CollectionIndexField<'a> {
-    pub(crate) fn new(path: Vec<Cow<'a, str>>, direction: keys::Direction) -> Self {
+    pub fn new(path: Vec<Cow<'a, str>>, direction: keys::Direction) -> Self {
         Self { path, direction }
     }
 }
@@ -407,7 +407,6 @@ mod test {
         }]
     );
 
-    // rewrite as a macro
     macro_rules! test_index_recommendation {
         ($name:ident, $where:expr, $sort:expr, $expected:expr) => {
             #[test]

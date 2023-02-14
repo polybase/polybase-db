@@ -32,3 +32,7 @@ message IndexKey {
   string namespace = 1;
   repeated string path = 2;
 }
+
+message SystemDataKey {
+  string id = 1;
+}

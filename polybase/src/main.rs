@@ -2,17 +2,20 @@ mod auth;
 mod config;
 
 use std::{
+    borrow::Cow,
     cmp::{max, min},
+    collections::HashMap,
     sync::Arc,
+    time::{Duration, SystemTime},
 };
 
-use actix_web::{get, post, web, App, HttpResponse, HttpServer, Responder};
-use gateway::Gateway;
+use crate::config::Config;
+use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
+use clap::Parser;
+use gateway::{Change, Gateway};
 use indexer::Indexer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
-use clap::Parser;
-use crate::config::Config;
 
 struct AppState {
     indexer: Arc<Indexer>,
@@ -26,14 +29,70 @@ async fn root() -> impl Responder {
         .body(r#"{ "server": "Polybase", "version": "0.1.0" }"#)
 }
 
+#[derive(Deserialize)]
+struct GetRecordQuery {
+    since: Option<f64>,
+    #[serde(rename = "waitFor", default = "Seconds::sixty")]
+    wait_for: Seconds,
+}
+
 #[get("/{collection}/records/{id}")]
 async fn get_record(
     state: web::Data<AppState>,
     path: web::Path<(String, String)>,
+    query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let (collection, id) = path.into_inner();
     let auth = body.auth;
+
+    if let Some(since) = query.since {
+        enum UpdateCheckResult {
+            Updated,
+            NotFound,
+            NotModified,
+        }
+
+        let was_updated = web::block({
+            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
+            let wait_until = SystemTime::now() + wait_for;
+            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
+            let indexer = Arc::clone(&state.indexer);
+            let collection = collection.clone();
+            let record_id = id.clone();
+
+            move || {
+                let collection = indexer.collection(collection)?;
+                let mut record_exists = false;
+                while wait_until > SystemTime::now() {
+                    if let Some(metadata) = collection.get_record_metadata(&record_id)? {
+                        record_exists = true;
+                        if metadata.updated_at > since {
+                            return Ok(UpdateCheckResult::Updated);
+                        }
+                    }
+
+                    std::thread::sleep(Duration::from_millis(1000));
+                }
+
+                Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(if record_exists {
+                    UpdateCheckResult::NotModified
+                } else {
+                    UpdateCheckResult::NotFound
+                })
+            }
+        })
+        .await?;
+
+        match was_updated {
+            Ok(UpdateCheckResult::Updated) => {}
+            Ok(UpdateCheckResult::NotModified) => {
+                return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish())
+            }
+            Ok(UpdateCheckResult::NotFound) => return Ok(HttpResponse::NotFound().finish()),
+            Err(e) => return Err(e),
+        }
+    }
 
     let indexer = Arc::clone(&state.indexer);
     let record = web::block(move || {
@@ -55,6 +114,55 @@ async fn get_record(
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+enum Direction {
+    #[serde(rename = "asc")]
+    Ascending,
+    #[serde(rename = "desc")]
+    Descending,
+}
+
+impl From<Direction> for indexer::Direction {
+    fn from(dir: Direction) -> Self {
+        match dir {
+            Direction::Ascending => indexer::Direction::Ascending,
+            Direction::Descending => indexer::Direction::Descending,
+        }
+    }
+}
+
+/// Deserialized from "<number>s"
+#[derive(Clone, Copy)]
+struct Seconds(u64);
+
+impl Seconds {
+    fn sixty() -> Self {
+        Self(60)
+    }
+}
+
+impl From<Seconds> for std::time::Duration {
+    fn from(s: Seconds) -> Self {
+        std::time::Duration::from_secs(s.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for Seconds {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        if !s.ends_with('s') {
+            return Err(serde::de::Error::custom("missing 's'"));
+        }
+        let s = &s[..s.len() - 1];
+        let s = s.parse::<u64>().map_err(serde::de::Error::custom)?;
+
+        Ok(Seconds(s))
+    }
+}
+
 #[serde_as]
 #[derive(Deserialize)]
 struct ListQuery {
@@ -62,6 +170,22 @@ struct ListQuery {
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
     where_query: indexer::WhereQuery<'static>,
+    #[serde(default)]
+    #[serde_as(as = "serde_with::json::JsonString")]
+    sort: Vec<(String, Direction)>,
+    before: Option<indexer::Cursor>,
+    after: Option<indexer::Cursor>,
+    /// UNIX timestamp in seconds
+    since: Option<f64>,
+    #[serde(rename = "waitFor", default = "Seconds::sixty")]
+    wait_for: Seconds,
+}
+
+#[derive(Serialize)]
+struct ListResponse<'a> {
+    data: Vec<&'a HashMap<Cow<'a, str>, indexer::RecordValue<'a>>>,
+    cursor_before: Option<indexer::Cursor>,
+    cursor_after: Option<indexer::Cursor>,
 }
 
 #[get("/{collection}/records")]
@@ -74,17 +198,64 @@ async fn get_records(
     let collection = path.into_inner();
     let auth = body.auth;
 
+    let sort_indexes = query
+        .sort
+        .iter()
+        .map(|(path, dir)| {
+            indexer::CollectionIndexField::new(
+                path.split('.').map(|p| Cow::Owned(p.to_string())).collect(),
+                (*dir).into(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(since) = query.since {
+        let was_updated = web::block({
+            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
+            let wait_until = SystemTime::now() + wait_for;
+            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
+            let indexer = Arc::clone(&state.indexer);
+            let collection = collection.clone();
+
+            move || {
+                let collection = indexer.collection(collection)?;
+                while wait_until > SystemTime::now() {
+                    if collection
+                        .get_metadata()?
+                        .map(|m| m.last_record_updated_at > since)
+                        .unwrap_or(false)
+                    {
+                        return Ok(true);
+                    }
+
+                    std::thread::sleep(Duration::from_millis(1000));
+                }
+
+                Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(false)
+            }
+        })
+        .await?;
+
+        match was_updated {
+            Ok(true) => {}
+            Ok(false) => return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish()),
+            Err(e) => return Err(e),
+        }
+    }
+
     let indexer = Arc::clone(&state.indexer);
-    let records = web::block(move || {
+    let list_response = web::block(move || {
         let collection = indexer.collection(collection)?;
         let auth = auth.map(indexer::AuthUser::from);
         let auth_ref = &auth.as_ref();
         let records = collection
             .list(
-                &indexer::ListQuery {
+                indexer::ListQuery {
                     limit: Some(min(1000, query.limit.unwrap_or(1000))),
                     where_query: &query.where_query,
-                    order_by: &[],
+                    order_by: &sort_indexes,
+                    cursor_after: query.after.clone(),
+                    cursor_before: query.before.clone(),
                 },
                 auth_ref,
             )?
@@ -92,19 +263,23 @@ async fn get_records(
 
         let borrowed_records = records
             .iter()
-            .map(|r| r.borrow_record())
+            .map(|(_, r)| r.borrow_record())
             .collect::<Vec<_>>();
 
         Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(serde_json::to_string(
-            &borrowed_records,
+            &ListResponse {
+                data: borrowed_records,
+                cursor_before: records.first().map(|(c, _)| c.clone()),
+                cursor_after: records.last().map(|(c, _)| c.clone()),
+            },
         )?)
     })
     .await?;
 
-    match records {
-        Ok(records) => Ok(HttpResponse::Ok()
+    match list_response {
+        Ok(list_response) => Ok(HttpResponse::Ok()
             .content_type("application/json")
-            .body(records)),
+            .body(list_response)),
         Err(e) => Err(e),
     }
 }
@@ -129,14 +304,43 @@ async fn post_record(
     let gateway = Arc::clone(&state.gateway);
 
     let res = web::block(move || {
-        gateway.call(
+        let auth = auth.map(|a| a.into());
+
+        let changes = match gateway.call(
             &indexer,
             collection,
             "constructor",
             "".to_string(),
             body.args,
-            auth.map(|a| a.into()).as_ref(),
-        )
+            auth.as_ref(),
+        ) {
+            Ok(changes) => changes,
+            Err(e) => return Err(e),
+        };
+
+        for change in changes {
+            match change {
+                Change::Create {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Update {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Delete { record_id } => todo!(),
+            }
+        }
+
+        Ok(())
     })
     .await?;
 
@@ -160,14 +364,43 @@ async fn call_function(
     let gateway = Arc::clone(&state.gateway);
 
     let res = web::block(move || {
-        gateway.call(
+        let auth = auth.map(|a| a.into());
+
+        let changes = match gateway.call(
             &indexer,
             collection,
             &function,
             record,
             body.args,
-            auth.map(|a| a.into()).as_ref(),
-        )
+            auth.as_ref(),
+        ) {
+            Ok(changes) => changes,
+            Err(e) => return Err(e),
+        };
+
+        for change in changes {
+            match change {
+                Change::Create {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Update {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let collection = indexer.collection(collection_id)?;
+                    collection.set(record_id, &record, auth.as_ref());
+                }
+                Change::Delete { record_id } => todo!(),
+            }
+        }
+
+        Ok(())
     })
     .await?;
 
@@ -185,7 +418,7 @@ async fn health() -> impl Responder {
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let config = Config::parse();
-    
+
     let indexer = Arc::new(
         Indexer::new(format!(
             "{}/polybase-indexer-data",

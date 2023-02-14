@@ -1,8 +1,15 @@
-use std::{borrow::Cow, collections::HashMap, error::Error};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    error::Error,
+    time::{Duration, SystemTime},
+};
 
+use base64::Engine;
 use once_cell::sync::Lazy;
 use polylang::stableast::{self, Record};
 use prost::Message;
+use serde::{Deserialize, Serialize};
 
 use crate::{
     index,
@@ -90,10 +97,20 @@ pub struct Collection<'a> {
     authorization: Authorization<'a>,
 }
 
+pub struct CollectionMetadata {
+    pub last_record_updated_at: SystemTime,
+}
+
+pub struct RecordMetadata {
+    pub updated_at: SystemTime,
+}
+
 pub struct ListQuery<'a> {
     pub limit: Option<usize>,
     pub where_query: &'a where_query::WhereQuery<'a>,
     pub order_by: &'a [index::CollectionIndexField<'a>],
+    pub cursor_before: Option<Cursor>,
+    pub cursor_after: Option<Cursor>,
 }
 
 #[derive(Debug)]
@@ -108,6 +125,44 @@ impl AuthUser {
 
     pub fn public_key(&self) -> &PublicKey {
         &self.public_key
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Cursor(keys::Key<'static>);
+
+impl Cursor {
+    fn new(key: keys::Key<'static>) -> Result<Self, String> {
+        match key {
+            keys::Key::Index { .. } => {}
+            _ => return Err("Invalid key type, expected index".to_string()),
+        }
+
+        Ok(Self(key))
+    }
+}
+
+impl Serialize for Cursor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let buf = self.0.serialize().map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&base64::engine::general_purpose::URL_SAFE.encode(buf))
+    }
+}
+
+impl<'de> Deserialize<'de> for Cursor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let buf = base64::engine::general_purpose::URL_SAFE
+            .decode(s.as_bytes())
+            .map_err(serde::de::Error::custom)?;
+        let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
+        Self::new(key.to_static()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -423,6 +478,99 @@ impl<'a> Collection<'a> {
         Ok(false)
     }
 
+    fn update_metadata(&self, time: &SystemTime) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let collection_metadata_key =
+            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
+
+        self.store.set(
+            &collection_metadata_key,
+            &store::Value::DataValue(Cow::Owned(
+                [(
+                    "lastRecordUpdatedAt".into(),
+                    keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+                        time.duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_millis()
+                            .to_string(),
+                    ))),
+                )]
+                .into(),
+            )),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_metadata(&self) -> Result<Option<CollectionMetadata>, Box<dyn Error + Send + Sync>> {
+        let collection_metadata_key =
+            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
+
+        let Some(record) = self.store.get(&collection_metadata_key)? else {
+            return Ok(None);
+        };
+
+        let last_record_updated_at =
+            match record.borrow_record().find_path(&["lastRecordUpdatedAt"]) {
+                Some(keys::RecordValue::IndexValue(keys::IndexValue::String(s))) => {
+                    SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+                }
+                _ => return Err("Invalid metadata, missing lastRecordUpdatedAt".into()),
+            };
+
+        Ok(Some(CollectionMetadata {
+            last_record_updated_at,
+        }))
+    }
+
+    pub fn set_record_metadata(
+        &self,
+        record_id: String,
+        updated_at: &SystemTime,
+    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let record_metadata_key = keys::Key::new_system_data(format!(
+            "{}/records/{}/metadata",
+            &self.collection_id, record_id
+        ))?;
+
+        self.store.set(
+            &record_metadata_key,
+            &store::Value::DataValue(Cow::Owned(
+                [(
+                    "updatedAt".into(),
+                    keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+                        updated_at
+                            .duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_millis()
+                            .to_string(),
+                    ))),
+                )]
+                .into(),
+            )),
+        )?;
+        Ok(())
+    }
+
+    pub fn get_record_metadata(
+        &self,
+        record_id: &str,
+    ) -> Result<Option<RecordMetadata>, Box<dyn Error + Send + Sync>> {
+        let record_metadata_key = keys::Key::new_system_data(format!(
+            "{}/records/{}/metadata",
+            &self.collection_id, record_id
+        ))?;
+
+        let Some(record) = self.store.get(&record_metadata_key)? else {
+            return Ok(None);
+        };
+
+        let updated_at = match record.borrow_record().find_path(&["updatedAt"]) {
+            Some(keys::RecordValue::IndexValue(keys::IndexValue::String(s))) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+            }
+            _ => return Err("Invalid metadata, missing updatedAt".into()),
+        };
+
+        Ok(Some(RecordMetadata { updated_at }))
+    }
+
     pub fn set(
         &self,
         id: String,
@@ -441,7 +589,7 @@ impl<'a> Collection<'a> {
             None => return Err("id is required".into()),
         }
 
-        let data_key = keys::Key::new_data(self.collection_id.clone(), id)?;
+        let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
         let store_record_value = self.store.get(&data_key)?;
         if !self.user_can_read_lazy(
             || Ok(store_record_value.as_ref().map(|sv| sv.borrow_record())),
@@ -452,6 +600,9 @@ impl<'a> Collection<'a> {
 
         self.store
             .set(&data_key, &store::Value::DataValue(Cow::Borrowed(value)))?;
+
+        self.update_metadata(&SystemTime::now())?;
+        self.set_record_metadata(id, &SystemTime::now())?;
 
         // TODO: ignore index failures
         let index_value = store::Value::IndexValue(proto::IndexRecord {
@@ -496,13 +647,18 @@ impl<'a> Collection<'a> {
 
     pub fn list(
         &'a self,
-        query: &ListQuery,
+        query: ListQuery,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<
-        impl Iterator<Item = Result<StoreRecordValue<'a>, Box<dyn Error + Send + Sync + 'static>>> + '_,
+        impl Iterator<
+                Item = Result<
+                    (Cursor, StoreRecordValue<'a>),
+                    Box<dyn Error + Send + Sync + 'static>,
+                >,
+            > + '_,
         Box<dyn Error + Send + Sync + 'static>,
     > {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(&query.where_query, &[])) else {
+        let Some(index) = self.indexes.iter().find(|index| index.matches(query.where_query, query.order_by)) else {
             return Err("No index found matching the query".into());
         };
 
@@ -515,16 +671,37 @@ impl<'a> Collection<'a> {
             )
             .map_err(|e| e.to_string())?;
 
+        let key_range = where_query::KeyRange {
+            lower: key_range.lower.to_static(),
+            upper: key_range.upper.to_static(),
+        };
+
+        let mut reverse = index.should_list_in_reverse(query.order_by);
+        let key_range = match (query.cursor_after, query.cursor_before) {
+            (Some(mut after), _) => {
+                after.0.immediate_successor_value_mut()?;
+                where_query::KeyRange {
+                    lower: after.0,
+                    upper: key_range.upper,
+                }
+            }
+            (_, Some(before)) => {
+                reverse = !reverse;
+                where_query::KeyRange {
+                    lower: key_range.lower,
+                    upper: before.0,
+                }
+            }
+            (None, None) => key_range,
+        };
+
         Ok(self
             .store
-            .list(
-                &key_range.lower,
-                &key_range.upper,
-                index.should_list_in_reverse(query.order_by),
-            )?
+            .list(&key_range.lower, &key_range.upper, reverse)?
             .map(|res| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
-                let (_, v) = res?;
+                let (k, v) = res?;
 
+                let index_key = Cursor::new(keys::Key::deserialize(&k)?.to_static())?;
                 let index_record = proto::IndexRecord::decode(&v[..])?;
                 let data_key = keys::Key::deserialize(&index_record.id)?;
                 let data = match self.store.get(&data_key)? {
@@ -532,7 +709,7 @@ impl<'a> Collection<'a> {
                     None => return Ok(None),
                 };
 
-                Ok(Some(data))
+                Ok(Some((index_key, data)))
             })
             .filter_map(|r| match r {
                 // Skip records that we couldn't find by the data key
@@ -543,7 +720,7 @@ impl<'a> Collection<'a> {
             .filter_map(
                 |r| -> Option<Result<_, Box<dyn Error + Send + Sync + 'static>>> {
                     match r {
-                        Ok(sv) => {
+                        Ok((cursor, sv)) => {
                             if !self
                                 .user_can_read(sv.borrow_record(), user)
                                 // TODO: should we propagate this error?
@@ -553,7 +730,7 @@ impl<'a> Collection<'a> {
                                 return None;
                             }
 
-                            Some(Ok(sv))
+                            Some(Ok((cursor, sv)))
                         }
                         Err(e) => Some(Err(e)),
                     }
@@ -770,7 +947,7 @@ mod tests {
 
         let mut results = collection
             .list(
-                &ListQuery {
+                ListQuery {
                     limit: None,
                     where_query: &where_query::WhereQuery(
                         [(
@@ -791,6 +968,8 @@ mod tests {
                             direction: keys::Direction::Descending,
                         },
                     ],
+                    cursor_before: None,
+                    cursor_after: None,
                 },
                 &None,
             )
@@ -799,8 +978,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(results.len(), 2);
-        let second = results.pop().unwrap();
-        let first = results.pop().unwrap();
+        let (_, second) = results.pop().unwrap();
+        let (_, first) = results.pop().unwrap();
 
         assert_eq!(first.borrow_record(), &value_2);
         assert_eq!(second.borrow_record(), &value_1);

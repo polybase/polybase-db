@@ -504,6 +504,22 @@ fn has_permission_to_call(
     Ok(false)
 }
 
+pub enum Change<'a> {
+    Create {
+        collection_id: String,
+        record_id: String,
+        record: HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
+    },
+    Update {
+        collection_id: String,
+        record_id: String,
+        record: HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
+    },
+    Delete {
+        record_id: String,
+    },
+}
+
 impl Gateway {
     pub fn call(
         &self,
@@ -513,7 +529,8 @@ impl Gateway {
         record_id: String,
         args: Vec<indexer::RecordValue>,
         auth: Option<&indexer::AuthUser>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    ) -> Result<Vec<Change>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+        let mut changes = Vec::new();
         let collection_collection = indexer.collection("Collection".to_string())?;
         let collection = indexer.collection(collection_id.clone())?;
 
@@ -668,14 +685,25 @@ impl Gateway {
             records_to_update
         };
 
-        if function_name == "constructor"
-            && collection
+        if function_name == "constructor" {
+            if collection
                 .get(output_instance_id.to_string(), None)?
                 .is_some()
-        {
-            return Err("Record id already exists".into());
+            {
+                return Err("Record id already exists".into());
+            }
+
+            changes.push(Change::Create {
+                collection_id,
+                record_id: output_instance_id.to_string(),
+                record: output.instance,
+            });
         } else {
-            collection.set(output_instance_id.to_string(), &output.instance, auth)?;
+            changes.push(Change::Update {
+                collection_id,
+                record_id: output_instance_id.to_string(),
+                record: output.instance,
+            });
         }
 
         for record in records_to_update {
@@ -691,11 +719,14 @@ impl Gateway {
                 return Err("Record id is not a string".into());
             };
 
-            todo!();
-            // collection.set(id.to_string(), m, None)?;
+            changes.push(Change::Update {
+                collection_id: todo!("get the collection id before dereferencing"),
+                record_id: id.to_string(),
+                record: m.clone(),
+            });
         }
 
-        Ok(())
+        Ok(changes)
     }
 
     fn run(
