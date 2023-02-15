@@ -11,6 +11,7 @@ use std::{
 use crate::config::Config;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
+use futures::TryStreamExt;
 use gateway::{Change, Gateway};
 use indexer::Indexer;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,8 @@ async fn get_record(
     let (collection, id) = path.into_inner();
     let auth = body.auth;
 
+    let collection = state.indexer.collection(collection).await.unwrap();
+
     if let Some(since) = query.since {
         enum UpdateCheckResult {
             Updated,
@@ -52,36 +55,30 @@ async fn get_record(
             NotModified,
         }
 
-        let was_updated = web::block({
+        let was_updated = async {
             let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
             let wait_until = SystemTime::now() + wait_for;
             let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
-            let indexer = Arc::clone(&state.indexer);
-            let collection = collection.clone();
-            let record_id = id.clone();
 
-            move || {
-                let collection = indexer.collection(collection)?;
-                let mut record_exists = false;
-                while wait_until > SystemTime::now() {
-                    if let Some(metadata) = collection.get_record_metadata(&record_id)? {
-                        record_exists = true;
-                        if metadata.updated_at > since {
-                            return Ok(UpdateCheckResult::Updated);
-                        }
+            let mut record_exists = false;
+            while wait_until > SystemTime::now() {
+                if let Some(metadata) = collection.get_record_metadata(&id).await.unwrap() {
+                    record_exists = true;
+                    if metadata.updated_at > since {
+                        return Ok(UpdateCheckResult::Updated);
                     }
-
-                    std::thread::sleep(Duration::from_millis(1000));
                 }
 
-                Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(if record_exists {
-                    UpdateCheckResult::NotModified
-                } else {
-                    UpdateCheckResult::NotFound
-                })
+                tokio::time::sleep(Duration::from_millis(1000)).await;
             }
-        })
-        .await?;
+
+            Ok(if record_exists {
+                UpdateCheckResult::NotModified
+            } else {
+                UpdateCheckResult::NotFound
+            })
+        }
+        .await;
 
         match was_updated {
             Ok(UpdateCheckResult::Updated) => {}
@@ -93,14 +90,7 @@ async fn get_record(
         }
     }
 
-    let indexer = Arc::clone(&state.indexer);
-    let record = web::block(move || {
-        let collection = indexer.collection(collection)?;
-        let record = collection.get(id, auth.map(|a| a.into()).as_ref())?;
-
-        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(record)
-    })
-    .await?;
+    let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await;
 
     match record {
         Ok(Some(record)) => Ok(HttpResponse::Ok()
@@ -194,6 +184,7 @@ async fn get_records(
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let collection = path.into_inner();
     let auth = body.auth;
+    let collection = state.indexer.collection(collection).await.unwrap();
 
     let sort_indexes = query
         .sort
@@ -207,31 +198,27 @@ async fn get_records(
         .collect::<Vec<_>>();
 
     if let Some(since) = query.since {
-        let was_updated = web::block({
+        let was_updated = async {
             let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
             let wait_until = SystemTime::now() + wait_for;
             let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
-            let indexer = Arc::clone(&state.indexer);
-            let collection = collection.clone();
 
-            move || {
-                let collection = indexer.collection(collection)?;
-                while wait_until > SystemTime::now() {
-                    if collection
-                        .get_metadata()?
-                        .map(|m| m.last_record_updated_at > since)
-                        .unwrap_or(false)
-                    {
-                        return Ok(true);
-                    }
-
-                    std::thread::sleep(Duration::from_millis(1000));
+            while wait_until > SystemTime::now() {
+                if collection
+                    .get_metadata()
+                    .await?
+                    .map(|m| m.last_record_updated_at > since)
+                    .unwrap_or(false)
+                {
+                    return Ok(true);
                 }
 
-                Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(false)
+                tokio::time::sleep(Duration::from_millis(1000)).await;
             }
-        })
-        .await?;
+
+            Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(false)
+        }
+        .await;
 
         match was_updated {
             Ok(true) => {}
@@ -240,11 +227,7 @@ async fn get_records(
         }
     }
 
-    let indexer = Arc::clone(&state.indexer);
-    let list_response = web::block(move || {
-        let collection = indexer.collection(collection)?;
-        let auth = auth.map(indexer::AuthUser::from);
-        let auth_ref = &auth.as_ref();
+    let list_response = async {
         let records = collection
             .list(
                 indexer::ListQuery {
@@ -254,17 +237,19 @@ async fn get_records(
                     cursor_after: query.after.clone(),
                     cursor_before: query.before.clone(),
                 },
-                auth_ref,
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
+                &auth.map(indexer::AuthUser::from).as_ref(),
+            )
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?;
 
         Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(ListResponse {
             cursor_before: records.first().map(|(c, _)| c.clone()),
             cursor_after: records.last().map(|(c, _)| c.clone()),
             data: records.into_iter().map(|(_, r)| r).collect(),
         })
-    })
-    .await?;
+    }
+    .await;
 
     match list_response {
         Ok(list_response) => Ok(HttpResponse::Ok()
@@ -288,54 +273,53 @@ async fn post_record(
     let collection = path.into_inner();
     let auth = body.auth;
 
-    let indexer = Arc::clone(&state.indexer);
-    let gateway = Arc::clone(&state.gateway);
-
-    let res = web::block(move || {
-        let auth = auth.map(|a| a.into());
-
-        let changes = match gateway.call(
-            &indexer,
+    let auth = auth.map(indexer::AuthUser::from);
+    let changes = state
+        .gateway
+        .call(
+            &state.indexer,
             collection,
             "constructor",
             "".to_string(),
             body.data.args,
             auth.as_ref(),
-        ) {
-            Ok(changes) => changes,
-            Err(e) => return Err(e),
-        };
+        )
+        .await;
 
-        for change in changes {
-            match change {
-                Change::Create {
-                    collection_id,
-                    record_id,
-                    record,
-                } => {
-                    let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref())?;
-                }
-                Change::Update {
-                    collection_id,
-                    record_id,
-                    record,
-                } => {
-                    let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref())?;
-                }
-                Change::Delete { record_id: _ } => todo!(),
+    let changes = match changes {
+        Ok(changes) => changes,
+        Err(e) => return Ok(HttpResponse::InternalServerError().body(e.to_string())),
+    };
+
+    for change in changes {
+        match change {
+            Change::Create {
+                collection_id,
+                record_id,
+                record,
+            } => {
+                let collection = state.indexer.collection(collection_id).await.unwrap();
+                collection
+                    .set(record_id, &record, auth.as_ref())
+                    .await
+                    .unwrap();
             }
+            Change::Update {
+                collection_id,
+                record_id,
+                record,
+            } => {
+                let collection = state.indexer.collection(collection_id).await.unwrap();
+                collection
+                    .set(record_id, &record, auth.as_ref())
+                    .await
+                    .unwrap();
+            }
+            Change::Delete { record_id: _ } => todo!(),
         }
-
-        Ok(())
-    })
-    .await?;
-
-    match res {
-        Ok(()) => Ok(HttpResponse::Ok().body("Record created")),
-        Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
     }
+
+    Ok(HttpResponse::Ok().body("Record created"))
 }
 
 #[post("/{collection}/records/{record}/call/{function}")]
@@ -347,54 +331,53 @@ async fn call_function(
     let (collection, record, function) = path.into_inner();
     let auth = body.auth;
 
-    let indexer = Arc::clone(&state.indexer);
-    let gateway = Arc::clone(&state.gateway);
-
-    let res = web::block(move || {
-        let auth = auth.map(|a| a.into());
-
-        let changes = match gateway.call(
-            &indexer,
+    let auth = auth.map(indexer::AuthUser::from);
+    let changes = state
+        .gateway
+        .call(
+            &state.indexer,
             collection,
             &function,
             record,
             body.data.args,
             auth.as_ref(),
-        ) {
-            Ok(changes) => changes,
-            Err(e) => return Err(e),
-        };
+        )
+        .await;
 
-        for change in changes {
-            match change {
-                Change::Create {
-                    collection_id,
-                    record_id,
-                    record,
-                } => {
-                    let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref())?;
-                }
-                Change::Update {
-                    collection_id,
-                    record_id,
-                    record,
-                } => {
-                    let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref())?;
-                }
-                Change::Delete { record_id: _ } => todo!(),
+    let changes = match changes {
+        Ok(changes) => changes,
+        Err(e) => return Ok(HttpResponse::InternalServerError().body(e.to_string())),
+    };
+
+    for change in changes {
+        match change {
+            Change::Create {
+                collection_id,
+                record_id,
+                record,
+            } => {
+                let collection = state.indexer.collection(collection_id).await.unwrap();
+                collection
+                    .set(record_id, &record, auth.as_ref())
+                    .await
+                    .unwrap();
             }
+            Change::Update {
+                collection_id,
+                record_id,
+                record,
+            } => {
+                let collection = state.indexer.collection(collection_id).await.unwrap();
+                collection
+                    .set(record_id, &record, auth.as_ref())
+                    .await
+                    .unwrap();
+            }
+            Change::Delete { record_id: _ } => todo!(),
         }
-
-        Ok(())
-    })
-    .await?;
-
-    match res {
-        Ok(()) => Ok(HttpResponse::Ok().body("Function called")),
-        Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
     }
+
+    Ok(HttpResponse::Ok().body("Function called"))
 }
 
 #[get("/v0/health")]

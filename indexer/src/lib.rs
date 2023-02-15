@@ -33,10 +33,10 @@ impl Indexer {
         self.store.destroy()
     }
 
-    pub fn collection(
+    pub async fn collection(
         &self,
         id: String,
     ) -> Result<Collection, Box<dyn Error + Send + Sync + 'static>> {
-        Collection::load(&self.store, id)
+        Collection::load(&self.store, id).await
     }
 }

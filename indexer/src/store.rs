@@ -9,7 +9,7 @@ use crate::{
 };
 
 pub(crate) struct Store {
-    db: rocksdb::DB,
+    db: std::sync::Arc<rocksdb::DB>,
 }
 
 pub(crate) enum Value<'a> {
@@ -34,13 +34,15 @@ impl Store {
 
         let db = rocksdb::DB::open(&options, path)?;
 
-        Ok(Self { db })
+        Ok(Self {
+            db: std::sync::Arc::new(db),
+        })
     }
 
-    pub(crate) fn set(
+    pub(crate) async fn set(
         &self,
-        key: &Key,
-        value: &Value,
+        key: &Key<'_>,
+        value: &Value<'_>,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         match (key, value) {
             (Key::Data { .. }, Value::DataValue(_)) => {}
@@ -49,19 +51,26 @@ impl Store {
             _ => return Err("invalid key/value combination".into()),
         }
 
-        self.db.put(key.serialize()?, value.serialize()?)?;
+        let key = key.serialize()?;
+        let value = value.serialize()?;
+        let db = std::sync::Arc::clone(&self.db);
+        tokio::task::spawn_blocking(move || db.put(key, value)).await??;
 
         Ok(())
     }
 
-    pub(crate) fn get(
+    pub(crate) async fn get(
         &self,
-        key: &Key,
+        key: &Key<'_>,
     ) -> Result<Option<RecordRoot>, Box<dyn Error + Send + Sync + 'static>> {
-        match self.db.get_pinned(key.serialize()?)? {
+        let key = key.serialize()?;
+        let db = std::sync::Arc::clone(&self.db);
+
+        tokio::task::spawn_blocking(move || match db.get_pinned(key)? {
             Some(slice) => Ok(Some(serde_json::from_slice(slice.as_ref())?)),
             None => Ok(None),
-        }
+        })
+        .await?
     }
 
     pub(crate) fn list(
@@ -151,8 +160,8 @@ pub(crate) mod tests {
         }
     }
 
-    #[test]
-    fn test_store_index() {
+    #[tokio::test]
+    async fn test_store_index() {
         let store = TestStore::default();
 
         let index = Key::new_index(
@@ -165,6 +174,7 @@ pub(crate) mod tests {
 
         store
             .set(&index, &Value::IndexValue(proto::IndexRecord::default()))
+            .await
             .unwrap();
 
         let upper_bound = index.clone().wildcard();
