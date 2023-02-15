@@ -15,7 +15,7 @@ pub use collection::{AuthUser, Collection, Cursor, ListQuery};
 pub use index::CollectionIndexField;
 pub use keys::Direction;
 pub use publickey::PublicKey;
-pub use record::{IndexValue, PathFinder, RecordReference, RecordValue};
+pub use record::{IndexValue, PathFinder, RecordReference, RecordRoot, RecordValue};
 pub use stableast_ext::FieldWalker;
 pub use store::StoreRecordValue;
 pub use where_query::WhereQuery;

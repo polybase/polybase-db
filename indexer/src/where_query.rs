@@ -6,15 +6,15 @@ use crate::keys::{self, Direction};
 use crate::record::IndexValue;
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
-pub(crate) struct FieldPath<'a>(pub(crate) Vec<Cow<'a, str>>);
+pub(crate) struct FieldPath(pub(crate) Vec<String>);
 
-impl PartialEq<&[&str]> for FieldPath<'_> {
+impl PartialEq<&[&str]> for FieldPath {
     fn eq(&self, other: &&[&str]) -> bool {
         self.0.iter().zip(other.iter()).all(|(a, b)| a == b)
     }
 }
 
-impl<'de, 'a> Deserialize<'de> for FieldPath<'a> {
+impl<'de> Deserialize<'de> for FieldPath {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -22,13 +22,13 @@ impl<'de, 'a> Deserialize<'de> for FieldPath<'a> {
         let s = Cow::<'de, str>::deserialize(deserializer)?;
         let mut path = Vec::new();
         for part in s.split('.') {
-            path.push(Cow::Owned(part.to_string()));
+            path.push(part.to_string());
         }
         Ok(FieldPath(path))
     }
 }
 
-impl Serialize for FieldPath<'_> {
+impl Serialize for FieldPath {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -44,44 +44,44 @@ impl Serialize for FieldPath<'_> {
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
-pub struct WhereQuery<'a>(pub(crate) HashMap<FieldPath<'a>, WhereNode<'a>>);
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct WhereQuery(pub(crate) HashMap<FieldPath, WhereNode>);
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-pub(crate) enum WhereNode<'a> {
-    Equality(WhereValue<'a>),
-    Inequality(WhereInequality<'a>),
+pub(crate) enum WhereNode {
+    Equality(WhereValue),
+    Inequality(WhereInequality),
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-pub(crate) enum WhereValue<'a> {
-    String(Cow<'a, str>),
+pub(crate) enum WhereValue {
+    String(String),
     Number(f64),
     Boolean(bool),
 }
 
-impl<'a> From<&'a WhereValue<'a>> for IndexValue<'a> {
-    fn from(value: &'a WhereValue<'a>) -> Self {
+impl From<WhereValue> for IndexValue {
+    fn from(value: WhereValue) -> Self {
         match value {
-            WhereValue::String(s) => IndexValue::String(Cow::Borrowed(s)),
-            WhereValue::Number(n) => IndexValue::Number(*n),
-            WhereValue::Boolean(b) => IndexValue::Boolean(*b),
+            WhereValue::String(s) => IndexValue::String(s),
+            WhereValue::Number(n) => IndexValue::Number(n),
+            WhereValue::Boolean(b) => IndexValue::Boolean(b),
         }
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
-pub(crate) struct WhereInequality<'a> {
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub(crate) struct WhereInequality {
     #[serde(rename = "$gt")]
-    pub(crate) gt: Option<WhereValue<'a>>,
+    pub(crate) gt: Option<WhereValue>,
     #[serde(rename = "$gte")]
-    pub(crate) gte: Option<WhereValue<'a>>,
+    pub(crate) gte: Option<WhereValue>,
     #[serde(rename = "$lt")]
-    pub(crate) lt: Option<WhereValue<'a>>,
+    pub(crate) lt: Option<WhereValue>,
     #[serde(rename = "$lte")]
-    pub(crate) lte: Option<WhereValue<'a>>,
+    pub(crate) lte: Option<WhereValue>,
 }
 
 #[derive(Debug)]
@@ -90,15 +90,15 @@ pub(crate) struct KeyRange<'a> {
     pub(crate) upper: keys::Key<'a>,
 }
 
-impl WhereQuery<'_> {
+impl WhereQuery {
     pub(crate) fn to_key_range<T>(
-        &self,
+        self,
         namespace: String,
         paths: &[&[T]],
         directions: &[keys::Direction],
-    ) -> Result<KeyRange<'_>, Box<dyn std::error::Error + Send + Sync + 'static>>
+    ) -> Result<KeyRange<'static>, Box<dyn std::error::Error + Send + Sync + 'static>>
     where
-        T: for<'other> PartialEq<Cow<'other, str>> + AsRef<str>,
+        T: for<'other> PartialEq<String> + AsRef<str>,
     {
         if paths.len() != directions.len() {
             return Err("Paths and directions must have the same length".into());
@@ -118,8 +118,8 @@ impl WhereQuery<'_> {
 
                 match node {
                     WhereNode::Equality(value) => {
-                        lower_values.push(Cow::Owned(IndexValue::from(value)));
-                        upper_values.push(Cow::Owned(IndexValue::from(value)));
+                        lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                        upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
                     }
                     WhereNode::Inequality(inequality) => {
                         ineq_found = true;
@@ -127,36 +127,36 @@ impl WhereQuery<'_> {
                         if let Some(value) = &inequality.gt {
                             if direction == &Direction::Ascending {
                                 lower_exclusive = true;
-                                lower_values.push(Cow::Owned(IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             } else {
                                 upper_exclusive = true;
-                                upper_values.push(Cow::Owned(IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             }
                         }
 
                         if let Some(value) = &inequality.gte {
                             if direction == &Direction::Ascending {
-                                lower_values.push(Cow::Owned(IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             } else {
-                                upper_values.push(Cow::Owned(IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             }
                         }
 
                         if let Some(value) = &inequality.lt {
                             if direction == &Direction::Ascending {
                                 upper_exclusive = true;
-                                upper_values.push(Cow::Owned(IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             } else {
                                 lower_exclusive = true;
-                                lower_values.push(Cow::Owned(IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             }
                         }
 
                         if let Some(value) = &inequality.lte {
                             if direction == &Direction::Ascending {
-                                upper_values.push(Cow::Owned(IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             } else {
-                                lower_values.push(Cow::Owned(IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
                             }
                         }
                     }
@@ -209,8 +209,8 @@ mod test {
     test_to_key_range!(
         test_to_key_range_name_eq_john,
         WhereQuery(HashMap::from_iter(vec![(
-            FieldPath(vec![Cow::Borrowed("name")]),
-            WhereNode::Equality(WhereValue::String(Cow::Borrowed("john"))),
+            FieldPath(vec!["name".to_string()]),
+            WhereNode::Equality(WhereValue::String("john".to_string())),
         )])),
         &[&["name"]],
         &[keys::Direction::Ascending],
@@ -218,14 +218,14 @@ mod test {
             "namespace".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("john")))]
+            vec![Cow::Borrowed(&IndexValue::String("john".to_string()))]
         )
         .unwrap(),
         keys::Key::new_index(
             "namespace".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("john")))]
+            vec![Cow::Borrowed(&IndexValue::String("john".to_string()))]
         )
         .unwrap()
         .wildcard()
@@ -234,7 +234,7 @@ mod test {
     test_to_key_range!(
         test_to_key_range_age_gt_30,
         WhereQuery(HashMap::from_iter(vec![(
-            FieldPath(vec![Cow::Borrowed("age")]),
+            FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
                 gt: Some(WhereValue::Number(30.0)),
                 ..Default::default()
@@ -263,7 +263,7 @@ mod test {
     test_to_key_range!(
         test_to_key_range_age_gte_30,
         WhereQuery(HashMap::from_iter(vec![(
-            FieldPath(vec![Cow::Borrowed("age")]),
+            FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
                 gte: Some(WhereValue::Number(30.0)),
                 ..Default::default()
@@ -291,7 +291,7 @@ mod test {
     test_to_key_range!(
         test_to_key_range_age_lt_30,
         WhereQuery(HashMap::from_iter(vec![(
-            FieldPath(vec![Cow::Borrowed("age")]),
+            FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
                 lt: Some(WhereValue::Number(30.0)),
                 ..Default::default()
@@ -318,7 +318,7 @@ mod test {
     test_to_key_range!(
         test_to_key_range_age_lte_30,
         WhereQuery(HashMap::from_iter(vec![(
-            FieldPath(vec![Cow::Borrowed("age")]),
+            FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
                 lte: Some(WhereValue::Number(30.0)),
                 ..Default::default()
@@ -346,7 +346,7 @@ mod test {
     test_to_key_range!(
         test_to_key_range_age_lt_50_desc,
         WhereQuery(HashMap::from_iter(vec![(
-            FieldPath(vec![Cow::Borrowed("age")]),
+            FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
                 lt: Some(WhereValue::Number(50.0)),
                 ..Default::default()
@@ -376,14 +376,14 @@ mod test {
         test_to_key_range_age_gt_30_name_eq_john,
         WhereQuery(HashMap::from_iter(vec![
             (
-                FieldPath(vec![Cow::Borrowed("age")]),
+                FieldPath(vec!["age".to_string()]),
                 WhereNode::Inequality(WhereInequality {
                     gt: Some(WhereValue::Number(30.0)),
                     ..Default::default()
                 }),
             ),
             (
-                FieldPath(vec![Cow::Borrowed("name")]),
+                FieldPath(vec!["name".to_string()]),
                 WhereNode::Equality(WhereValue::String("John".into())),
             ),
         ])),
@@ -394,7 +394,7 @@ mod test {
             &[&["name"], &["age"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::String("john".to_string())),
                 Cow::Borrowed(&IndexValue::Number(30.0)),
             ]
         )
@@ -414,11 +414,11 @@ mod test {
         test_to_key_range_name_eq_john_id_eq_rec1,
         WhereQuery(HashMap::from_iter(vec![
             (
-                FieldPath(vec![Cow::Borrowed("name")]),
+                FieldPath(vec!["name".to_string()]),
                 WhereNode::Equality(WhereValue::String("John".into())),
             ),
             (
-                FieldPath(vec![Cow::Borrowed("id")]),
+                FieldPath(vec!["id".to_string()]),
                 WhereNode::Equality(WhereValue::String("rec1".into())),
             ),
         ])),
@@ -429,8 +429,8 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("rec1"))),
+                Cow::Borrowed(&IndexValue::String("john".to_string())),
+                Cow::Borrowed(&IndexValue::String("rec1".to_string())),
             ]
         )
         .unwrap(),
@@ -439,8 +439,8 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("rec1"))),
+                Cow::Borrowed(&IndexValue::String("john".to_string())),
+                Cow::Borrowed(&IndexValue::String("rec1".to_string())),
             ]
         )
         .unwrap()

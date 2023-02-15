@@ -27,54 +27,18 @@ enum RecordBacking<'a> {
     Vec(Vec<u8>),
 }
 
-#[ouroboros::self_referencing]
-pub struct StoreRecordValue<'db> {
-    slice: RecordBacking<'db>,
-    #[borrows(slice)]
-    #[covariant]
-    pub record: RecordRoot<'this>,
+pub struct StoreRecordValue {
+    pub record: RecordRoot,
 }
 
-impl StoreRecordValue<'_> {
-    pub fn new_from_static(slice: &'static [u8]) -> Result<Self, serde_json::Error> {
-        StoreRecordValueTryBuilder {
-            slice: RecordBacking::Static(slice),
-            record_builder: |slice| {
-                serde_json::from_slice(match slice {
-                    RecordBacking::Pinnable(p) => p.as_ref(),
-                    RecordBacking::Static(s) => s,
-                    RecordBacking::Vec(v) => v.as_slice(),
-                })
-            },
-        }
-        .try_build()
-    }
-
-    pub fn new_from_vec(slice: Vec<u8>) -> Result<Self, serde_json::Error> {
-        StoreRecordValueTryBuilder {
-            slice: RecordBacking::Vec(slice),
-            record_builder: |slice| {
-                serde_json::from_slice(match slice {
-                    RecordBacking::Pinnable(p) => p.as_ref(),
-                    RecordBacking::Static(s) => s,
-                    RecordBacking::Vec(v) => v.as_slice(),
-                })
-            },
-        }
-        .try_build()
-    }
-
-    pub fn get_slice(&self) -> &[u8] {
-        match self.borrow_slice() {
-            RecordBacking::Pinnable(p) => p.deref(),
-            RecordBacking::Static(s) => s,
-            RecordBacking::Vec(v) => v.deref(),
-        }
+impl StoreRecordValue {
+    pub fn borrow_record(&self) -> &RecordRoot {
+        &self.record
     }
 }
 
 pub(crate) enum Value<'a> {
-    DataValue(Cow<'a, HashMap<Cow<'a, str>, record::RecordValue<'a>>>),
+    DataValue(&'a RecordRoot),
     IndexValue(proto::IndexRecord),
 }
 
@@ -120,19 +84,9 @@ impl Store {
         key: &Key,
     ) -> Result<Option<StoreRecordValue>, Box<dyn Error + Send + Sync + 'static>> {
         match self.db.get_pinned(key.serialize()?)? {
-            Some(slice) => Ok(Some(
-                StoreRecordValueTryBuilder {
-                    slice: RecordBacking::Pinnable(slice),
-                    record_builder: |slice| {
-                        serde_json::from_slice(match slice {
-                            RecordBacking::Pinnable(p) => p.as_ref(),
-                            RecordBacking::Static(s) => s,
-                            RecordBacking::Vec(v) => v.as_slice(),
-                        })
-                    },
-                }
-                .try_build()?,
-            )),
+            Some(slice) => Ok(Some(StoreRecordValue {
+                record: serde_json::from_slice(slice.as_ref())?,
+            })),
             None => Ok(None),
         }
     }
@@ -225,9 +179,7 @@ pub(crate) mod tests {
             "ns".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&record::IndexValue::String(Cow::Borrowed(
-                "John",
-            )))],
+            vec![Cow::Owned(record::IndexValue::String("John".to_string()))],
         )
         .unwrap();
 

@@ -1,25 +1,22 @@
 use std::{borrow::Cow, collections::HashMap, error::Error};
 
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, BorrowCow};
 
 use crate::{keys, publickey};
 
-pub type RecordRoot<'a> = HashMap<Cow<'a, str>, RecordValue<'a>>;
+pub type RecordRoot = HashMap<String, RecordValue>;
 
-#[serde_as]
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-pub enum RecordValue<'a> {
-    #[serde(borrow)]
-    IndexValue(IndexValue<'a>),
-    Map(#[serde_as(as = "HashMap<BorrowCow, _>")] HashMap<Cow<'a, str>, RecordValue<'a>>),
-    Array(Vec<RecordValue<'a>>),
+pub enum RecordValue {
+    IndexValue(IndexValue),
+    Map(HashMap<String, RecordValue>),
+    Array(Vec<RecordValue>),
 }
 
 // TODO: use this to deserialize from a JSON provided by the user, to our RecordValue.
 // The database will store RecordValue. Conversion only has to happen once.
-impl TryFrom<(&polylang::stableast::Type<'_>, serde_json::Value)> for RecordValue<'_> {
+impl TryFrom<(&polylang::stableast::Type<'_>, serde_json::Value)> for RecordValue {
     type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
     fn try_from(
@@ -28,7 +25,7 @@ impl TryFrom<(&polylang::stableast::Type<'_>, serde_json::Value)> for RecordValu
         match (ty, value) {
             (polylang::stableast::Type::Primitive(p), value) => match (&p.value, value) {
                 (polylang::stableast::PrimitiveType::String, serde_json::Value::String(s)) => {
-                    Ok(RecordValue::IndexValue(IndexValue::String(Cow::Owned(s))))
+                    Ok(RecordValue::IndexValue(IndexValue::String(s)))
                 }
                 (polylang::stableast::PrimitiveType::Number, serde_json::Value::Number(n)) => Ok(
                     RecordValue::IndexValue(IndexValue::Number(n.as_f64().unwrap())),
@@ -48,7 +45,7 @@ impl TryFrom<(&polylang::stableast::Type<'_>, serde_json::Value)> for RecordValu
             (polylang::stableast::Type::Map(t), serde_json::Value::Object(o)) => {
                 let mut map = HashMap::with_capacity(o.len());
                 for (k, v) in o {
-                    map.insert(Cow::Owned(k), RecordValue::try_from((t.value.as_ref(), v))?);
+                    map.insert(k, RecordValue::try_from((t.value.as_ref(), v))?);
                 }
                 Ok(RecordValue::Map(map))
             }
@@ -57,7 +54,7 @@ impl TryFrom<(&polylang::stableast::Type<'_>, serde_json::Value)> for RecordValu
     }
 }
 
-impl<'rv> RecordValue<'rv> {
+impl RecordValue {
     pub fn walk<'a, E: Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,
@@ -118,13 +115,10 @@ impl<'rv> RecordValue<'rv> {
         Ok(())
     }
 
-    pub fn walk_maps_mut<E>(
+    pub fn walk_maps_mut<'rv, E>(
         &mut self,
         current_path: &mut Vec<Cow<'rv, str>>,
-        f: &mut impl FnMut(
-            &[Cow<'rv, str>],
-            &mut HashMap<Cow<'rv, str>, RecordValue<'rv>>,
-        ) -> Result<(), E>,
+        f: &mut impl FnMut(&[Cow<'rv, str>], &mut HashMap<String, RecordValue>) -> Result<(), E>,
     ) -> Result<(), E> {
         match self {
             RecordValue::IndexValue(_) => {}
@@ -132,7 +126,7 @@ impl<'rv> RecordValue<'rv> {
                 f(current_path, m)?;
                 let keys = m.keys().cloned().collect::<Vec<_>>();
                 for (k, v) in keys.into_iter().zip(m.values_mut()) {
-                    current_path.push(k);
+                    current_path.push(Cow::Owned(k));
                     v.walk_maps_mut(current_path, f)?;
                     current_path.pop();
                 }
@@ -155,10 +149,10 @@ pub struct RecordReference {
     pub collection_id: Option<String>,
 }
 
-impl TryFrom<&RecordValue<'_>> for RecordReference {
+impl TryFrom<&RecordValue> for RecordReference {
     type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
 
-    fn try_from(value: &RecordValue<'_>) -> Result<Self, Self::Error> {
+    fn try_from(value: &RecordValue) -> Result<Self, Self::Error> {
         match value {
             RecordValue::Map(m) => {
                 let id = match m.get("id") {
@@ -179,14 +173,14 @@ impl TryFrom<&RecordValue<'_>> for RecordReference {
     }
 }
 
-pub trait PathFinder<'a> {
-    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue<'a>>
+pub trait PathFinder {
+    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue>
     where
         T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>;
 }
 
-impl<'a> PathFinder<'a> for RecordRoot<'a> {
-    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue<'a>>
+impl PathFinder for RecordRoot {
+    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue>
     where
         T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
     {
@@ -206,8 +200,8 @@ impl<'a> PathFinder<'a> for RecordRoot<'a> {
     }
 }
 
-impl<'a> PathFinder<'a> for RecordValue<'a> {
-    fn find_path<T>(&self, path: &[T]) -> std::option::Option<&RecordValue<'a>>
+impl PathFinder for RecordValue {
+    fn find_path<T>(&self, path: &[T]) -> std::option::Option<&RecordValue>
     where
         T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
     {
@@ -239,20 +233,16 @@ impl<'a> PathFinder<'a> for RecordValue<'a> {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-#[serde_as]
-pub enum IndexValue<'a> {
+pub enum IndexValue {
     Number(f64),
     Boolean(bool),
     Null,
-    #[serde(borrow)]
-    String(Cow<'a, str>),
-    #[serde(borrow)]
-    Bytes(Cow<'a, [u8]>),
-    #[serde(borrow)]
-    PublicKey(#[serde_as(as = "Box<BorrowCow>")] Box<Cow<'a, publickey::PublicKey>>),
+    String(String),
+    Bytes(Vec<u8>),
+    PublicKey(publickey::PublicKey),
 }
 
-impl<'a> IndexValue<'a> {
+impl IndexValue {
     pub(crate) fn byte_prefix(&self) -> u8 {
         match self {
             IndexValue::Null => keys::BYTE_NULL,
@@ -293,36 +283,23 @@ impl<'a> IndexValue<'a> {
     }
 
     pub(crate) fn deserialize(
-        bytes: &'a [u8],
+        bytes: &[u8],
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let type_prefix = bytes[0];
         let value = &bytes[1..];
         let value = match type_prefix {
-            BYTE_STRING => IndexValue::String(Cow::Owned(String::from_utf8(value.to_vec())?)),
+            BYTE_STRING => IndexValue::String(String::from_utf8(value.to_vec())?),
             BYTE_NUMBER => IndexValue::Number(f64::from_be_bytes(value.try_into()?)),
             BYTE_BOOLEAN => IndexValue::Boolean(match value[0] {
                 0x00 => false,
                 0x01 => true,
                 _ => return Err("invalid boolean value".into()),
             }),
-            BYTE_BYTES => IndexValue::Bytes(Cow::Borrowed(value)),
+            BYTE_BYTES => IndexValue::Bytes(value.to_vec()),
             BYTE_NULL => IndexValue::Null,
             _ => return Err("invalid index value".into()),
         };
 
         Ok(value)
-    }
-
-    pub(crate) fn to_static(&self) -> IndexValue<'static> {
-        match self {
-            IndexValue::String(s) => IndexValue::String(Cow::Owned(s.to_string())),
-            IndexValue::Number(n) => IndexValue::Number(*n),
-            IndexValue::Boolean(b) => IndexValue::Boolean(*b),
-            IndexValue::Bytes(b) => IndexValue::Bytes(Cow::Owned(b.to_vec())),
-            IndexValue::Null => IndexValue::Null,
-            IndexValue::PublicKey(p) => {
-                IndexValue::PublicKey(Box::new(Cow::Owned(p.as_ref().as_ref().to_owned())))
-            }
-        }
     }
 }

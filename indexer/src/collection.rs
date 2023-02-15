@@ -26,7 +26,7 @@ static COLLECTION_COLLECTION_RECORD: Lazy<String> = Lazy::new(|| {
 
     hm.insert(
         Cow::Borrowed("id"),
-        RecordValue::IndexValue(IndexValue::String(Cow::Borrowed("collections"))),
+        RecordValue::IndexValue(IndexValue::String("collections".to_string())),
     );
 
     let code = r#"
@@ -61,31 +61,31 @@ collection Collection {
 
     hm.insert(
         Cow::Borrowed("code"),
-        RecordValue::IndexValue(IndexValue::String(Cow::Borrowed(code))),
+        RecordValue::IndexValue(IndexValue::String(code.to_string())),
     );
 
     let mut program = None;
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
     hm.insert(
         Cow::Borrowed("ast"),
-        RecordValue::IndexValue(IndexValue::String(Cow::Owned(
+        RecordValue::IndexValue(IndexValue::String(
             serde_json::to_string(&stable_ast).unwrap(),
-        ))),
+        )),
     );
 
     serde_json::to_string(&hm).unwrap()
 });
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Authorization<'a> {
+pub(crate) enum Authorization {
     Public,
-    Private(PrivateAuthorization<'a>),
+    Private(PrivateAuthorization),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PrivateAuthorization<'a> {
-    pub(crate) read_fields: Vec<where_query::FieldPath<'a>>,
-    pub(crate) delegate_fields: Vec<where_query::FieldPath<'a>>,
+pub(crate) struct PrivateAuthorization {
+    pub(crate) read_fields: Vec<where_query::FieldPath>,
+    pub(crate) delegate_fields: Vec<where_query::FieldPath>,
 }
 
 #[derive(Clone)]
@@ -93,7 +93,7 @@ pub struct Collection<'a> {
     store: &'a store::Store,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
-    authorization: Authorization<'a>,
+    authorization: Authorization,
 }
 
 pub struct CollectionMetadata {
@@ -106,7 +106,7 @@ pub struct RecordMetadata {
 
 pub struct ListQuery<'a> {
     pub limit: Option<usize>,
-    pub where_query: &'a where_query::WhereQuery<'a>,
+    pub where_query: where_query::WhereQuery,
     pub order_by: &'a [index::CollectionIndexField<'a>],
     pub cursor_before: Option<Cursor>,
     pub cursor_after: Option<Cursor>,
@@ -170,7 +170,7 @@ impl<'a> Collection<'a> {
         store: &'a store::Store,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
-        authorization: Authorization<'a>,
+        authorization: Authorization,
     ) -> Self {
         Self {
             store,
@@ -293,9 +293,7 @@ impl<'a> Collection<'a> {
                             prop.directives
                                 .iter()
                                 .find(|dir| dir.name == "read")
-                                .map(|_| {
-                                    where_query::FieldPath(vec![Cow::Owned(prop.name.to_string())])
-                                })
+                                .map(|_| where_query::FieldPath(vec![prop.name.to_string()]))
                         })
                         .collect::<Vec<_>>(),
                     delegate_fields: {
@@ -305,7 +303,7 @@ impl<'a> Collection<'a> {
                             if let crate::stableast_ext::Field::Property(p) = field {
                                 if p.directives.iter().any(|dir| dir.name == "delegate") {
                                     delegate_fields.push(where_query::FieldPath(
-                                        path.iter().map(|p| Cow::Owned(p.to_string())).collect(),
+                                        path.iter().map(|p| p.to_string()).collect(),
                                     ));
                                 }
                             };
@@ -336,7 +334,7 @@ impl<'a> Collection<'a> {
 
     pub(crate) fn user_can_read(
         &self,
-        record: &HashMap<Cow<str>, RecordValue>,
+        record: &RecordRoot,
         user: &Option<&AuthUser>,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let read_fields = match &self.authorization {
@@ -361,7 +359,7 @@ impl<'a> Collection<'a> {
                         match value {
                             RecordValue::IndexValue(IndexValue::PublicKey(
                                 record_pk,
-                            )) if record_pk.as_ref().as_ref() == &user.public_key => {
+                            )) if record_pk == &user.public_key => {
                                 authorized = true;
                             }
                             RecordValue::Map(_) => {
@@ -394,8 +392,7 @@ impl<'a> Collection<'a> {
         }
 
         if !authorized {
-            authorized =
-                self.has_delegate_access(&RecordValue::Map(record.clone()), &Some(user))?;
+            authorized = self.has_delegate_access(record, &Some(user))?;
         }
 
         Ok(authorized)
@@ -404,7 +401,7 @@ impl<'a> Collection<'a> {
     fn user_can_read_lazy<'b>(
         &self,
         record_getter: impl FnOnce() -> Result<
-            Option<&'b RecordRoot<'b>>,
+            Option<&'b RecordRoot>,
             Box<dyn Error + Send + Sync + 'static>,
         >,
         user: Option<&AuthUser>,
@@ -421,9 +418,9 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub fn has_delegate_access<'b>(
+    pub fn has_delegate_access(
         &self,
-        record: &impl PathFinder<'b>,
+        record: &impl PathFinder,
         user: &Option<&AuthUser>,
     ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
         let delegate_fields = match &self.authorization {
@@ -440,9 +437,7 @@ impl<'a> Collection<'a> {
             };
 
             match delegate_value {
-                RecordValue::IndexValue(IndexValue::PublicKey(pk))
-                    if pk.as_ref().as_ref() == &user.public_key =>
-                {
+                RecordValue::IndexValue(IndexValue::PublicKey(pk)) if pk == &user.public_key => {
                     return Ok(true);
                 }
                 RecordValue::Map(_) => {
@@ -481,17 +476,17 @@ impl<'a> Collection<'a> {
 
         self.store.set(
             &collection_metadata_key,
-            &store::Value::DataValue(Cow::Owned(
-                [(
+            &store::Value::DataValue(
+                &[(
                     "lastRecordUpdatedAt".into(),
-                    RecordValue::IndexValue(IndexValue::String(Cow::Owned(
+                    RecordValue::IndexValue(IndexValue::String(
                         time.duration_since(SystemTime::UNIX_EPOCH)?
                             .as_millis()
                             .to_string(),
-                    ))),
+                    )),
                 )]
                 .into(),
-            )),
+            ),
         )?;
         Ok(())
     }
@@ -529,18 +524,18 @@ impl<'a> Collection<'a> {
 
         self.store.set(
             &record_metadata_key,
-            &store::Value::DataValue(Cow::Owned(
-                [(
+            &store::Value::DataValue(
+                &[(
                     "updatedAt".into(),
-                    RecordValue::IndexValue(IndexValue::String(Cow::Owned(
+                    RecordValue::IndexValue(IndexValue::String(
                         updated_at
                             .duration_since(SystemTime::UNIX_EPOCH)?
                             .as_millis()
                             .to_string(),
-                    ))),
+                    )),
                 )]
                 .into(),
-            )),
+            ),
         )?;
         Ok(())
     }
@@ -571,7 +566,7 @@ impl<'a> Collection<'a> {
     pub fn set(
         &self,
         id: String,
-        value: &HashMap<Cow<str>, RecordValue>,
+        value: &RecordRoot,
         auth_user: Option<&AuthUser>,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         match value.get("id") {
@@ -595,8 +590,7 @@ impl<'a> Collection<'a> {
             return Err("unauthorized".into());
         }
 
-        self.store
-            .set(&data_key, &store::Value::DataValue(Cow::Borrowed(value)))?;
+        self.store.set(&data_key, &store::Value::DataValue(value))?;
 
         self.update_metadata(&SystemTime::now())?;
         self.set_record_metadata(id, &SystemTime::now())?;
@@ -625,9 +619,9 @@ impl<'a> Collection<'a> {
         user: Option<&AuthUser>,
     ) -> Result<Option<StoreRecordValue>, Box<dyn Error + Send + Sync + 'static>> {
         if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(StoreRecordValue::new_from_static(
-                COLLECTION_COLLECTION_RECORD.as_bytes(),
-            )?));
+            return Ok(Some(StoreRecordValue {
+                record: serde_json::from_str(&COLLECTION_COLLECTION_RECORD)?,
+            }));
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
@@ -644,23 +638,26 @@ impl<'a> Collection<'a> {
 
     pub fn list(
         &'a self,
-        query: ListQuery,
+        ListQuery {
+            limit,
+            where_query,
+            order_by,
+            cursor_before,
+            cursor_after,
+        }: ListQuery,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<
         impl Iterator<
-                Item = Result<
-                    (Cursor, StoreRecordValue<'a>),
-                    Box<dyn Error + Send + Sync + 'static>,
-                >,
+                Item = Result<(Cursor, StoreRecordValue), Box<dyn Error + Send + Sync + 'static>>,
             > + '_,
         Box<dyn Error + Send + Sync + 'static>,
     > {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(query.where_query, query.order_by)) else {
+        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
             return Err("No index found matching the query".into());
         };
 
-        let key_range = query
-            .where_query
+        let where_query = where_query;
+        let key_range = where_query
             .to_key_range(
                 self.collection_id.clone(),
                 &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
@@ -673,8 +670,8 @@ impl<'a> Collection<'a> {
             upper: key_range.upper.to_static(),
         };
 
-        let mut reverse = index.should_list_in_reverse(query.order_by);
-        let key_range = match (query.cursor_after, query.cursor_before) {
+        let mut reverse = index.should_list_in_reverse(order_by);
+        let key_range = match (cursor_after, cursor_before) {
             (Some(mut after), _) => {
                 after.0.immediate_successor_value_mut()?;
                 where_query::KeyRange {
@@ -733,7 +730,7 @@ impl<'a> Collection<'a> {
                     }
                 },
             )
-            .take(query.limit.unwrap_or(usize::MAX)))
+            .take(limit.unwrap_or(usize::MAX)))
     }
 }
 
@@ -784,14 +781,12 @@ mod tests {
                         let mut map = HashMap::new();
 
                         map.insert(
-                            Cow::Borrowed("id"),
-                            RecordValue::IndexValue(IndexValue::String(Cow::Borrowed(&id))),
+                            "id".to_string(),
+                            RecordValue::IndexValue(IndexValue::String(id.clone())),
                         );
                         map.insert(
-                            Cow::Borrowed("ast"),
-                            RecordValue::IndexValue(IndexValue::String(Cow::Owned(
-                                ast_json.clone(),
-                            ))),
+                            "ast".to_string(),
+                            RecordValue::IndexValue(IndexValue::String(ast_json.clone())),
                         );
 
                         map
@@ -893,7 +888,7 @@ mod tests {
         let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
 
         let value_json = r#"{"id": "1", "name": "test" }"#;
-        let value = serde_json::from_str::<HashMap<Cow<str>, RecordValue>>(value_json).unwrap();
+        let value = serde_json::from_str::<RecordRoot>(value_json).unwrap();
 
         collection.set("1".into(), &value, None).unwrap();
 
@@ -930,18 +925,18 @@ mod tests {
         );
 
         let value_1_json = r#"{"id": "1", "name": "test" }"#;
-        let value_1 = serde_json::from_str::<HashMap<Cow<str>, RecordValue>>(value_1_json).unwrap();
+        let value_1 = serde_json::from_str::<RecordRoot>(value_1_json).unwrap();
         collection.set("1".into(), &value_1, None).unwrap();
 
         let value_2_json = r#"{"id": "2", "name": "test" }"#;
-        let value_2 = serde_json::from_str::<HashMap<Cow<str>, RecordValue>>(value_2_json).unwrap();
+        let value_2 = serde_json::from_str::<RecordRoot>(value_2_json).unwrap();
         collection.set("2".into(), &value_2, None).unwrap();
 
         let mut results = collection
             .list(
                 ListQuery {
                     limit: None,
-                    where_query: &where_query::WhereQuery(
+                    where_query: where_query::WhereQuery(
                         [(
                             where_query::FieldPath(vec!["name".into()]),
                             where_query::WhereNode::Equality(where_query::WhereValue::String(
@@ -1004,9 +999,9 @@ mod tests {
                     ),
                     (
                         "owner".into(),
-                        RecordValue::IndexValue(IndexValue::PublicKey(Box::new(Cow::Borrowed(
-                            &auth_user.public_key,
-                        )))),
+                        RecordValue::IndexValue(IndexValue::PublicKey(
+                            auth_user.public_key.clone(),
+                        )),
                     ),
                 ]
                 .into(),
@@ -1061,9 +1056,9 @@ mod tests {
                     ),
                     (
                         "owner".into(),
-                        RecordValue::IndexValue(IndexValue::PublicKey(Box::new(Cow::Borrowed(
-                            &auth_user.public_key,
-                        )))),
+                        RecordValue::IndexValue(IndexValue::PublicKey(
+                            auth_user.public_key.clone(),
+                        )),
                     ),
                     (
                         "name".into(),

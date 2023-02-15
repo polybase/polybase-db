@@ -1,15 +1,11 @@
-use std::{
-    borrow::Cow, cmp::Ordering, collections::HashMap, error::Error, fmt, io::Write, ops::Deref,
-};
+use std::{borrow::Cow, cmp::Ordering, fmt};
 
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, BorrowCow};
 
 use crate::{
-    proto, publickey,
-    record::{IndexValue, RecordValue},
+    proto,
+    record::{IndexValue, RecordRoot},
 };
 
 const MULTICODEC_PROTOBUF: u64 = 0x50;
@@ -133,7 +129,7 @@ pub(crate) enum Key<'a> {
     Index {
         cid: Cow<'a, [u8]>,
         directions: Cow<'a, [Direction]>,
-        values: Vec<Cow<'a, IndexValue<'a>>>,
+        values: Vec<Cow<'a, IndexValue>>,
     },
 }
 
@@ -177,7 +173,7 @@ impl<'a> Key<'a> {
         namespace: String,
         paths: &[&[impl AsRef<str>]],
         directions: &[Direction],
-        values: Vec<Cow<'a, IndexValue<'a>>>,
+        values: Vec<Cow<'a, IndexValue>>,
     ) -> Result<Self, cid::Error> {
         let data = proto::IndexKey {
             namespace,
@@ -308,7 +304,7 @@ impl<'a> Key<'a> {
                 directions: Cow::Owned(directions.into_owned()),
                 values: values
                     .into_iter()
-                    .map(|v| Cow::Owned(v.into_owned().to_static()))
+                    .map(|v| Cow::Owned(v.into_owned()))
                     .collect(),
             },
         }
@@ -371,7 +367,7 @@ pub(crate) fn index_record_key_with_record<'a, T>(
     namespace: String,
     paths: &[&[T]],
     directions: &[Direction],
-    record: &'a HashMap<Cow<str>, RecordValue>,
+    record: &'a RecordRoot,
 ) -> Result<Key<'a>, Box<dyn std::error::Error + Send + Sync + 'static>>
 where
     T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
@@ -467,7 +463,7 @@ mod test {
 
     #[test]
     fn test_index_value_string() {
-        let value = IndexValue::String(Cow::Borrowed("hello"));
+        let value = IndexValue::String("hello".to_string());
         let mut serialized = vec![];
         value.serialize(&mut serialized).unwrap();
         let (field, _) = eat_field(&serialized);
@@ -481,10 +477,10 @@ mod test {
         let deserialized = serde_json::from_str(serialized).unwrap();
 
         match deserialized {
-            RecordValue::IndexValue(IndexValue::String(Cow::Owned(_))) => {
+            RecordValue::IndexValue(IndexValue::String(_)) => {
                 panic!("should not be owned")
             }
-            RecordValue::IndexValue(IndexValue::String(Cow::Borrowed(_))) => {}
+            RecordValue::IndexValue(IndexValue::String(_)) => {}
             _ => panic!("should be string"),
         }
     }
@@ -499,19 +495,15 @@ mod test {
                 assert_eq!(m.len(), 1);
                 let (k, v) = m.iter().next().unwrap();
 
-                match k {
-                    Cow::Borrowed("hello") => {}
-                    Cow::Borrowed(s) => panic!("should be hello, got {s}"),
-                    Cow::Owned(_) => panic!("should not be owned"),
+                match k.as_str() {
+                    "hello" => {}
+                    s => panic!("should be hello, got {s}"),
                 }
 
                 match v {
-                    RecordValue::IndexValue(IndexValue::String(Cow::Borrowed("world"))) => {}
-                    RecordValue::IndexValue(IndexValue::String(Cow::Borrowed(s))) => {
+                    RecordValue::IndexValue(IndexValue::String(s)) if s == "world" => {}
+                    RecordValue::IndexValue(IndexValue::String(s)) => {
                         panic!("should be world, got {s}")
-                    }
-                    RecordValue::IndexValue(IndexValue::String(Cow::Owned(_))) => {
-                        panic!("should not be owned")
                     }
                     _ => panic!("should be string"),
                 }
@@ -558,7 +550,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Descending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -568,7 +560,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Descending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -583,7 +575,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -593,7 +585,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
             ],
         )
@@ -608,7 +600,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
             ],
         )
@@ -618,7 +610,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -632,14 +624,14 @@ mod test {
             "namespace".to_string(),
             &[&["a"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello2")))]
+            vec![Cow::Borrowed(&IndexValue::String("hello2".to_string()))]
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
             &[&["a"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello")))]
+            vec![Cow::Borrowed(&IndexValue::String("hello".to_string()))]
         )
         .unwrap(),
         Ordering::Greater
@@ -702,7 +694,7 @@ mod test {
             &[Direction::Ascending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
             ],
         )
         .unwrap(),
@@ -733,7 +725,7 @@ mod test {
             &[Direction::Ascending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
             ],
         )
         .unwrap(),
@@ -878,7 +870,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("1"))),
+                Cow::Borrowed(&IndexValue::String("1".to_string())),
             ],
         )
         .unwrap(),
@@ -921,7 +913,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(40.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("2"))),
+                Cow::Borrowed(&IndexValue::String("2".to_string())),
             ],
         )
         .unwrap(),
@@ -931,7 +923,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(39.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("2"))),
+                Cow::Borrowed(&IndexValue::String("2".to_string())),
             ],
         )
         .unwrap(),
@@ -945,8 +937,8 @@ mod test {
             &[&["name"], &["id"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("rec1"))),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
+                Cow::Borrowed(&IndexValue::String("rec1".to_string())),
             ],
         )
         .unwrap(),
@@ -954,7 +946,7 @@ mod test {
             "namespace".to_string(),
             &[&["name"], &["id"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("Jane")))],
+            vec![Cow::Borrowed(&IndexValue::String("Jane".to_string()))],
         )
         .unwrap()
         .wildcard(),

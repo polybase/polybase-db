@@ -1,18 +1,13 @@
-use polylang::stableast::{PublicKey, Record};
 use serde::{Deserialize, Serialize};
-use std::{
-    borrow::{BorrowMut, Cow},
-    collections::HashMap,
-};
+use std::{borrow::Cow, collections::HashMap};
 
 use indexer::PathFinder;
 use indexer::{FieldWalker, IndexValue, Indexer, RecordReference, RecordValue};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionOutput {
-    #[serde(borrow)]
-    args: Vec<indexer::RecordValue<'static>>,
-    instance: HashMap<Cow<'static, str>, indexer::RecordValue<'static>>,
+    args: Vec<indexer::RecordValue>,
+    instance: indexer::RecordRoot,
     #[serde(rename = "selfdestruct")]
     self_destruct: bool,
 }
@@ -168,13 +163,13 @@ fn type_check_args(
     Ok(())
 }
 
-fn dereference_args<'a>(
+fn dereference_args(
     indexer: &Indexer,
     collection: &indexer::Collection,
     method: &polylang::stableast::Method,
-    args: Vec<indexer::RecordValue<'a>>,
+    args: Vec<indexer::RecordValue>,
     auth: Option<&indexer::AuthUser>,
-) -> Result<Vec<indexer::RecordValue<'a>>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+) -> Result<Vec<indexer::RecordValue>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let mut dereferenced_args = Vec::new();
 
     let parameters = method
@@ -317,16 +312,13 @@ fn find_record_fields<'a>(
 }
 
 /// Dereferences records/foreign records in record fields.
-fn dereference_fields<'a>(
+fn dereference_fields(
     indexer: &Indexer,
     collection: &indexer::Collection,
     collection_ast: &polylang::stableast::Collection,
-    record: HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
+    record: indexer::RecordRoot,
     auth: Option<&indexer::AuthUser>,
-) -> Result<
-    HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
-    Box<dyn std::error::Error + Send + Sync + 'static>,
-> {
+) -> Result<indexer::RecordRoot, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let record_fields = find_record_fields(collection_ast);
 
     let mut rv = RecordValue::Map(record);
@@ -362,7 +354,7 @@ fn dereference_fields<'a>(
         let record = collection
             .get(value.to_string(), auth)?
             .ok_or(format!("Record {} not found in collection {}", value, collection.id()))?;
-        let value = HashMap::<Cow<str>, indexer::RecordValue>::deserialize(serde_json::from_slice::<
+        let value = indexer::RecordRoot::deserialize(serde_json::from_slice::<
             serde_json::Value,
         >(
             &serde_json::to_vec(&record.borrow_record())?,
@@ -383,11 +375,8 @@ fn dereference_fields<'a>(
 fn reference_records<'a>(
     collection: &indexer::Collection,
     collection_ast: &polylang::stableast::Collection,
-    record: &mut HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
-) -> Result<
-    HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
-    Box<dyn std::error::Error + Send + Sync + 'static>,
-> {
+    record: &mut indexer::RecordRoot,
+) -> Result<indexer::RecordRoot, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let record_fields = find_record_fields(collection_ast);
 
     let mut rv = RecordValue::Map(record.clone());
@@ -407,10 +396,10 @@ fn reference_records<'a>(
             None
         };
 
-        let mut reference = HashMap::new();
-        reference.insert(Cow::Borrowed("id"), RecordValue::IndexValue(IndexValue::String(Cow::Owned(value.to_string()))));
+        let mut reference = indexer::RecordRoot::new();
+        reference.insert("id".to_string(), RecordValue::IndexValue(IndexValue::String(value.to_string())));
         if let Some(collection_id) = collection {
-            reference.insert(Cow::Borrowed("collectionId"), RecordValue::IndexValue(IndexValue::String(Cow::Owned(collection_id))));
+            reference.insert("collectionId".to_string(), RecordValue::IndexValue(IndexValue::String(collection_id)));
         }
 
         *map = reference;
@@ -429,7 +418,7 @@ fn has_permission_to_call(
     collection: &indexer::Collection,
     collection_ast: &polylang::stableast::Collection,
     method_ast: &polylang::stableast::Method,
-    record: &HashMap<Cow<str>, indexer::RecordValue>,
+    record: &indexer::RecordRoot,
     auth: Option<&indexer::AuthUser>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let is_col_public = collection_ast.attributes.iter().any(|attr| matches!(attr, polylang::stableast::CollectionAttribute::Directive(d) if d.name == "public"));
@@ -469,7 +458,7 @@ fn has_permission_to_call(
 
         match value {
             indexer::RecordValue::IndexValue(indexer::IndexValue::PublicKey(pk))
-                if pk.as_ref().as_ref() == auth.public_key() =>
+                if pk == auth.public_key() =>
             {
                 return Ok(true);
             }
@@ -504,16 +493,16 @@ fn has_permission_to_call(
     Ok(false)
 }
 
-pub enum Change<'a> {
+pub enum Change {
     Create {
         collection_id: String,
         record_id: String,
-        record: HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
+        record: indexer::RecordRoot,
     },
     Update {
         collection_id: String,
         record_id: String,
-        record: HashMap<Cow<'a, str>, indexer::RecordValue<'a>>,
+        record: indexer::RecordRoot,
     },
     Delete {
         record_id: String,
@@ -572,7 +561,9 @@ impl Gateway {
         };
 
         let instance_record = if function_name == "constructor" {
-            indexer::StoreRecordValue::new_from_static(b"{}")?
+            indexer::StoreRecordValue {
+                record: indexer::RecordRoot::new(),
+            }
         } else {
             collection.get(record_id.clone(), auth)?.ok_or_else(|| {
                 format!(
@@ -734,7 +725,7 @@ impl Gateway {
         collection_id: &str,
         collection_code: &str,
         function_name: &str,
-        instance: &HashMap<Cow<str>, indexer::RecordValue>,
+        instance: &indexer::RecordRoot,
         args: &[indexer::RecordValue],
         auth: Option<&indexer::AuthUser>,
     ) -> Result<FunctionOutput, Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -805,9 +796,9 @@ impl Gateway {
                     if let Some(auth) = auth {
                         HashMap::from([(
                             "publicKey".to_string(),
-                            indexer::RecordValue::IndexValue(IndexValue::PublicKey(Box::new(
-                                Cow::Borrowed(auth.public_key()),
-                            ))),
+                            indexer::RecordValue::IndexValue(IndexValue::PublicKey(
+                                auth.public_key().clone(),
+                            )),
                         )])
                     } else {
                         HashMap::new()

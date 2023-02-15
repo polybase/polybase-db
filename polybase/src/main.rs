@@ -169,7 +169,7 @@ struct ListQuery {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
-    where_query: indexer::WhereQuery<'static>,
+    where_query: indexer::WhereQuery,
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
@@ -183,7 +183,7 @@ struct ListQuery {
 
 #[derive(Serialize)]
 struct ListResponse<'a> {
-    data: Vec<&'a HashMap<Cow<'a, str>, indexer::RecordValue<'a>>>,
+    data: Vec<&'a indexer::RecordRoot>,
     cursor_before: Option<indexer::Cursor>,
     cursor_after: Option<indexer::Cursor>,
 }
@@ -252,7 +252,7 @@ async fn get_records(
             .list(
                 indexer::ListQuery {
                     limit: Some(min(1000, query.limit.unwrap_or(1000))),
-                    where_query: &query.where_query,
+                    where_query: query.where_query.clone(),
                     order_by: &sort_indexes,
                     cursor_after: query.after.clone(),
                     cursor_before: query.before.clone(),
@@ -286,8 +286,7 @@ async fn get_records(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FunctionCall {
-    #[serde(borrow)]
-    args: Vec<indexer::RecordValue<'static>>,
+    args: Vec<indexer::RecordValue>,
 }
 
 #[post("/{collection}/records")]
@@ -326,7 +325,7 @@ async fn post_record(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
                 Change::Update {
                     collection_id,
@@ -334,7 +333,7 @@ async fn post_record(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
                 Change::Delete { record_id } => todo!(),
             }
@@ -386,7 +385,7 @@ async fn call_function(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
                 Change::Update {
                     collection_id,
@@ -394,7 +393,7 @@ async fn call_function(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
                 Change::Delete { record_id } => todo!(),
             }
