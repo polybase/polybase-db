@@ -10,7 +10,7 @@ use crate::{
     publickey::PublicKey,
     record::{IndexValue, PathFinder, RecordReference, RecordRoot, RecordValue},
     stableast_ext::FieldWalker,
-    store::{self, StoreRecordValue},
+    store::{self},
     where_query,
 };
 use base64::Engine;
@@ -19,11 +19,11 @@ use polylang::stableast;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 
-static COLLECTION_COLLECTION_RECORD: Lazy<String> = Lazy::new(|| {
+static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
     let mut hm = HashMap::new();
 
     hm.insert(
-        Cow::Borrowed("id"),
+        "id".to_string(),
         RecordValue::IndexValue(IndexValue::String("collections".to_string())),
     );
 
@@ -58,20 +58,20 @@ collection Collection {
 "#;
 
     hm.insert(
-        Cow::Borrowed("code"),
+        "code".to_string(),
         RecordValue::IndexValue(IndexValue::String(code.to_string())),
     );
 
     let mut program = None;
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
     hm.insert(
-        Cow::Borrowed("ast"),
+        "ast".to_string(),
         RecordValue::IndexValue(IndexValue::String(
             serde_json::to_string(&stable_ast).unwrap(),
         )),
     );
 
-    serde_json::to_string(&hm).unwrap()
+    hm
 });
 
 #[derive(Debug, Clone, PartialEq)]
@@ -198,11 +198,10 @@ impl<'a> Collection<'a> {
             return Ok(collection_collection);
         }
 
-        let Some(collection) = collection_collection.get( id, None)? else {
+        let Some(record) = collection_collection.get(id, None)? else {
             return Err("Collection not found".into());
         };
 
-        let record = collection.borrow_record();
         let id = match record.get("id") {
             Some(RecordValue::IndexValue(IndexValue::String(id))) => id,
             Some(_) => return Err("Collection record id is not a string".into()),
@@ -376,7 +375,7 @@ impl<'a> Collection<'a> {
                                     return Ok(());
                                 };
 
-                                if collection.has_delegate_access(record.borrow_record(), &Some(user)).unwrap_or(false) {
+                                if collection.has_delegate_access(&record, &Some(user)).unwrap_or(false) {
                                     authorized = true;
                                 }
                             }
@@ -455,7 +454,7 @@ impl<'a> Collection<'a> {
                     };
 
                     if collection
-                        .has_delegate_access(record.borrow_record(), &Some(user))
+                        .has_delegate_access(&record, &Some(user))
                         .unwrap_or(false)
                     {
                         return Ok(true);
@@ -497,13 +496,12 @@ impl<'a> Collection<'a> {
             return Ok(None);
         };
 
-        let last_record_updated_at =
-            match record.borrow_record().find_path(&["lastRecordUpdatedAt"]) {
-                Some(RecordValue::IndexValue(IndexValue::String(s))) => {
-                    SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
-                }
-                _ => return Err("Invalid metadata, missing lastRecordUpdatedAt".into()),
-            };
+        let last_record_updated_at = match record.find_path(&["lastRecordUpdatedAt"]) {
+            Some(RecordValue::IndexValue(IndexValue::String(s))) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+            }
+            _ => return Err("Invalid metadata, missing lastRecordUpdatedAt".into()),
+        };
 
         Ok(Some(CollectionMetadata {
             last_record_updated_at,
@@ -551,7 +549,7 @@ impl<'a> Collection<'a> {
             return Ok(None);
         };
 
-        let updated_at = match record.borrow_record().find_path(&["updatedAt"]) {
+        let updated_at = match record.find_path(&["updatedAt"]) {
             Some(RecordValue::IndexValue(IndexValue::String(s))) => {
                 SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
             }
@@ -580,11 +578,8 @@ impl<'a> Collection<'a> {
         }
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
-        let store_record_value = self.store.get(&data_key)?;
-        if !self.user_can_read_lazy(
-            || Ok(store_record_value.as_ref().map(|sv| sv.borrow_record())),
-            auth_user,
-        )? {
+        let record = self.store.get(&data_key)?;
+        if !self.user_can_read_lazy(|| Ok(record.as_ref()), auth_user)? {
             return Err("unauthorized".into());
         }
 
@@ -615,11 +610,9 @@ impl<'a> Collection<'a> {
         &self,
         id: String,
         user: Option<&AuthUser>,
-    ) -> Result<Option<StoreRecordValue>, Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<Option<RecordRoot>, Box<dyn Error + Send + Sync + 'static>> {
         if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(StoreRecordValue {
-                record: serde_json::from_str(&COLLECTION_COLLECTION_RECORD)?,
-            }));
+            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
@@ -627,7 +620,7 @@ impl<'a> Collection<'a> {
             return Ok(None);
         };
 
-        if !self.user_can_read(value.borrow_record(), &user)? {
+        if !self.user_can_read(&value, &user)? {
             return Err("unauthorized".into());
         }
 
@@ -645,9 +638,7 @@ impl<'a> Collection<'a> {
         }: ListQuery,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<
-        impl Iterator<
-                Item = Result<(Cursor, StoreRecordValue), Box<dyn Error + Send + Sync + 'static>>,
-            > + '_,
+        impl Iterator<Item = Result<(Cursor, RecordRoot), Box<dyn Error + Send + Sync + 'static>>> + '_,
         Box<dyn Error + Send + Sync + 'static>,
     > {
         let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
@@ -712,9 +703,9 @@ impl<'a> Collection<'a> {
             .filter_map(
                 |r| -> Option<Result<_, Box<dyn Error + Send + Sync + 'static>>> {
                     match r {
-                        Ok((cursor, sv)) => {
+                        Ok((cursor, record)) => {
                             if !self
-                                .user_can_read(sv.borrow_record(), user)
+                                .user_can_read(&record, user)
                                 // TODO: should we propagate this error?
                                 .unwrap_or(false)
                             {
@@ -722,7 +713,7 @@ impl<'a> Collection<'a> {
                                 return None;
                             }
 
-                            Some(Ok((cursor, sv)))
+                            Some(Ok((cursor, record)))
                         }
                         Err(e) => Some(Err(e)),
                     }
@@ -892,11 +883,11 @@ mod tests {
 
         let record = collection.get("1".into(), None).unwrap().unwrap();
         assert_eq!(
-            record.borrow_record().get("id").unwrap(),
+            record.get("id").unwrap(),
             &RecordValue::IndexValue(IndexValue::String("1".into()))
         );
         assert_eq!(
-            record.borrow_record().get("name").unwrap(),
+            record.get("name").unwrap(),
             &RecordValue::IndexValue(IndexValue::String("test".into()))
         );
     }
@@ -966,8 +957,8 @@ mod tests {
         let (_, second) = results.pop().unwrap();
         let (_, first) = results.pop().unwrap();
 
-        assert_eq!(first.borrow_record(), &value_2);
-        assert_eq!(second.borrow_record(), &value_1);
+        assert_eq!(first, value_2);
+        assert_eq!(second, value_1);
     }
 
     #[test]

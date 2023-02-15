@@ -218,11 +218,10 @@ fn dereference_args(
                 };
 
                 // A hack to copy the record with static lifetime
-                let value = indexer::RecordValue::deserialize(serde_json::from_slice::<
-                    serde_json::Value,
-                >(
-                    &serde_json::to_vec(&record.borrow_record())?,
-                )?)?;
+                let value =
+                    indexer::RecordValue::deserialize(
+                        serde_json::from_slice::<serde_json::Value>(&serde_json::to_vec(&record)?)?,
+                    )?;
 
                 dereferenced_args.push(value);
             }
@@ -280,13 +279,8 @@ fn dereference_args(
                             record_id, &foreign_collection_id
                         )
                     })?;
-                let value = indexer::RecordValue::deserialize(serde_json::from_slice::<
-                    serde_json::Value,
-                >(
-                    &serde_json::to_vec(&record.borrow_record())?,
-                )?)?;
 
-                dereferenced_args.push(value);
+                dereferenced_args.push(RecordValue::Map(record));
             }
             _ => dereferenced_args.push(arg),
         }
@@ -357,7 +351,7 @@ fn dereference_fields(
         let value = indexer::RecordRoot::deserialize(serde_json::from_slice::<
             serde_json::Value,
         >(
-            &serde_json::to_vec(&record.borrow_record())?,
+            &serde_json::to_vec(&record)?,
         )?)?;
 
         *map = value;
@@ -482,7 +476,7 @@ fn has_permission_to_call(
                         )
                     })?;
 
-                if collection.has_delegate_access(record.borrow_record(), &Some(auth))? {
+                if collection.has_delegate_access(&record, &Some(auth))? {
                     return Ok(true);
                 }
             }
@@ -527,8 +521,6 @@ impl Gateway {
             return Err("Collection not found".into());
         };
 
-        let meta = meta.borrow_record();
-
         let Some(ast) = meta.get("ast") else {
             return Err("Collection has no AST".into());
         };
@@ -561,9 +553,7 @@ impl Gateway {
         };
 
         let instance_record = if function_name == "constructor" {
-            indexer::StoreRecordValue {
-                record: indexer::RecordRoot::new(),
-            }
+            indexer::RecordRoot::new()
         } else {
             collection.get(record_id.clone(), auth)?.ok_or_else(|| {
                 format!(
@@ -573,7 +563,6 @@ impl Gateway {
                 )
             })?
         };
-        let instance_record = instance_record.borrow_record().clone();
 
         if !has_permission_to_call(
             indexer,
@@ -1064,8 +1053,8 @@ mod tests {
 
         let user = user_collection.get("1".to_string(), None).unwrap().unwrap();
         assert_eq!(
-            user.borrow_record(),
-            &HashMap::from([
+            user,
+            HashMap::from([
                 (
                     "id".into(),
                     indexer::RecordValue::IndexValue(indexer::IndexValue::String("1".into()))

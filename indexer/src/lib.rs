@@ -17,7 +17,6 @@ pub use keys::Direction;
 pub use publickey::PublicKey;
 pub use record::{IndexValue, PathFinder, RecordReference, RecordRoot, RecordValue};
 pub use stableast_ext::FieldWalker;
-pub use store::StoreRecordValue;
 pub use where_query::WhereQuery;
 
 pub struct Indexer {

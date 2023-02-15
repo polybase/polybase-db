@@ -12,16 +12,6 @@ pub(crate) struct Store {
     db: rocksdb::DB,
 }
 
-pub struct StoreRecordValue {
-    pub record: RecordRoot,
-}
-
-impl StoreRecordValue {
-    pub fn borrow_record(&self) -> &RecordRoot {
-        &self.record
-    }
-}
-
 pub(crate) enum Value<'a> {
     DataValue(&'a RecordRoot),
     IndexValue(proto::IndexRecord),
@@ -67,11 +57,9 @@ impl Store {
     pub(crate) fn get(
         &self,
         key: &Key,
-    ) -> Result<Option<StoreRecordValue>, Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<Option<RecordRoot>, Box<dyn Error + Send + Sync + 'static>> {
         match self.db.get_pinned(key.serialize()?)? {
-            Some(slice) => Ok(Some(StoreRecordValue {
-                record: serde_json::from_slice(slice.as_ref())?,
-            })),
+            Some(slice) => Ok(Some(serde_json::from_slice(slice.as_ref())?)),
             None => Ok(None),
         }
     }

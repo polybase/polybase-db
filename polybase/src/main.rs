@@ -98,16 +98,14 @@ async fn get_record(
         let collection = indexer.collection(collection)?;
         let record = collection.get(id, auth.map(|a| a.into()).as_ref())?;
 
-        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(
-            record.map(|r| serde_json::to_string(r.borrow_record()).unwrap()),
-        )
+        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(record)
     })
     .await?;
 
     match record {
         Ok(Some(record)) => Ok(HttpResponse::Ok()
             .content_type("application/json")
-            .body(record)),
+            .json(record)),
         Ok(None) => Ok(HttpResponse::NotFound().body("Record not found")),
         Err(e) => Err(e),
     }
@@ -181,8 +179,8 @@ struct ListQuery {
 }
 
 #[derive(Serialize)]
-struct ListResponse<'a> {
-    data: Vec<&'a indexer::RecordRoot>,
+struct ListResponse {
+    data: Vec<indexer::RecordRoot>,
     cursor_before: Option<indexer::Cursor>,
     cursor_after: Option<indexer::Cursor>,
 }
@@ -260,25 +258,18 @@ async fn get_records(
             )?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let borrowed_records = records
-            .iter()
-            .map(|(_, r)| r.borrow_record())
-            .collect::<Vec<_>>();
-
-        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(serde_json::to_string(
-            &ListResponse {
-                data: borrowed_records,
-                cursor_before: records.first().map(|(c, _)| c.clone()),
-                cursor_after: records.last().map(|(c, _)| c.clone()),
-            },
-        )?)
+        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(ListResponse {
+            cursor_before: records.first().map(|(c, _)| c.clone()),
+            cursor_after: records.last().map(|(c, _)| c.clone()),
+            data: records.into_iter().map(|(_, r)| r).collect(),
+        })
     })
     .await?;
 
     match list_response {
         Ok(list_response) => Ok(HttpResponse::Ok()
             .content_type("application/json")
-            .body(list_response)),
+            .json(list_response)),
         Err(e) => Err(e),
     }
 }
