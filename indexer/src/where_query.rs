@@ -3,6 +3,7 @@ use std::{borrow::Cow, collections::HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::{self, Direction};
+use crate::record::IndexValue;
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub(crate) struct FieldPath<'a>(pub(crate) Vec<Cow<'a, str>>);
@@ -61,12 +62,12 @@ pub(crate) enum WhereValue<'a> {
     Boolean(bool),
 }
 
-impl<'a> From<&'a WhereValue<'a>> for keys::IndexValue<'a> {
+impl<'a> From<&'a WhereValue<'a>> for IndexValue<'a> {
     fn from(value: &'a WhereValue<'a>) -> Self {
         match value {
-            WhereValue::String(s) => keys::IndexValue::String(Cow::Borrowed(s)),
-            WhereValue::Number(n) => keys::IndexValue::Number(*n),
-            WhereValue::Boolean(b) => keys::IndexValue::Boolean(*b),
+            WhereValue::String(s) => IndexValue::String(Cow::Borrowed(s)),
+            WhereValue::Number(n) => IndexValue::Number(*n),
+            WhereValue::Boolean(b) => IndexValue::Boolean(*b),
         }
     }
 }
@@ -103,9 +104,9 @@ impl WhereQuery<'_> {
             return Err("Paths and directions must have the same length".into());
         }
 
-        let mut lower_values = Vec::<Cow<keys::IndexValue>>::with_capacity(paths.len());
+        let mut lower_values = Vec::<Cow<IndexValue>>::with_capacity(paths.len());
         let mut lower_exclusive = false;
-        let mut upper_values = Vec::<Cow<keys::IndexValue>>::with_capacity(paths.len());
+        let mut upper_values = Vec::<Cow<IndexValue>>::with_capacity(paths.len());
         let mut upper_exclusive = false;
 
         let mut ineq_found = false;
@@ -117,8 +118,8 @@ impl WhereQuery<'_> {
 
                 match node {
                     WhereNode::Equality(value) => {
-                        lower_values.push(Cow::Owned(keys::IndexValue::from(value)));
-                        upper_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                        lower_values.push(Cow::Owned(IndexValue::from(value)));
+                        upper_values.push(Cow::Owned(IndexValue::from(value)));
                     }
                     WhereNode::Inequality(inequality) => {
                         ineq_found = true;
@@ -126,36 +127,36 @@ impl WhereQuery<'_> {
                         if let Some(value) = &inequality.gt {
                             if direction == &Direction::Ascending {
                                 lower_exclusive = true;
-                                lower_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value)));
                             } else {
                                 upper_exclusive = true;
-                                upper_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value)));
                             }
                         }
 
                         if let Some(value) = &inequality.gte {
                             if direction == &Direction::Ascending {
-                                lower_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value)));
                             } else {
-                                upper_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value)));
                             }
                         }
 
                         if let Some(value) = &inequality.lt {
                             if direction == &Direction::Ascending {
                                 upper_exclusive = true;
-                                upper_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value)));
                             } else {
                                 lower_exclusive = true;
-                                lower_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value)));
                             }
                         }
 
                         if let Some(value) = &inequality.lte {
                             if direction == &Direction::Ascending {
-                                upper_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                upper_values.push(Cow::Owned(IndexValue::from(value)));
                             } else {
-                                lower_values.push(Cow::Owned(keys::IndexValue::from(value)));
+                                lower_values.push(Cow::Owned(IndexValue::from(value)));
                             }
                         }
                     }
@@ -217,18 +218,14 @@ mod test {
             "namespace".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed(
-                "john"
-            )))]
+            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("john")))]
         )
         .unwrap(),
         keys::Key::new_index(
             "namespace".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed(
-                "john"
-            )))]
+            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("john")))]
         )
         .unwrap()
         .wildcard()
@@ -249,7 +246,7 @@ mod test {
             "namespace".to_string(),
             &[&["age"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::Number(30.0))]
+            vec![Cow::Borrowed(&IndexValue::Number(30.0))]
         )
         .unwrap()
         .wildcard(),
@@ -278,7 +275,7 @@ mod test {
             "namespace".to_string(),
             &[&["age"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::Number(30.0))]
+            vec![Cow::Borrowed(&IndexValue::Number(30.0))]
         )
         .unwrap(),
         keys::Key::new_index(
@@ -313,7 +310,7 @@ mod test {
             "namespace".to_string(),
             &[&["age"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::Number(30.0))]
+            vec![Cow::Borrowed(&IndexValue::Number(30.0))]
         )
         .unwrap()
     );
@@ -340,7 +337,7 @@ mod test {
             "namespace".to_string(),
             &[&["age"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::Number(30.0))]
+            vec![Cow::Borrowed(&IndexValue::Number(30.0))]
         )
         .unwrap()
         .wildcard()
@@ -361,7 +358,7 @@ mod test {
             "namespace".to_string(),
             &[&["age"]],
             &[keys::Direction::Descending],
-            vec![Cow::Borrowed(&keys::IndexValue::Number(50.0))]
+            vec![Cow::Borrowed(&IndexValue::Number(50.0))]
         )
         .unwrap()
         .wildcard(),
@@ -397,8 +394,8 @@ mod test {
             &[&["name"], &["age"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed("John"))),
-                Cow::Borrowed(&keys::IndexValue::Number(30.0)),
+                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::Number(30.0)),
             ]
         )
         .unwrap()
@@ -407,7 +404,7 @@ mod test {
             "namespace".to_string(),
             &[&["name"], &["age"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::String("John".into())),]
+            vec![Cow::Borrowed(&IndexValue::String("John".into())),]
         )
         .unwrap()
         .wildcard()
@@ -432,8 +429,8 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed("John"))),
-                Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed("rec1"))),
+                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("rec1"))),
             ]
         )
         .unwrap(),
@@ -442,8 +439,8 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed("John"))),
-                Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed("rec1"))),
+                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("rec1"))),
             ]
         )
         .unwrap()

@@ -14,13 +14,12 @@ use serde::{Deserialize, Serialize};
 use crate::{
     keys::{self, Key},
     proto,
+    record::{self, RecordRoot},
 };
 
 pub(crate) struct Store {
     db: rocksdb::DB,
 }
-
-pub type RecordValue<'a> = HashMap<Cow<'a, str>, keys::RecordValue<'a>>;
 
 enum RecordBacking<'a> {
     Pinnable(DBPinnableSlice<'a>),
@@ -33,7 +32,7 @@ pub struct StoreRecordValue<'db> {
     slice: RecordBacking<'db>,
     #[borrows(slice)]
     #[covariant]
-    pub record: RecordValue<'this>,
+    pub record: RecordRoot<'this>,
 }
 
 impl StoreRecordValue<'_> {
@@ -75,7 +74,7 @@ impl StoreRecordValue<'_> {
 }
 
 pub(crate) enum Value<'a> {
-    DataValue(Cow<'a, HashMap<Cow<'a, str>, keys::RecordValue<'a>>>),
+    DataValue(Cow<'a, HashMap<Cow<'a, str>, record::RecordValue<'a>>>),
     IndexValue(proto::IndexRecord),
 }
 
@@ -226,7 +225,7 @@ pub(crate) mod tests {
             "ns".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed(
+            vec![Cow::Borrowed(&record::IndexValue::String(Cow::Borrowed(
                 "John",
             )))],
         )

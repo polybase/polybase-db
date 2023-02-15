@@ -6,14 +6,16 @@ mod index;
 mod keys;
 mod proto;
 mod publickey;
+mod record;
 mod stableast_ext;
 mod store;
 mod where_query;
 
 pub use collection::{AuthUser, Collection, Cursor, ListQuery};
 pub use index::CollectionIndexField;
-pub use keys::{Direction, IndexValue, PathFinder, RecordReference, RecordValue};
+pub use keys::Direction;
 pub use publickey::PublicKey;
+pub use record::{IndexValue, PathFinder, RecordReference, RecordValue};
 pub use stableast_ext::FieldWalker;
 pub use store::StoreRecordValue;
 pub use where_query::WhereQuery;
