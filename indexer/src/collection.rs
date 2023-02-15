@@ -408,26 +408,6 @@ impl<'a> Collection<'a> {
         Ok(authorized)
     }
 
-    async fn user_can_read_lazy<'b>(
-        &self,
-        record_getter: impl FnOnce() -> Result<
-            Option<&'b RecordRoot>,
-            Box<dyn Error + Send + Sync + 'static>,
-        >,
-        user: Option<&AuthUser>,
-    ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
-        match &self.authorization {
-            Authorization::Public => Ok(true),
-            Authorization::Private(_) => match (record_getter()?, user) {
-                (None, _) => Ok(true),
-                (Some(_), None) => Ok(false),
-                (Some(old_value), Some(auth_user)) => {
-                    Ok(self.user_can_read(old_value, &Some(auth_user)).await?)
-                }
-            },
-        }
-    }
-
     #[async_recursion(?Send)]
     pub async fn has_delegate_access(
         &self,
@@ -584,7 +564,6 @@ impl<'a> Collection<'a> {
         &self,
         id: String,
         value: &RecordRoot,
-        auth_user: Option<&AuthUser>,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         match value.get("id") {
             Some(rv) => match rv {
@@ -599,13 +578,6 @@ impl<'a> Collection<'a> {
         }
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
-        let record = self.store.get(&data_key).await?;
-        if !self
-            .user_can_read_lazy(|| Ok(record.as_ref()), auth_user)
-            .await?
-        {
-            return Err("unauthorized".into());
-        }
 
         self.store
             .set(&data_key, &store::Value::DataValue(value))
@@ -757,7 +729,7 @@ impl<'a> Collection<'a> {
 mod tests {
     use futures::TryStreamExt;
 
-    use crate::{publickey, store::tests::TestStore};
+    use crate::store::tests::TestStore;
 
     use super::*;
 
@@ -803,24 +775,20 @@ mod tests {
             id.push_str(&collection.name);
 
             collection_collection
-                .set(
-                    id.clone(),
-                    &{
-                        let mut map = HashMap::new();
+                .set(id.clone(), &{
+                    let mut map = HashMap::new();
 
-                        map.insert(
-                            "id".to_string(),
-                            RecordValue::IndexValue(IndexValue::String(id.clone())),
-                        );
-                        map.insert(
-                            "ast".to_string(),
-                            RecordValue::IndexValue(IndexValue::String(ast_json.clone())),
-                        );
+                    map.insert(
+                        "id".to_string(),
+                        RecordValue::IndexValue(IndexValue::String(id.clone())),
+                    );
+                    map.insert(
+                        "ast".to_string(),
+                        RecordValue::IndexValue(IndexValue::String(ast_json.clone())),
+                    );
 
-                        map
-                    },
-                    None,
-                )
+                    map
+                })
                 .await
                 .unwrap();
 
@@ -920,7 +888,7 @@ mod tests {
         let value_json = r#"{"id": "1", "name": "test" }"#;
         let value = serde_json::from_str::<RecordRoot>(value_json).unwrap();
 
-        collection.set("1".into(), &value, None).await.unwrap();
+        collection.set("1".into(), &value).await.unwrap();
 
         let record = collection.get("1".into(), None).await.unwrap().unwrap();
         assert_eq!(
@@ -956,11 +924,11 @@ mod tests {
 
         let value_1_json = r#"{"id": "1", "name": "test" }"#;
         let value_1 = serde_json::from_str::<RecordRoot>(value_1_json).unwrap();
-        collection.set("1".into(), &value_1, None).await.unwrap();
+        collection.set("1".into(), &value_1).await.unwrap();
 
         let value_2_json = r#"{"id": "2", "name": "test" }"#;
         let value_2 = serde_json::from_str::<RecordRoot>(value_2_json).unwrap();
-        collection.set("2".into(), &value_2, None).await.unwrap();
+        collection.set("2".into(), &value_2).await.unwrap();
 
         let mut results = collection
             .list(
@@ -1002,108 +970,5 @@ mod tests {
 
         assert_eq!(first, value_2);
         assert_eq!(second, value_1);
-    }
-
-    #[tokio::test]
-    async fn test_collection_auth() {
-        let store = TestStore::default();
-        let collection = Collection::new(
-            &store,
-            "test".to_string(),
-            vec![],
-            Authorization::Private(PrivateAuthorization {
-                read_fields: vec![where_query::FieldPath(vec!["owner".into()])],
-                delegate_fields: vec![],
-            }),
-        );
-
-        let auth_user = AuthUser {
-            public_key: publickey::PublicKey::random(),
-        };
-
-        collection
-            .set(
-                "1".into(),
-                &[
-                    (
-                        "id".into(),
-                        RecordValue::IndexValue(IndexValue::String("1".into())),
-                    ),
-                    (
-                        "owner".into(),
-                        RecordValue::IndexValue(IndexValue::PublicKey(
-                            auth_user.public_key.clone(),
-                        )),
-                    ),
-                ]
-                .into(),
-                Some(&auth_user),
-            )
-            .await
-            .unwrap();
-
-        // Update without a key fails
-        assert_eq!(
-            collection
-                .set(
-                    "1".into(),
-                    &[(
-                        "id".into(),
-                        RecordValue::IndexValue(IndexValue::String("1".into())),
-                    )]
-                    .into(),
-                    None,
-                )
-                .await
-                .unwrap_err()
-                .to_string(),
-            "unauthorized"
-        );
-
-        // Update with a different key fails
-        assert_eq!(
-            collection
-                .set(
-                    "1".into(),
-                    &[(
-                        "id".into(),
-                        RecordValue::IndexValue(IndexValue::String("1".into())),
-                    )]
-                    .into(),
-                    Some(&AuthUser {
-                        public_key: publickey::PublicKey::random(),
-                    }),
-                )
-                .await
-                .unwrap_err()
-                .to_string(),
-            "unauthorized"
-        );
-
-        // Update with the key stored in `owner` works
-        collection
-            .set(
-                "1".into(),
-                &[
-                    (
-                        "id".into(),
-                        RecordValue::IndexValue(IndexValue::String("1".into())),
-                    ),
-                    (
-                        "owner".into(),
-                        RecordValue::IndexValue(IndexValue::PublicKey(
-                            auth_user.public_key.clone(),
-                        )),
-                    ),
-                    (
-                        "name".into(),
-                        RecordValue::IndexValue(IndexValue::String("John".into())),
-                    ),
-                ]
-                .into(),
-                Some(&auth_user),
-            )
-            .await
-            .unwrap();
     }
 }
