@@ -162,10 +162,10 @@ fn type_check_args(
     Ok(())
 }
 
-fn dereference_args(
+async fn dereference_args(
     indexer: &Indexer,
-    collection: &indexer::Collection,
-    method: &polylang::stableast::Method,
+    collection: &indexer::Collection<'_>,
+    method: &polylang::stableast::Method<'_>,
     args: Vec<RecordValue>,
     auth: Option<&indexer::AuthUser>,
 ) -> Result<Vec<RecordValue>, Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -210,7 +210,7 @@ fn dereference_args(
                     _ => return Err("Record is not a map".to_string().into()),
                 };
 
-                let Some(record) = collection.get(record_id.clone(), auth)? else {
+                let Some(record) = collection.get(record_id.clone(), auth).await? else {
                     return Err(format!("Record {record_id} not found").into());
                 };
 
@@ -257,9 +257,10 @@ fn dereference_args(
                     .into());
                 }
 
-                let foreign_collection = indexer.collection(foreign_collection_id.clone())?;
+                let foreign_collection = indexer.collection(foreign_collection_id.clone()).await?;
                 let record = foreign_collection
-                    .get(record_id.clone(), auth)?
+                    .get(record_id.clone(), auth)
+                    .await?
                     .ok_or_else(|| {
                         format!(
                             "Record {} not found in collection {}",
@@ -293,18 +294,20 @@ fn find_record_fields<'a>(
 }
 
 /// Dereferences records/foreign records in record fields.
-fn dereference_fields(
+async fn dereference_fields(
     indexer: &Indexer,
-    collection: &indexer::Collection,
-    collection_ast: &polylang::stableast::Collection,
-    record: indexer::RecordRoot,
+    collection: &indexer::Collection<'_>,
+    collection_ast: &polylang::stableast::Collection<'_>,
+    mut record: indexer::RecordRoot,
     auth: Option<&indexer::AuthUser>,
 ) -> Result<indexer::RecordRoot, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let record_fields = find_record_fields(collection_ast);
 
-    let mut rv = RecordValue::Map(record);
-    rv.walk_maps_mut::<Box<dyn std::error::Error + Send + Sync + 'static>>(&mut vec![], &mut |path, map| {
-        let Some((_, type_)) = record_fields.iter().find(|(p, _)| *p == path) else { return Ok(()); };
+    for (path, type_) in record_fields {
+        let map = match record.find_path_mut(&path) {
+            Some(RecordValue::Map(m)) => m,
+            _ => continue,
+        };
 
         let Some(RecordValue::IndexValue(IndexValue::String(value))) = map.get("id") else { return Err(
             "Record does not have an id field".to_string().into());
@@ -316,8 +319,7 @@ fn dereference_fields(
                     "Record does not have a collectionId field".to_string().into());
                 };
 
-            let foreign_collection_id =
-                collection.namespace().to_string() + "/" + &fr.collection;
+            let foreign_collection_id = collection.namespace().to_string() + "/" + &fr.collection;
 
             if collection_id != &foreign_collection_id {
                 return Err(format!(
@@ -327,24 +329,24 @@ fn dereference_fields(
                 .into());
             }
 
-            Cow::Owned(indexer.collection(foreign_collection_id)?)
+            Cow::Owned(indexer.collection(foreign_collection_id).await?)
         } else {
             Cow::Borrowed(collection)
         };
 
         let record = collection
-            .get(value.to_string(), auth)?
-            .ok_or(format!("Record {} not found in collection {}", value, collection.id()))?;
+            .get(value.to_string(), auth)
+            .await?
+            .ok_or(format!(
+                "Record {} not found in collection {}",
+                value,
+                collection.id()
+            ))?;
 
         *map = record;
-
-        Ok(())
-    })?;
-
-    match rv {
-        RecordValue::Map(m) => Ok(m),
-        _ => unreachable!(),
     }
+
+    Ok(record)
 }
 
 /// Turns dereferenced records back into references.
@@ -389,11 +391,11 @@ fn reference_records(
     }
 }
 
-fn has_permission_to_call(
+async fn has_permission_to_call(
     indexer: &Indexer,
-    collection: &indexer::Collection,
-    collection_ast: &polylang::stableast::Collection,
-    method_ast: &polylang::stableast::Method,
+    collection: &indexer::Collection<'_>,
+    collection_ast: &polylang::stableast::Collection<'_>,
+    method_ast: &polylang::stableast::Method<'_>,
     record: &indexer::RecordRoot,
     auth: Option<&indexer::AuthUser>,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync + 'static>> {
@@ -444,12 +446,13 @@ fn has_permission_to_call(
                 };
 
                 let collection = match record_ref.collection_id {
-                    Some(collection_id) => Cow::Owned(indexer.collection(collection_id)?),
+                    Some(collection_id) => Cow::Owned(indexer.collection(collection_id).await?),
                     None => Cow::Borrowed(collection),
                 };
 
                 let record = collection
-                    .get(record_ref.id.clone(), Some(auth))?
+                    .get(record_ref.id.clone(), Some(auth))
+                    .await?
                     .ok_or_else(|| {
                         format!(
                             "Record {} not found in collection {}",
@@ -458,7 +461,7 @@ fn has_permission_to_call(
                         )
                     })?;
 
-                if collection.has_delegate_access(&record, &Some(auth))? {
+                if collection.has_delegate_access(&record, &Some(auth)).await? {
                     return Ok(true);
                 }
             }
@@ -486,7 +489,7 @@ pub enum Change {
 }
 
 impl Gateway {
-    pub fn call(
+    pub async fn call(
         &self,
         indexer: &Indexer,
         collection_id: String,
@@ -496,10 +499,10 @@ impl Gateway {
         auth: Option<&indexer::AuthUser>,
     ) -> Result<Vec<Change>, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let mut changes = Vec::new();
-        let collection_collection = indexer.collection("Collection".to_string())?;
-        let collection = indexer.collection(collection_id.clone())?;
+        let collection_collection = indexer.collection("Collection".to_string()).await?;
+        let collection = indexer.collection(collection_id.clone()).await?;
 
-        let Some(meta) = collection_collection.get(collection.id().to_string(), None)? else {
+        let Some(meta) = collection_collection.get(collection.id().to_string(), None).await? else {
             return Err("Collection not found".into());
         };
 
@@ -537,13 +540,16 @@ impl Gateway {
         let instance_record = if function_name == "constructor" {
             indexer::RecordRoot::new()
         } else {
-            collection.get(record_id.clone(), auth)?.ok_or_else(|| {
-                format!(
-                    "Record {} not found in collection {}",
-                    record_id,
-                    collection.name()
-                )
-            })?
+            collection
+                .get(record_id.clone(), auth)
+                .await?
+                .ok_or_else(|| {
+                    format!(
+                        "Record {} not found in collection {}",
+                        record_id,
+                        collection.name()
+                    )
+                })?
         };
 
         if !has_permission_to_call(
@@ -553,15 +559,17 @@ impl Gateway {
             method,
             &instance_record,
             auth,
-        )? {
+        )
+        .await?
+        {
             return Err("You do not have permission to call this function".into());
         }
 
         type_check_args(method, &args)?;
 
-        let dereferenced_args = dereference_args(indexer, &collection, method, args, auth)?;
+        let dereferenced_args = dereference_args(indexer, &collection, method, args, auth).await?;
         let instance_record =
-            dereference_fields(indexer, &collection, collection_ast, instance_record, auth)?;
+            dereference_fields(indexer, &collection, collection_ast, instance_record, auth).await?;
         let mut output = self.run(
             &collection_id,
             &js_collection.code,
@@ -646,7 +654,8 @@ impl Gateway {
 
         if function_name == "constructor" {
             if collection
-                .get(output_instance_id.to_string(), None)?
+                .get(output_instance_id.to_string(), None)
+                .await?
                 .is_some()
             {
                 return Err("Record id already exists".into());
@@ -953,8 +962,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn it_works() {
+    #[tokio::test]
+    async fn it_works() {
         let user_col_code = r#"
             @public
             collection User {
@@ -971,7 +980,7 @@ mod tests {
 
         let indexer = TestIndexer::default();
 
-        let collection_collection = indexer.collection("Collection".to_string()).unwrap();
+        let collection_collection = indexer.collection("Collection".to_string()).await.unwrap();
         collection_collection
             .set(
                 "ns/User".to_string(),
@@ -992,9 +1001,10 @@ mod tests {
                 .into(),
                 None,
             )
+            .await
             .unwrap();
 
-        let user_collection = indexer.collection("ns/User".to_string()).unwrap();
+        let user_collection = indexer.collection("ns/User".to_string()).await.unwrap();
         user_collection
             .set(
                 "1".to_string(),
@@ -1013,6 +1023,7 @@ mod tests {
                 .into(),
                 None,
             )
+            .await
             .unwrap();
 
         let gateway = initialize();
@@ -1027,9 +1038,14 @@ mod tests {
                 )],
                 None,
             )
+            .await
             .unwrap();
 
-        let user = user_collection.get("1".to_string(), None).unwrap().unwrap();
+        let user = user_collection
+            .get("1".to_string(), None)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             user,
             HashMap::from([

@@ -180,6 +180,10 @@ pub trait PathFinder {
     fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue>
     where
         T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>;
+
+    fn find_path_mut<T>(&mut self, path: &[T]) -> Option<&mut RecordValue>
+    where
+        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>;
 }
 
 impl PathFinder for RecordRoot {
@@ -200,6 +204,25 @@ impl PathFinder for RecordRoot {
         }
 
         value.find_path(&path[1..])
+    }
+
+    fn find_path_mut<T>(&mut self, path: &[T]) -> Option<&mut RecordValue>
+    where
+        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
+    {
+        let Some(head) = path.first() else {
+            return None;
+        };
+
+        let Some(value) = self.get_mut(head.as_ref()) else {
+            return None;
+        };
+
+        if path.len() == 1 {
+            return Some(value);
+        }
+
+        value.find_path_mut(&path[1..])
     }
 }
 
@@ -223,6 +246,35 @@ impl PathFinder for RecordValue {
                         }
 
                         value.find_path(&path[1..])
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn find_path_mut<T>(&mut self, path: &[T]) -> std::option::Option<&mut RecordValue>
+    where
+        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
+    {
+        let Some(head) = path.first() else {
+            return None;
+        };
+
+        match self {
+            RecordValue::IndexValue(_) => None,
+            RecordValue::Map(m) => m.find_path_mut(path),
+            RecordValue::Array(a) => {
+                if let Ok(index) = head.as_ref().parse::<usize>() {
+                    if let Some(value) = a.get_mut(index) {
+                        if path.len() == 1 {
+                            return Some(value);
+                        }
+
+                        value.find_path_mut(&path[1..])
                     } else {
                         None
                     }

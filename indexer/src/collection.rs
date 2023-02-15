@@ -13,7 +13,9 @@ use crate::{
     store::{self},
     where_query,
 };
+use async_recursion::async_recursion;
 use base64::Engine;
+use futures::StreamExt;
 use once_cell::sync::Lazy;
 use polylang::stableast;
 use prost::Message;
@@ -110,7 +112,7 @@ pub struct ListQuery<'a> {
     pub cursor_after: Option<Cursor>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AuthUser {
     public_key: PublicKey,
 }
@@ -178,10 +180,10 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub(crate) fn load(
+    pub(crate) async fn load(
         store: &'a store::Store,
         id: String,
-    ) -> Result<Self, Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<Collection<'_>, Box<dyn Error + Send + Sync + 'static>> {
         let collection_collection = Self::new(
             store,
             "Collection".to_string(),
@@ -198,7 +200,7 @@ impl<'a> Collection<'a> {
             return Ok(collection_collection);
         }
 
-        let Some(record) = collection_collection.get(id, None)? else {
+        let Some(record) = collection_collection.get(id, None).await? else {
             return Err("Collection not found".into());
         };
 
@@ -329,7 +331,8 @@ impl<'a> Collection<'a> {
         &self.collection_id[0..slash_index]
     }
 
-    pub(crate) fn user_can_read(
+    #[async_recursion(?Send)]
+    pub(crate) async fn user_can_read(
         &self,
         record: &RecordRoot,
         user: &Option<&AuthUser>,
@@ -345,6 +348,8 @@ impl<'a> Collection<'a> {
 
         let mut authorized = false;
         for (key, value) in record {
+            let mut record_references = vec![];
+
             value
                 .walk_all::<std::convert::Infallible>(
                     &mut vec![Cow::Borrowed(key)],
@@ -354,9 +359,9 @@ impl<'a> Collection<'a> {
                         }
 
                         match value {
-                            RecordValue::IndexValue(IndexValue::PublicKey(
-                                record_pk,
-                            )) if record_pk == &user.public_key => {
+                            RecordValue::IndexValue(IndexValue::PublicKey(record_pk))
+                                if record_pk == &user.public_key =>
+                            {
                                 authorized = true;
                             }
                             RecordValue::Map(_) => {
@@ -364,20 +369,7 @@ impl<'a> Collection<'a> {
                                     return Ok(());
                                 };
 
-                                let Ok(collection) = record_reference.collection_id.map_or(Ok(Cow::Borrowed(self)), |collection_id| {
-                                    Ok::<_, Box<dyn std::error::Error + Send + Sync>>(Cow::Owned(Collection::load(self.store, collection_id)?))
-                                }) else {
-                                    // TODO: log the error
-                                    return Ok(());
-                                };
-
-                                let Ok(Some(record)) = collection.get(record_reference.id, Some(user)) else {
-                                    return Ok(());
-                                };
-
-                                if collection.has_delegate_access(&record, &Some(user)).unwrap_or(false) {
-                                    authorized = true;
-                                }
+                                record_references.push(record_reference);
                             }
                             _ => {}
                         }
@@ -386,16 +378,37 @@ impl<'a> Collection<'a> {
                     },
                 )
                 .unwrap(); // We never return an error
+
+            for record_reference in record_references {
+                let collection = match record_reference.collection_id {
+                    Some(collection_id) => {
+                        Cow::Owned(Collection::load(self.store, collection_id).await?)
+                    }
+                    None => Cow::Borrowed(self),
+                };
+
+                let Some(record) = collection.get(record_reference.id, Some(user)).await? else {
+                    continue;
+                };
+
+                if collection
+                    .has_delegate_access(&record, &Some(user))
+                    .await
+                    .unwrap_or(false)
+                {
+                    authorized = true;
+                }
+            }
         }
 
         if !authorized {
-            authorized = self.has_delegate_access(record, &Some(user))?;
+            authorized = self.has_delegate_access(record, &Some(user)).await?;
         }
 
         Ok(authorized)
     }
 
-    fn user_can_read_lazy<'b>(
+    async fn user_can_read_lazy<'b>(
         &self,
         record_getter: impl FnOnce() -> Result<
             Option<&'b RecordRoot>,
@@ -409,13 +422,14 @@ impl<'a> Collection<'a> {
                 (None, _) => Ok(true),
                 (Some(_), None) => Ok(false),
                 (Some(old_value), Some(auth_user)) => {
-                    Ok(self.user_can_read(old_value, &Some(auth_user))?)
+                    Ok(self.user_can_read(old_value, &Some(auth_user)).await?)
                 }
             },
         }
     }
 
-    pub fn has_delegate_access(
+    #[async_recursion(?Send)]
+    pub async fn has_delegate_access(
         &self,
         record: &impl PathFinder,
         user: &Option<&AuthUser>,
@@ -444,17 +458,18 @@ impl<'a> Collection<'a> {
 
                     let collection = match record_ref.collection_id {
                         Some(collection_id) => {
-                            Cow::Owned(Collection::load(self.store, collection_id)?)
+                            Cow::Owned(Collection::load(self.store, collection_id).await?)
                         }
                         None => Cow::Borrowed(self),
                     };
 
-                    let Some(record) = collection.get(record_ref.id, Some(user))? else {
+                    let Some(record) = collection.get(record_ref.id, Some(user)).await? else {
                         continue;
                     };
 
                     if collection
                         .has_delegate_access(&record, &Some(user))
+                        .await
                         .unwrap_or(false)
                     {
                         return Ok(true);
@@ -467,32 +482,36 @@ impl<'a> Collection<'a> {
         Ok(false)
     }
 
-    fn update_metadata(&self, time: &SystemTime) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn update_metadata(&self, time: &SystemTime) -> Result<(), Box<dyn Error + Send + Sync>> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        self.store.set(
-            &collection_metadata_key,
-            &store::Value::DataValue(
-                &[(
-                    "lastRecordUpdatedAt".into(),
-                    RecordValue::IndexValue(IndexValue::String(
-                        time.duration_since(SystemTime::UNIX_EPOCH)?
-                            .as_millis()
-                            .to_string(),
-                    )),
-                )]
-                .into(),
-            ),
-        )?;
+        self.store
+            .set(
+                &collection_metadata_key,
+                &store::Value::DataValue(
+                    &[(
+                        "lastRecordUpdatedAt".into(),
+                        RecordValue::IndexValue(IndexValue::String(
+                            time.duration_since(SystemTime::UNIX_EPOCH)?
+                                .as_millis()
+                                .to_string(),
+                        )),
+                    )]
+                    .into(),
+                ),
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn get_metadata(&self) -> Result<Option<CollectionMetadata>, Box<dyn Error + Send + Sync>> {
+    pub async fn get_metadata(
+        &self,
+    ) -> Result<Option<CollectionMetadata>, Box<dyn Error + Send + Sync>> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        let Some(record) = self.store.get(&collection_metadata_key)? else {
+        let Some(record) = self.store.get(&collection_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -508,7 +527,7 @@ impl<'a> Collection<'a> {
         }))
     }
 
-    pub fn set_record_metadata(
+    pub async fn set_record_metadata(
         &self,
         record_id: String,
         updated_at: &SystemTime,
@@ -518,25 +537,27 @@ impl<'a> Collection<'a> {
             &self.collection_id, record_id
         ))?;
 
-        self.store.set(
-            &record_metadata_key,
-            &store::Value::DataValue(
-                &[(
-                    "updatedAt".into(),
-                    RecordValue::IndexValue(IndexValue::String(
-                        updated_at
-                            .duration_since(SystemTime::UNIX_EPOCH)?
-                            .as_millis()
-                            .to_string(),
-                    )),
-                )]
-                .into(),
-            ),
-        )?;
+        self.store
+            .set(
+                &record_metadata_key,
+                &store::Value::DataValue(
+                    &[(
+                        "updatedAt".into(),
+                        RecordValue::IndexValue(IndexValue::String(
+                            updated_at
+                                .duration_since(SystemTime::UNIX_EPOCH)?
+                                .as_millis()
+                                .to_string(),
+                        )),
+                    )]
+                    .into(),
+                ),
+            )
+            .await?;
         Ok(())
     }
 
-    pub fn get_record_metadata(
+    pub async fn get_record_metadata(
         &self,
         record_id: &str,
     ) -> Result<Option<RecordMetadata>, Box<dyn Error + Send + Sync>> {
@@ -545,7 +566,7 @@ impl<'a> Collection<'a> {
             &self.collection_id, record_id
         ))?;
 
-        let Some(record) = self.store.get(&record_metadata_key)? else {
+        let Some(record) = self.store.get(&record_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -559,7 +580,7 @@ impl<'a> Collection<'a> {
         Ok(Some(RecordMetadata { updated_at }))
     }
 
-    pub fn set(
+    pub async fn set(
         &self,
         id: String,
         value: &RecordRoot,
@@ -578,15 +599,20 @@ impl<'a> Collection<'a> {
         }
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
-        let record = self.store.get(&data_key)?;
-        if !self.user_can_read_lazy(|| Ok(record.as_ref()), auth_user)? {
+        let record = self.store.get(&data_key).await?;
+        if !self
+            .user_can_read_lazy(|| Ok(record.as_ref()), auth_user)
+            .await?
+        {
             return Err("unauthorized".into());
         }
 
-        self.store.set(&data_key, &store::Value::DataValue(value))?;
+        self.store
+            .set(&data_key, &store::Value::DataValue(value))
+            .await?;
 
-        self.update_metadata(&SystemTime::now())?;
-        self.set_record_metadata(id, &SystemTime::now())?;
+        self.update_metadata(&SystemTime::now()).await?;
+        self.set_record_metadata(id, &SystemTime::now()).await?;
 
         // TODO: ignore index failures
         let index_value = store::Value::IndexValue(proto::IndexRecord {
@@ -600,13 +626,13 @@ impl<'a> Collection<'a> {
                 value,
             )?;
 
-            self.store.set(&index_key, &index_value)?;
+            self.store.set(&index_key, &index_value).await?;
         }
 
         Ok(())
     }
 
-    pub fn get(
+    pub async fn get(
         &self,
         id: String,
         user: Option<&AuthUser>,
@@ -616,18 +642,18 @@ impl<'a> Collection<'a> {
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key)? else {
+        let Some(value) = self.store.get(&key).await? else {
             return Ok(None);
         };
 
-        if !self.user_can_read(&value, &user)? {
+        if !self.user_can_read(&value, &user).await? {
             return Err("unauthorized".into());
         }
 
         Ok(Some(value))
     }
 
-    pub fn list(
+    pub async fn list(
         &'a self,
         ListQuery {
             limit,
@@ -635,10 +661,12 @@ impl<'a> Collection<'a> {
             order_by,
             cursor_before,
             cursor_after,
-        }: ListQuery,
+        }: ListQuery<'_>,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<
-        impl Iterator<Item = Result<(Cursor, RecordRoot), Box<dyn Error + Send + Sync + 'static>>> + '_,
+        impl futures::Stream<
+                Item = Result<(Cursor, RecordRoot), Box<dyn Error + Send + Sync + 'static>>,
+            > + '_,
         Box<dyn Error + Send + Sync + 'static>,
     > {
         let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
@@ -678,61 +706,67 @@ impl<'a> Collection<'a> {
             (None, None) => key_range,
         };
 
-        Ok(self
-            .store
-            .list(&key_range.lower, &key_range.upper, reverse)?
-            .map(|res| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
-                let (k, v) = res?;
+        Ok(futures::stream::iter(
+            self.store
+                .list(&key_range.lower, &key_range.upper, reverse)?,
+        )
+        .map(|res| async {
+            let (k, v) = res?;
 
-                let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
-                let index_record = proto::IndexRecord::decode(&v[..])?;
-                let data_key = keys::Key::deserialize(&index_record.id)?;
-                let data = match self.store.get(&data_key)? {
-                    Some(d) => d,
-                    None => return Ok(None),
-                };
+            let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
+            let index_record = proto::IndexRecord::decode(&v[..])?;
+            let data_key = keys::Key::deserialize(&index_record.id)?;
+            let data = match self.store.get(&data_key).await? {
+                Some(d) => d,
+                None => return Ok(None),
+            };
 
-                Ok(Some((index_key, data)))
-            })
-            .filter_map(|r| match r {
+            Ok(Some((index_key, data)))
+        })
+        .filter_map(|r| async {
+            match r.await {
                 // Skip records that we couldn't find by the data key
                 Ok(None) => None,
                 Ok(Some(x)) => Some(Ok(x)),
                 Err(e) => Some(Err(e)),
-            })
-            .filter_map(
-                |r| -> Option<Result<_, Box<dyn Error + Send + Sync + 'static>>> {
-                    match r {
-                        Ok((cursor, record)) => {
-                            if !self
-                                .user_can_read(&record, user)
-                                // TODO: should we propagate this error?
-                                .unwrap_or(false)
-                            {
-                                // Skip records that the user can't read
-                                return None;
-                            }
-
-                            Some(Ok((cursor, record)))
-                        }
-                        Err(e) => Some(Err(e)),
+            }
+        })
+        .filter_map(|r| async {
+            match r {
+                Ok((cursor, record)) => {
+                    if !self
+                        .user_can_read(&record, user)
+                        .await
+                        // TODO: should we propagate this error?
+                        .unwrap_or(false)
+                    {
+                        // Skip records that the user can't read
+                        return None;
                     }
-                },
-            )
-            .take(limit.unwrap_or(usize::MAX)))
+
+                    Some(Ok((cursor, record)))
+                }
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .take(limit.unwrap_or(usize::MAX)))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use futures::TryStreamExt;
+
     use crate::{publickey, store::tests::TestStore};
 
     use super::*;
 
-    #[test]
-    fn test_collection_collection_load() {
+    #[tokio::test]
+    async fn test_collection_collection_load() {
         let store = TestStore::default();
-        let collection = Collection::load(&store, "Collection".to_string()).unwrap();
+        let collection = Collection::load(&store, "Collection".to_string())
+            .await
+            .unwrap();
 
         assert_eq!(collection.collection_id, "Collection");
         assert_eq!(collection.authorization, Authorization::Public);
@@ -746,8 +780,13 @@ mod tests {
         );
     }
 
-    fn create_collection<'a>(store: &'a TestStore, ast: stableast::Root) -> Vec<Collection<'a>> {
-        let collection_collection = Collection::load(store, "Collection".to_string()).unwrap();
+    async fn create_collection<'a>(
+        store: &'a TestStore,
+        ast: stableast::Root<'_>,
+    ) -> Vec<Collection<'a>> {
+        let collection_collection = Collection::load(store, "Collection".to_string())
+            .await
+            .unwrap();
 
         let ast_json = serde_json::to_string(&ast).unwrap();
 
@@ -782,16 +821,17 @@ mod tests {
                     },
                     None,
                 )
+                .await
                 .unwrap();
 
-            collections.push(Collection::load(store, id).unwrap());
+            collections.push(Collection::load(store, id).await.unwrap());
         }
 
         collections
     }
 
-    #[test]
-    fn test_create_collection() {
+    #[tokio::test]
+    async fn test_create_collection() {
         let store = TestStore::default();
 
         let collection_account = create_collection(
@@ -835,6 +875,7 @@ mod tests {
                 },
             )]),
         )
+        .await
         .into_iter()
         .next()
         .unwrap();
@@ -871,17 +912,17 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_collection_set_get() {
+    #[tokio::test]
+    async fn test_collection_set_get() {
         let store = TestStore::default();
         let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
 
         let value_json = r#"{"id": "1", "name": "test" }"#;
         let value = serde_json::from_str::<RecordRoot>(value_json).unwrap();
 
-        collection.set("1".into(), &value, None).unwrap();
+        collection.set("1".into(), &value, None).await.unwrap();
 
-        let record = collection.get("1".into(), None).unwrap().unwrap();
+        let record = collection.get("1".into(), None).await.unwrap().unwrap();
         assert_eq!(
             record.get("id").unwrap(),
             &RecordValue::IndexValue(IndexValue::String("1".into()))
@@ -892,8 +933,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_collection_set_list() {
+    #[tokio::test]
+    async fn test_collection_set_list() {
         let store = TestStore::default();
         let collection = Collection::new(
             &store,
@@ -915,11 +956,11 @@ mod tests {
 
         let value_1_json = r#"{"id": "1", "name": "test" }"#;
         let value_1 = serde_json::from_str::<RecordRoot>(value_1_json).unwrap();
-        collection.set("1".into(), &value_1, None).unwrap();
+        collection.set("1".into(), &value_1, None).await.unwrap();
 
         let value_2_json = r#"{"id": "2", "name": "test" }"#;
         let value_2 = serde_json::from_str::<RecordRoot>(value_2_json).unwrap();
-        collection.set("2".into(), &value_2, None).unwrap();
+        collection.set("2".into(), &value_2, None).await.unwrap();
 
         let mut results = collection
             .list(
@@ -949,8 +990,10 @@ mod tests {
                 },
                 &None,
             )
+            .await
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
+            .try_collect::<Vec<_>>()
+            .await
             .unwrap();
 
         assert_eq!(results.len(), 2);
@@ -961,8 +1004,8 @@ mod tests {
         assert_eq!(second, value_1);
     }
 
-    #[test]
-    fn test_collection_auth() {
+    #[tokio::test]
+    async fn test_collection_auth() {
         let store = TestStore::default();
         let collection = Collection::new(
             &store,
@@ -996,6 +1039,7 @@ mod tests {
                 .into(),
                 Some(&auth_user),
             )
+            .await
             .unwrap();
 
         // Update without a key fails
@@ -1010,6 +1054,7 @@ mod tests {
                     .into(),
                     None,
                 )
+                .await
                 .unwrap_err()
                 .to_string(),
             "unauthorized"
@@ -1029,6 +1074,7 @@ mod tests {
                         public_key: publickey::PublicKey::random(),
                     }),
                 )
+                .await
                 .unwrap_err()
                 .to_string(),
             "unauthorized"
@@ -1057,6 +1103,7 @@ mod tests {
                 .into(),
                 Some(&auth_user),
             )
+            .await
             .unwrap();
     }
 }
