@@ -1,81 +1,19 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    convert::AsRef,
-    error::Error,
-    ops::{Deref, DerefMut},
-    path::Path,
-};
+use std::{convert::AsRef, error::Error, path::Path};
 
 use prost::Message;
-use rocksdb::DBPinnableSlice;
-use serde::{Deserialize, Serialize};
 
 use crate::{
     keys::{self, Key},
     proto,
+    record::RecordRoot,
 };
 
 pub(crate) struct Store {
     db: rocksdb::DB,
 }
 
-pub type RecordValue<'a> = HashMap<Cow<'a, str>, keys::RecordValue<'a>>;
-
-enum RecordBacking<'a> {
-    Pinnable(DBPinnableSlice<'a>),
-    Static(&'static [u8]),
-    Vec(Vec<u8>),
-}
-
-#[ouroboros::self_referencing]
-pub struct StoreRecordValue<'db> {
-    slice: RecordBacking<'db>,
-    #[borrows(slice)]
-    #[covariant]
-    pub record: RecordValue<'this>,
-}
-
-impl StoreRecordValue<'_> {
-    pub fn new_from_static(slice: &'static [u8]) -> Result<Self, serde_json::Error> {
-        StoreRecordValueTryBuilder {
-            slice: RecordBacking::Static(slice),
-            record_builder: |slice| {
-                serde_json::from_slice(match slice {
-                    RecordBacking::Pinnable(p) => p.as_ref(),
-                    RecordBacking::Static(s) => s,
-                    RecordBacking::Vec(v) => v.as_slice(),
-                })
-            },
-        }
-        .try_build()
-    }
-
-    pub fn new_from_vec(slice: Vec<u8>) -> Result<Self, serde_json::Error> {
-        StoreRecordValueTryBuilder {
-            slice: RecordBacking::Vec(slice),
-            record_builder: |slice| {
-                serde_json::from_slice(match slice {
-                    RecordBacking::Pinnable(p) => p.as_ref(),
-                    RecordBacking::Static(s) => s,
-                    RecordBacking::Vec(v) => v.as_slice(),
-                })
-            },
-        }
-        .try_build()
-    }
-
-    pub fn get_slice(&self) -> &[u8] {
-        match self.borrow_slice() {
-            RecordBacking::Pinnable(p) => p.deref(),
-            RecordBacking::Static(s) => s,
-            RecordBacking::Vec(v) => v.deref(),
-        }
-    }
-}
-
 pub(crate) enum Value<'a> {
-    DataValue(Cow<'a, HashMap<Cow<'a, str>, keys::RecordValue<'a>>>),
+    DataValue(&'a RecordRoot),
     IndexValue(proto::IndexRecord),
 }
 
@@ -119,21 +57,9 @@ impl Store {
     pub(crate) fn get(
         &self,
         key: &Key,
-    ) -> Result<Option<StoreRecordValue>, Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<Option<RecordRoot>, Box<dyn Error + Send + Sync + 'static>> {
         match self.db.get_pinned(key.serialize()?)? {
-            Some(slice) => Ok(Some(
-                StoreRecordValueTryBuilder {
-                    slice: RecordBacking::Pinnable(slice),
-                    record_builder: |slice| {
-                        serde_json::from_slice(match slice {
-                            RecordBacking::Pinnable(p) => p.as_ref(),
-                            RecordBacking::Static(s) => s,
-                            RecordBacking::Vec(v) => v.as_slice(),
-                        })
-                    },
-                }
-                .try_build()?,
-            )),
+            Some(slice) => Ok(Some(serde_json::from_slice(slice.as_ref())?)),
             None => Ok(None),
         }
     }
@@ -180,6 +106,13 @@ impl Store {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::{
+        borrow::Cow,
+        ops::{Deref, DerefMut},
+    };
+
+    use crate::IndexValue;
+
     use super::*;
 
     pub(crate) struct TestStore(Option<Store>);
@@ -226,9 +159,7 @@ pub(crate) mod tests {
             "ns".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&keys::IndexValue::String(Cow::Borrowed(
-                "John",
-            )))],
+            vec![Cow::Owned(IndexValue::String("John".to_string()))],
         )
         .unwrap();
 
@@ -239,7 +170,7 @@ pub(crate) mod tests {
         let upper_bound = index.clone().wildcard();
         for record in store.list(&index, &upper_bound, false).unwrap() {
             let (key_box, value_box) = record.unwrap();
-            let key = Key::deserialize(&key_box[..]).unwrap();
+            let _key = Key::deserialize(&key_box[..]).unwrap();
             let value = proto::IndexRecord::decode(&value_box[..]).unwrap();
 
             // This doesn't work, not sure why.

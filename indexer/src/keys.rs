@@ -1,13 +1,12 @@
-use std::{
-    borrow::Cow, cmp::Ordering, collections::HashMap, error::Error, fmt, io::Write, ops::Deref,
-};
+use std::{borrow::Cow, cmp::Ordering, fmt};
 
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
-use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, BorrowCow};
 
-use crate::{proto, publickey};
+use crate::{
+    proto,
+    record::{IndexValue, RecordRoot},
+};
 
 const MULTICODEC_PROTOBUF: u64 = 0x50;
 
@@ -22,12 +21,12 @@ const BYTE_WILDCARD: u8 = 0x03;
 const BYTE_SYSTEM_DATA: u8 = 0x04;
 
 // Data type prefixes
-const BYTE_NULL: u8 = 0x00;
-const BYTE_STRING: u8 = 0x04;
-const BYTE_NUMBER: u8 = 0x05;
-const BYTE_BOOLEAN: u8 = 0x06;
-const BYTE_BYTES: u8 = 0x07;
-const BYTE_PUBLIC_KEY: u8 = 0x08;
+pub(crate) const BYTE_NULL: u8 = 0x00;
+pub(crate) const BYTE_STRING: u8 = 0x04;
+pub(crate) const BYTE_NUMBER: u8 = 0x05;
+pub(crate) const BYTE_BOOLEAN: u8 = 0x06;
+pub(crate) const BYTE_BYTES: u8 = 0x07;
+pub(crate) const BYTE_PUBLIC_KEY: u8 = 0x08;
 
 pub(crate) fn comparator(key1: &[u8], key2: &[u8]) -> Ordering {
     if key1.len() < KEY_COMPARE_PREFIX || key2.len() < KEY_COMPARE_PREFIX {
@@ -130,7 +129,7 @@ pub(crate) enum Key<'a> {
     Index {
         cid: Cow<'a, [u8]>,
         directions: Cow<'a, [Direction]>,
-        values: Vec<Cow<'a, IndexValue<'a>>>,
+        values: Vec<Cow<'a, IndexValue>>,
     },
 }
 
@@ -174,7 +173,7 @@ impl<'a> Key<'a> {
         namespace: String,
         paths: &[&[impl AsRef<str>]],
         directions: &[Direction],
-        values: Vec<Cow<'a, IndexValue<'a>>>,
+        values: Vec<Cow<'a, IndexValue>>,
     ) -> Result<Self, cid::Error> {
         let data = proto::IndexKey {
             namespace,
@@ -287,9 +286,9 @@ impl<'a> Key<'a> {
         }
     }
 
-    pub(crate) fn to_static(self) -> Key<'static> {
+    pub(crate) fn with_static(self) -> Key<'static> {
         match self {
-            Key::Wildcard(k) => Key::Wildcard(Box::new(k.to_static())),
+            Key::Wildcard(k) => Key::Wildcard(Box::new(k.with_static())),
             Key::Data { cid } => Key::Data {
                 cid: Cow::Owned(cid.into_owned()),
             },
@@ -305,7 +304,7 @@ impl<'a> Key<'a> {
                 directions: Cow::Owned(directions.into_owned()),
                 values: values
                     .into_iter()
-                    .map(|v| Cow::Owned(v.into_owned().to_static()))
+                    .map(|v| Cow::Owned(v.into_owned()))
                     .collect(),
             },
         }
@@ -319,21 +318,14 @@ impl<'a> Key<'a> {
             Key::Data { .. } => Err("Data keys have no values".into()),
             Key::SystemData { .. } => Err("SystemData keys have no values".into()),
             Key::Index {
-                cid,
-                directions,
+                cid: _,
+                directions: _,
                 values,
             } => {
                 values.push(Cow::Borrowed(&IndexValue::Null));
                 Ok(())
             }
         }
-    }
-
-    pub(crate) fn immediate_successor_value(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        self.immediate_successor_value_mut()?;
-        Ok(self)
     }
 }
 
@@ -364,331 +356,11 @@ impl TryFrom<u8> for Direction {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
-#[serde_as]
-pub enum IndexValue<'a> {
-    Number(f64),
-    Boolean(bool),
-    Null,
-    #[serde(borrow)]
-    String(Cow<'a, str>),
-    #[serde(borrow)]
-    Bytes(Cow<'a, [u8]>),
-    #[serde(borrow)]
-    PublicKey(#[serde_as(as = "Box<BorrowCow>")] Box<Cow<'a, publickey::PublicKey>>),
-}
-
-impl<'a> IndexValue<'a> {
-    fn byte_prefix(&self) -> u8 {
-        match self {
-            IndexValue::Null => BYTE_NULL,
-            IndexValue::String(_) => BYTE_STRING,
-            IndexValue::Number(_) => BYTE_NUMBER,
-            IndexValue::Boolean(_) => BYTE_BOOLEAN,
-            IndexValue::Bytes(_) => BYTE_BYTES,
-            IndexValue::PublicKey(_) => BYTE_PUBLIC_KEY,
-        }
-    }
-
-    fn serialize(
-        &self,
-        mut w: impl std::io::Write,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-        let number_bytes;
-        let value: Cow<[u8]> = match self {
-            IndexValue::String(s) => Cow::Borrowed(s.as_bytes()),
-            IndexValue::Number(n) => {
-                number_bytes = n.to_be_bytes();
-                Cow::Borrowed(&number_bytes[..])
-            }
-            IndexValue::Boolean(b) => match b {
-                false => Cow::Borrowed(&[0x00]),
-                true => Cow::Borrowed(&[0x01]),
-            },
-            IndexValue::Bytes(b) => Cow::Borrowed(b),
-            IndexValue::Null => Cow::Borrowed(&[0x00]),
-            IndexValue::PublicKey(jwk) => Cow::Owned(jwk.to_indexable()),
-        };
-
-        let len = 1 + u16::try_from(value.len())?;
-        w.write_all(&len.to_le_bytes())?;
-        w.write_all(&[self.byte_prefix()])?;
-        w.write_all(&value[..])?;
-
-        Ok(())
-    }
-
-    fn deserialize(
-        bytes: &'a [u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        let type_prefix = bytes[0];
-        let value = &bytes[1..];
-        let value = match type_prefix {
-            BYTE_STRING => IndexValue::String(Cow::Owned(String::from_utf8(value.to_vec())?)),
-            BYTE_NUMBER => IndexValue::Number(f64::from_be_bytes(value.try_into()?)),
-            BYTE_BOOLEAN => IndexValue::Boolean(match value[0] {
-                0x00 => false,
-                0x01 => true,
-                _ => return Err("invalid boolean value".into()),
-            }),
-            BYTE_BYTES => IndexValue::Bytes(Cow::Borrowed(value)),
-            BYTE_NULL => IndexValue::Null,
-            _ => return Err("invalid index value".into()),
-        };
-
-        Ok(value)
-    }
-
-    fn to_static(&self) -> IndexValue<'static> {
-        match self {
-            IndexValue::String(s) => IndexValue::String(Cow::Owned(s.to_string())),
-            IndexValue::Number(n) => IndexValue::Number(*n),
-            IndexValue::Boolean(b) => IndexValue::Boolean(*b),
-            IndexValue::Bytes(b) => IndexValue::Bytes(Cow::Owned(b.to_vec())),
-            IndexValue::Null => IndexValue::Null,
-            IndexValue::PublicKey(p) => {
-                IndexValue::PublicKey(Box::new(Cow::Owned(p.as_ref().as_ref().to_owned())))
-            }
-        }
-    }
-}
-
-#[serde_as]
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
-pub enum RecordValue<'a> {
-    #[serde(borrow)]
-    IndexValue(IndexValue<'a>),
-    Map(#[serde_as(as = "HashMap<BorrowCow, _>")] HashMap<Cow<'a, str>, RecordValue<'a>>),
-    Array(Vec<RecordValue<'a>>),
-}
-
-// TODO: use this to deserialize from a JSON provided by the user, to our RecordValue.
-// The database will store RecordValue. Conversion only has to happen once.
-impl TryFrom<(&polylang::stableast::Type<'_>, serde_json::Value)> for RecordValue<'_> {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
-
-    fn try_from(
-        (ty, value): (&polylang::stableast::Type, serde_json::Value),
-    ) -> Result<Self, Self::Error> {
-        match (ty, value) {
-            (polylang::stableast::Type::Primitive(p), value) => match (&p.value, value) {
-                (polylang::stableast::PrimitiveType::String, serde_json::Value::String(s)) => {
-                    Ok(RecordValue::IndexValue(IndexValue::String(Cow::Owned(s))))
-                }
-                (polylang::stableast::PrimitiveType::Number, serde_json::Value::Number(n)) => Ok(
-                    RecordValue::IndexValue(IndexValue::Number(n.as_f64().unwrap())),
-                ),
-                (polylang::stableast::PrimitiveType::Boolean, serde_json::Value::Bool(b)) => {
-                    Ok(RecordValue::IndexValue(IndexValue::Boolean(b)))
-                }
-                x => Err(format!("type mismatch: {x:?}").into()),
-            },
-            (polylang::stableast::Type::Array(t), serde_json::Value::Array(a)) => {
-                let mut array = Vec::with_capacity(a.len());
-                for v in a {
-                    array.push(RecordValue::try_from((t.value.as_ref(), v))?);
-                }
-                Ok(RecordValue::Array(array))
-            }
-            (polylang::stableast::Type::Map(t), serde_json::Value::Object(o)) => {
-                let mut map = HashMap::with_capacity(o.len());
-                for (k, v) in o {
-                    map.insert(Cow::Owned(k), RecordValue::try_from((t.value.as_ref(), v))?);
-                }
-                Ok(RecordValue::Map(map))
-            }
-            _ => todo!(),
-        }
-    }
-}
-
-impl<'rv> RecordValue<'rv> {
-    pub fn walk<'a, E: Error>(
-        &'a self,
-        current_path: &mut Vec<Cow<'a, str>>,
-        f: &mut impl FnMut(&[Cow<str>], &'a IndexValue) -> Result<(), E>,
-    ) -> Result<(), E> {
-        match self {
-            RecordValue::IndexValue(v) => {
-                f(current_path, v)?;
-            }
-            RecordValue::Map(m) => {
-                for (k, v) in m.iter() {
-                    current_path.push(Cow::Borrowed(k));
-                    v.walk(current_path, f)?;
-                    current_path.pop();
-                }
-            }
-            RecordValue::Array(a) => {
-                for (i, v) in a.iter().enumerate() {
-                    current_path.push(Cow::Owned(i.to_string()));
-                    v.walk(current_path, f)?;
-                    current_path.pop();
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn walk_all<'a, E: Error>(
-        &'a self,
-        current_path: &mut Vec<Cow<'a, str>>,
-        f: &mut impl FnMut(&[Cow<str>], &'a RecordValue) -> Result<(), E>,
-    ) -> Result<(), E> {
-        match self {
-            RecordValue::IndexValue(_) => {
-                f(current_path, self)?;
-            }
-            RecordValue::Map(m) => {
-                f(current_path, self)?;
-
-                for (k, v) in m.iter() {
-                    current_path.push(Cow::Borrowed(k));
-                    v.walk_all(current_path, f)?;
-                    current_path.pop();
-                }
-            }
-            RecordValue::Array(a) => {
-                f(current_path, self)?;
-
-                for (i, v) in a.iter().enumerate() {
-                    current_path.push(Cow::Owned(i.to_string()));
-                    v.walk_all(current_path, f)?;
-                    current_path.pop();
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn walk_maps_mut<E>(
-        &mut self,
-        current_path: &mut Vec<Cow<'rv, str>>,
-        f: &mut impl FnMut(
-            &[Cow<'rv, str>],
-            &mut HashMap<Cow<'rv, str>, RecordValue<'rv>>,
-        ) -> Result<(), E>,
-    ) -> Result<(), E> {
-        match self {
-            RecordValue::IndexValue(_) => {}
-            RecordValue::Map(m) => {
-                f(current_path, m)?;
-                let keys = m.keys().cloned().collect::<Vec<_>>();
-                for (k, v) in keys.into_iter().zip(m.values_mut()) {
-                    current_path.push(k);
-                    v.walk_maps_mut(current_path, f)?;
-                    current_path.pop();
-                }
-            }
-            RecordValue::Array(a) => {
-                for (i, v) in a.iter_mut().enumerate() {
-                    current_path.push(Cow::Owned(i.to_string()));
-                    v.walk_maps_mut(current_path, f)?;
-                    current_path.pop();
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
-pub struct RecordReference {
-    pub id: String,
-    pub collection_id: Option<String>,
-}
-
-impl TryFrom<&RecordValue<'_>> for RecordReference {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
-
-    fn try_from(value: &RecordValue<'_>) -> Result<Self, Self::Error> {
-        match value {
-            RecordValue::Map(m) => {
-                let id = match m.get("id") {
-                    Some(RecordValue::IndexValue(IndexValue::String(s))) => s.to_string(),
-                    _ => return Err("record reference must have an id".into()),
-                };
-
-                let collection_id = match m.get("collectionId") {
-                    Some(RecordValue::IndexValue(IndexValue::String(s))) => Some(s.to_string()),
-                    Some(_) => return Err("collectionId must be a string".into()),
-                    None => None,
-                };
-
-                Ok(RecordReference { id, collection_id })
-            }
-            _ => Err("not a record reference".into()),
-        }
-    }
-}
-
-pub trait PathFinder<'a> {
-    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue<'a>>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>;
-}
-
-impl<'a> PathFinder<'a> for crate::store::RecordValue<'a> {
-    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue<'a>>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
-    {
-        let Some(head) = path.first() else {
-            return None;
-        };
-
-        let Some(value) = self.get(head.as_ref()) else {
-            return None;
-        };
-
-        if path.len() == 1 {
-            return Some(value);
-        }
-
-        value.find_path(&path[1..])
-    }
-}
-
-impl<'a> PathFinder<'a> for RecordValue<'a> {
-    fn find_path<T>(&self, path: &[T]) -> std::option::Option<&RecordValue<'a>>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
-    {
-        let Some(head) = path.first() else {
-            return None;
-        };
-
-        match self {
-            RecordValue::IndexValue(_) => None,
-            RecordValue::Map(m) => m.find_path(path),
-            RecordValue::Array(a) => {
-                if let Ok(index) = head.as_ref().parse::<usize>() {
-                    if let Some(value) = a.get(index) {
-                        if path.len() == 1 {
-                            return Some(value);
-                        }
-
-                        value.find_path(&path[1..])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-        }
-    }
-}
-
 pub(crate) fn index_record_key_with_record<'a, T>(
     namespace: String,
     paths: &[&[T]],
     directions: &[Direction],
-    record: &'a HashMap<Cow<str>, RecordValue>,
+    record: &'a RecordRoot,
 ) -> Result<Key<'a>, Box<dyn std::error::Error + Send + Sync + 'static>>
 where
     T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
@@ -752,23 +424,20 @@ where
     Ok(key)
 }
 
-pub(crate) fn immediate_successor(key: Vec<u8>) -> Vec<u8> {
-    let mut successor = key;
-    for i in (0..successor.len()).rev() {
-        if successor[i] == u8::MAX {
-            successor[i] = 0;
-        } else {
-            successor[i] += 1;
-            break;
-        }
-    }
-
-    successor
-}
-
 #[cfg(test)]
 mod test {
+    use crate::record::RecordValue;
+
     use super::*;
+
+    impl Key<'_> {
+        pub(crate) fn immediate_successor_value(
+            mut self,
+        ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+            self.immediate_successor_value_mut()?;
+            Ok(self)
+        }
+    }
 
     #[test]
     fn test_index_value_number() {
@@ -782,26 +451,12 @@ mod test {
 
     #[test]
     fn test_index_value_string() {
-        let value = IndexValue::String(Cow::Borrowed("hello"));
+        let value = IndexValue::String("hello".to_string());
         let mut serialized = vec![];
         value.serialize(&mut serialized).unwrap();
         let (field, _) = eat_field(&serialized);
         let deserialized = IndexValue::deserialize(field).unwrap();
         assert_eq!(deserialized, value);
-    }
-
-    #[test]
-    fn test_record_index_value_string_serde_deserialize() {
-        let serialized = r#""hello""#;
-        let deserialized = serde_json::from_str(serialized).unwrap();
-
-        match deserialized {
-            RecordValue::IndexValue(IndexValue::String(Cow::Owned(_))) => {
-                panic!("should not be owned")
-            }
-            RecordValue::IndexValue(IndexValue::String(Cow::Borrowed(_))) => {}
-            _ => panic!("should be string"),
-        }
     }
 
     #[test]
@@ -814,19 +469,15 @@ mod test {
                 assert_eq!(m.len(), 1);
                 let (k, v) = m.iter().next().unwrap();
 
-                match k {
-                    Cow::Borrowed("hello") => {}
-                    Cow::Borrowed(s) => panic!("should be hello, got {s}"),
-                    Cow::Owned(_) => panic!("should not be owned"),
+                match k.as_str() {
+                    "hello" => {}
+                    s => panic!("should be hello, got {s}"),
                 }
 
                 match v {
-                    RecordValue::IndexValue(IndexValue::String(Cow::Borrowed("world"))) => {}
-                    RecordValue::IndexValue(IndexValue::String(Cow::Borrowed(s))) => {
+                    RecordValue::IndexValue(IndexValue::String(s)) if s == "world" => {}
+                    RecordValue::IndexValue(IndexValue::String(s)) => {
                         panic!("should be world, got {s}")
-                    }
-                    RecordValue::IndexValue(IndexValue::String(Cow::Owned(_))) => {
-                        panic!("should not be owned")
                     }
                     _ => panic!("should be string"),
                 }
@@ -873,7 +524,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Descending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -883,7 +534,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Descending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -898,7 +549,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -908,7 +559,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
             ],
         )
@@ -923,7 +574,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
             ],
         )
@@ -933,7 +584,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello"))),
+                Cow::Borrowed(&IndexValue::String("hello".to_string())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -947,14 +598,14 @@ mod test {
             "namespace".to_string(),
             &[&["a"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello2")))]
+            vec![Cow::Borrowed(&IndexValue::String("hello2".to_string()))]
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
             &[&["a"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("hello")))]
+            vec![Cow::Borrowed(&IndexValue::String("hello".to_string()))]
         )
         .unwrap(),
         Ordering::Greater
@@ -1017,7 +668,7 @@ mod test {
             &[Direction::Ascending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
             ],
         )
         .unwrap(),
@@ -1048,7 +699,7 @@ mod test {
             &[Direction::Ascending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
             ],
         )
         .unwrap(),
@@ -1193,7 +844,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("1"))),
+                Cow::Borrowed(&IndexValue::String("1".to_string())),
             ],
         )
         .unwrap(),
@@ -1236,7 +887,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(40.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("2"))),
+                Cow::Borrowed(&IndexValue::String("2".to_string())),
             ],
         )
         .unwrap(),
@@ -1246,7 +897,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(39.0)),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("2"))),
+                Cow::Borrowed(&IndexValue::String("2".to_string())),
             ],
         )
         .unwrap(),
@@ -1260,8 +911,8 @@ mod test {
             &[&["name"], &["id"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("John"))),
-                Cow::Borrowed(&IndexValue::String(Cow::Borrowed("rec1"))),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
+                Cow::Borrowed(&IndexValue::String("rec1".to_string())),
             ],
         )
         .unwrap(),
@@ -1269,7 +920,7 @@ mod test {
             "namespace".to_string(),
             &[&["name"], &["id"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String(Cow::Borrowed("Jane")))],
+            vec![Cow::Borrowed(&IndexValue::String("Jane".to_string()))],
         )
         .unwrap()
         .wildcard(),

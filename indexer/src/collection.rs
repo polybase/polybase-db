@@ -5,29 +5,26 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use crate::{
+    index, keys, proto,
+    publickey::PublicKey,
+    record::{IndexValue, PathFinder, RecordReference, RecordRoot, RecordValue},
+    stableast_ext::FieldWalker,
+    store::{self},
+    where_query,
+};
 use base64::Engine;
 use once_cell::sync::Lazy;
-use polylang::stableast::{self, Record};
+use polylang::stableast;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    index,
-    keys::{self, PathFinder},
-    proto,
-    publickey::PublicKey,
-    stableast_ext::FieldWalker,
-    store::{self, RecordValue, StoreRecordValue},
-    where_query::{self, FieldPath},
-    IndexValue, RecordReference,
-};
-
-static COLLECTION_COLLECTION_RECORD: Lazy<String> = Lazy::new(|| {
+static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
     let mut hm = HashMap::new();
 
     hm.insert(
-        Cow::Borrowed("id"),
-        keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Borrowed("collections"))),
+        "id".to_string(),
+        RecordValue::IndexValue(IndexValue::String("collections".to_string())),
     );
 
     let code = r#"
@@ -61,32 +58,32 @@ collection Collection {
 "#;
 
     hm.insert(
-        Cow::Borrowed("code"),
-        keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Borrowed(code))),
+        "code".to_string(),
+        RecordValue::IndexValue(IndexValue::String(code.to_string())),
     );
 
     let mut program = None;
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
     hm.insert(
-        Cow::Borrowed("ast"),
-        keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+        "ast".to_string(),
+        RecordValue::IndexValue(IndexValue::String(
             serde_json::to_string(&stable_ast).unwrap(),
-        ))),
+        )),
     );
 
-    serde_json::to_string(&hm).unwrap()
+    hm
 });
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Authorization<'a> {
+pub(crate) enum Authorization {
     Public,
-    Private(PrivateAuthorization<'a>),
+    Private(PrivateAuthorization),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PrivateAuthorization<'a> {
-    pub(crate) read_fields: Vec<where_query::FieldPath<'a>>,
-    pub(crate) delegate_fields: Vec<where_query::FieldPath<'a>>,
+pub(crate) struct PrivateAuthorization {
+    pub(crate) read_fields: Vec<where_query::FieldPath>,
+    pub(crate) delegate_fields: Vec<where_query::FieldPath>,
 }
 
 #[derive(Clone)]
@@ -94,7 +91,7 @@ pub struct Collection<'a> {
     store: &'a store::Store,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
-    authorization: Authorization<'a>,
+    authorization: Authorization,
 }
 
 pub struct CollectionMetadata {
@@ -107,7 +104,7 @@ pub struct RecordMetadata {
 
 pub struct ListQuery<'a> {
     pub limit: Option<usize>,
-    pub where_query: &'a where_query::WhereQuery<'a>,
+    pub where_query: where_query::WhereQuery,
     pub order_by: &'a [index::CollectionIndexField<'a>],
     pub cursor_before: Option<Cursor>,
     pub cursor_after: Option<Cursor>,
@@ -162,7 +159,7 @@ impl<'de> Deserialize<'de> for Cursor {
             .decode(s.as_bytes())
             .map_err(serde::de::Error::custom)?;
         let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
-        Self::new(key.to_static()).map_err(serde::de::Error::custom)
+        Self::new(key.with_static()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -171,7 +168,7 @@ impl<'a> Collection<'a> {
         store: &'a store::Store,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
-        authorization: Authorization<'a>,
+        authorization: Authorization,
     ) -> Self {
         Self {
             store,
@@ -201,21 +198,18 @@ impl<'a> Collection<'a> {
             return Ok(collection_collection);
         }
 
-        let Some(collection) = collection_collection.get( id, None)? else {
+        let Some(record) = collection_collection.get(id, None)? else {
             return Err("Collection not found".into());
         };
 
-        let record = collection.borrow_record();
         let id = match record.get("id") {
-            Some(keys::RecordValue::IndexValue(keys::IndexValue::String(id))) => id,
+            Some(RecordValue::IndexValue(IndexValue::String(id))) => id,
             Some(_) => return Err("Collection record id is not a string".into()),
             None => return Err("Collection record missing id".into()),
         };
 
         let ast: stableast::Root = match record.get("ast") {
-            Some(keys::RecordValue::IndexValue(keys::IndexValue::String(ast))) => {
-                serde_json::from_str(ast)?
-            }
+            Some(RecordValue::IndexValue(IndexValue::String(ast))) => serde_json::from_str(ast)?,
             Some(_) => return Err("Collection record AST is not a string".into()),
             None => return Err("Collection record missing AST".into()),
         };
@@ -296,9 +290,7 @@ impl<'a> Collection<'a> {
                             prop.directives
                                 .iter()
                                 .find(|dir| dir.name == "read")
-                                .map(|_| {
-                                    where_query::FieldPath(vec![Cow::Owned(prop.name.to_string())])
-                                })
+                                .map(|_| where_query::FieldPath(vec![prop.name.to_string()]))
                         })
                         .collect::<Vec<_>>(),
                     delegate_fields: {
@@ -308,7 +300,7 @@ impl<'a> Collection<'a> {
                             if let crate::stableast_ext::Field::Property(p) = field {
                                 if p.directives.iter().any(|dir| dir.name == "delegate") {
                                     delegate_fields.push(where_query::FieldPath(
-                                        path.iter().map(|p| Cow::Owned(p.to_string())).collect(),
+                                        path.iter().map(|p| p.to_string()).collect(),
                                     ));
                                 }
                             };
@@ -339,7 +331,7 @@ impl<'a> Collection<'a> {
 
     pub(crate) fn user_can_read(
         &self,
-        record: &RecordValue,
+        record: &RecordRoot,
         user: &Option<&AuthUser>,
     ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
         let read_fields = match &self.authorization {
@@ -362,13 +354,13 @@ impl<'a> Collection<'a> {
                         }
 
                         match value {
-                            keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(
+                            RecordValue::IndexValue(IndexValue::PublicKey(
                                 record_pk,
-                            )) if record_pk.as_ref().as_ref() == &user.public_key => {
+                            )) if record_pk == &user.public_key => {
                                 authorized = true;
                             }
-                            keys::RecordValue::Map(_) => {
-                                let Ok(record_reference) = keys::RecordReference::try_from(value) else {
+                            RecordValue::Map(_) => {
+                                let Ok(record_reference) = RecordReference::try_from(value) else {
                                     return Ok(());
                                 };
 
@@ -383,7 +375,7 @@ impl<'a> Collection<'a> {
                                     return Ok(());
                                 };
 
-                                if collection.has_delegate_access(record.borrow_record(), &Some(user)).unwrap_or(false) {
+                                if collection.has_delegate_access(&record, &Some(user)).unwrap_or(false) {
                                     authorized = true;
                                 }
                             }
@@ -397,8 +389,7 @@ impl<'a> Collection<'a> {
         }
 
         if !authorized {
-            authorized =
-                self.has_delegate_access(&keys::RecordValue::Map(record.clone()), &Some(user))?;
+            authorized = self.has_delegate_access(record, &Some(user))?;
         }
 
         Ok(authorized)
@@ -407,7 +398,7 @@ impl<'a> Collection<'a> {
     fn user_can_read_lazy<'b>(
         &self,
         record_getter: impl FnOnce() -> Result<
-            Option<&'b RecordValue<'b>>,
+            Option<&'b RecordRoot>,
             Box<dyn Error + Send + Sync + 'static>,
         >,
         user: Option<&AuthUser>,
@@ -424,9 +415,9 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub fn has_delegate_access<'b>(
+    pub fn has_delegate_access(
         &self,
-        record: &impl PathFinder<'b>,
+        record: &impl PathFinder,
         user: &Option<&AuthUser>,
     ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
         let delegate_fields = match &self.authorization {
@@ -443,12 +434,10 @@ impl<'a> Collection<'a> {
             };
 
             match delegate_value {
-                keys::RecordValue::IndexValue(IndexValue::PublicKey(pk))
-                    if pk.as_ref().as_ref() == &user.public_key =>
-                {
+                RecordValue::IndexValue(IndexValue::PublicKey(pk)) if pk == &user.public_key => {
                     return Ok(true);
                 }
-                keys::RecordValue::Map(_) => {
+                RecordValue::Map(_) => {
                     let Ok(record_ref) = RecordReference::try_from(delegate_value) else {
                         continue;
                     };
@@ -465,7 +454,7 @@ impl<'a> Collection<'a> {
                     };
 
                     if collection
-                        .has_delegate_access(record.borrow_record(), &Some(user))
+                        .has_delegate_access(&record, &Some(user))
                         .unwrap_or(false)
                     {
                         return Ok(true);
@@ -484,17 +473,17 @@ impl<'a> Collection<'a> {
 
         self.store.set(
             &collection_metadata_key,
-            &store::Value::DataValue(Cow::Owned(
-                [(
+            &store::Value::DataValue(
+                &[(
                     "lastRecordUpdatedAt".into(),
-                    keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+                    RecordValue::IndexValue(IndexValue::String(
                         time.duration_since(SystemTime::UNIX_EPOCH)?
                             .as_millis()
                             .to_string(),
-                    ))),
+                    )),
                 )]
                 .into(),
-            )),
+            ),
         )?;
         Ok(())
     }
@@ -507,13 +496,12 @@ impl<'a> Collection<'a> {
             return Ok(None);
         };
 
-        let last_record_updated_at =
-            match record.borrow_record().find_path(&["lastRecordUpdatedAt"]) {
-                Some(keys::RecordValue::IndexValue(keys::IndexValue::String(s))) => {
-                    SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
-                }
-                _ => return Err("Invalid metadata, missing lastRecordUpdatedAt".into()),
-            };
+        let last_record_updated_at = match record.find_path(&["lastRecordUpdatedAt"]) {
+            Some(RecordValue::IndexValue(IndexValue::String(s))) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+            }
+            _ => return Err("Invalid metadata, missing lastRecordUpdatedAt".into()),
+        };
 
         Ok(Some(CollectionMetadata {
             last_record_updated_at,
@@ -532,18 +520,18 @@ impl<'a> Collection<'a> {
 
         self.store.set(
             &record_metadata_key,
-            &store::Value::DataValue(Cow::Owned(
-                [(
+            &store::Value::DataValue(
+                &[(
                     "updatedAt".into(),
-                    keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
+                    RecordValue::IndexValue(IndexValue::String(
                         updated_at
                             .duration_since(SystemTime::UNIX_EPOCH)?
                             .as_millis()
                             .to_string(),
-                    ))),
+                    )),
                 )]
                 .into(),
-            )),
+            ),
         )?;
         Ok(())
     }
@@ -561,8 +549,8 @@ impl<'a> Collection<'a> {
             return Ok(None);
         };
 
-        let updated_at = match record.borrow_record().find_path(&["updatedAt"]) {
-            Some(keys::RecordValue::IndexValue(keys::IndexValue::String(s))) => {
+        let updated_at = match record.find_path(&["updatedAt"]) {
+            Some(RecordValue::IndexValue(IndexValue::String(s))) => {
                 SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
             }
             _ => return Err("Invalid metadata, missing updatedAt".into()),
@@ -574,12 +562,12 @@ impl<'a> Collection<'a> {
     pub fn set(
         &self,
         id: String,
-        value: &HashMap<Cow<str>, keys::RecordValue>,
+        value: &RecordRoot,
         auth_user: Option<&AuthUser>,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         match value.get("id") {
             Some(rv) => match rv {
-                keys::RecordValue::IndexValue(keys::IndexValue::String(record_id)) => {
+                RecordValue::IndexValue(IndexValue::String(record_id)) => {
                     if &id != record_id {
                         return Err("id must match the record_id".into());
                     }
@@ -590,16 +578,12 @@ impl<'a> Collection<'a> {
         }
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
-        let store_record_value = self.store.get(&data_key)?;
-        if !self.user_can_read_lazy(
-            || Ok(store_record_value.as_ref().map(|sv| sv.borrow_record())),
-            auth_user,
-        )? {
+        let record = self.store.get(&data_key)?;
+        if !self.user_can_read_lazy(|| Ok(record.as_ref()), auth_user)? {
             return Err("unauthorized".into());
         }
 
-        self.store
-            .set(&data_key, &store::Value::DataValue(Cow::Borrowed(value)))?;
+        self.store.set(&data_key, &store::Value::DataValue(value))?;
 
         self.update_metadata(&SystemTime::now())?;
         self.set_record_metadata(id, &SystemTime::now())?;
@@ -626,11 +610,9 @@ impl<'a> Collection<'a> {
         &self,
         id: String,
         user: Option<&AuthUser>,
-    ) -> Result<Option<StoreRecordValue>, Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<Option<RecordRoot>, Box<dyn Error + Send + Sync + 'static>> {
         if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(StoreRecordValue::new_from_static(
-                COLLECTION_COLLECTION_RECORD.as_bytes(),
-            )?));
+            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
@@ -638,7 +620,7 @@ impl<'a> Collection<'a> {
             return Ok(None);
         };
 
-        if !self.user_can_read(value.borrow_record(), &user)? {
+        if !self.user_can_read(&value, &user)? {
             return Err("unauthorized".into());
         }
 
@@ -647,24 +629,25 @@ impl<'a> Collection<'a> {
 
     pub fn list(
         &'a self,
-        query: ListQuery,
+        ListQuery {
+            limit,
+            where_query,
+            order_by,
+            cursor_before,
+            cursor_after,
+        }: ListQuery,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<
-        impl Iterator<
-                Item = Result<
-                    (Cursor, StoreRecordValue<'a>),
-                    Box<dyn Error + Send + Sync + 'static>,
-                >,
-            > + '_,
+        impl Iterator<Item = Result<(Cursor, RecordRoot), Box<dyn Error + Send + Sync + 'static>>> + '_,
         Box<dyn Error + Send + Sync + 'static>,
     > {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(query.where_query, query.order_by)) else {
+        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
             return Err("No index found matching the query".into());
         };
 
-        let key_range = query
-            .where_query
-            .to_key_range(
+        let where_query = where_query;
+        let key_range = where_query
+            .key_range(
                 self.collection_id.clone(),
                 &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
                 &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
@@ -672,12 +655,12 @@ impl<'a> Collection<'a> {
             .map_err(|e| e.to_string())?;
 
         let key_range = where_query::KeyRange {
-            lower: key_range.lower.to_static(),
-            upper: key_range.upper.to_static(),
+            lower: key_range.lower.with_static(),
+            upper: key_range.upper.with_static(),
         };
 
-        let mut reverse = index.should_list_in_reverse(query.order_by);
-        let key_range = match (query.cursor_after, query.cursor_before) {
+        let mut reverse = index.should_list_in_reverse(order_by);
+        let key_range = match (cursor_after, cursor_before) {
             (Some(mut after), _) => {
                 after.0.immediate_successor_value_mut()?;
                 where_query::KeyRange {
@@ -701,7 +684,7 @@ impl<'a> Collection<'a> {
             .map(|res| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
                 let (k, v) = res?;
 
-                let index_key = Cursor::new(keys::Key::deserialize(&k)?.to_static())?;
+                let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
                 let index_record = proto::IndexRecord::decode(&v[..])?;
                 let data_key = keys::Key::deserialize(&index_record.id)?;
                 let data = match self.store.get(&data_key)? {
@@ -720,9 +703,9 @@ impl<'a> Collection<'a> {
             .filter_map(
                 |r| -> Option<Result<_, Box<dyn Error + Send + Sync + 'static>>> {
                     match r {
-                        Ok((cursor, sv)) => {
+                        Ok((cursor, record)) => {
                             if !self
-                                .user_can_read(sv.borrow_record(), user)
+                                .user_can_read(&record, user)
                                 // TODO: should we propagate this error?
                                 .unwrap_or(false)
                             {
@@ -730,13 +713,13 @@ impl<'a> Collection<'a> {
                                 return None;
                             }
 
-                            Some(Ok((cursor, sv)))
+                            Some(Ok((cursor, record)))
                         }
                         Err(e) => Some(Err(e)),
                     }
                 },
             )
-            .take(query.limit.unwrap_or(usize::MAX)))
+            .take(limit.unwrap_or(usize::MAX)))
     }
 }
 
@@ -787,16 +770,12 @@ mod tests {
                         let mut map = HashMap::new();
 
                         map.insert(
-                            Cow::Borrowed("id"),
-                            keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Borrowed(
-                                &id,
-                            ))),
+                            "id".to_string(),
+                            RecordValue::IndexValue(IndexValue::String(id.clone())),
                         );
                         map.insert(
-                            Cow::Borrowed("ast"),
-                            keys::RecordValue::IndexValue(keys::IndexValue::String(Cow::Owned(
-                                ast_json.clone(),
-                            ))),
+                            "ast".to_string(),
+                            RecordValue::IndexValue(IndexValue::String(ast_json.clone())),
                         );
 
                         map
@@ -898,19 +877,18 @@ mod tests {
         let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
 
         let value_json = r#"{"id": "1", "name": "test" }"#;
-        let value =
-            serde_json::from_str::<HashMap<Cow<str>, keys::RecordValue>>(value_json).unwrap();
+        let value = serde_json::from_str::<RecordRoot>(value_json).unwrap();
 
         collection.set("1".into(), &value, None).unwrap();
 
         let record = collection.get("1".into(), None).unwrap().unwrap();
         assert_eq!(
-            record.borrow_record().get("id").unwrap(),
-            &keys::RecordValue::IndexValue(keys::IndexValue::String("1".into()))
+            record.get("id").unwrap(),
+            &RecordValue::IndexValue(IndexValue::String("1".into()))
         );
         assert_eq!(
-            record.borrow_record().get("name").unwrap(),
-            &keys::RecordValue::IndexValue(keys::IndexValue::String("test".into()))
+            record.get("name").unwrap(),
+            &RecordValue::IndexValue(IndexValue::String("test".into()))
         );
     }
 
@@ -936,20 +914,18 @@ mod tests {
         );
 
         let value_1_json = r#"{"id": "1", "name": "test" }"#;
-        let value_1 =
-            serde_json::from_str::<HashMap<Cow<str>, keys::RecordValue>>(value_1_json).unwrap();
+        let value_1 = serde_json::from_str::<RecordRoot>(value_1_json).unwrap();
         collection.set("1".into(), &value_1, None).unwrap();
 
         let value_2_json = r#"{"id": "2", "name": "test" }"#;
-        let value_2 =
-            serde_json::from_str::<HashMap<Cow<str>, keys::RecordValue>>(value_2_json).unwrap();
+        let value_2 = serde_json::from_str::<RecordRoot>(value_2_json).unwrap();
         collection.set("2".into(), &value_2, None).unwrap();
 
         let mut results = collection
             .list(
                 ListQuery {
                     limit: None,
-                    where_query: &where_query::WhereQuery(
+                    where_query: where_query::WhereQuery(
                         [(
                             where_query::FieldPath(vec!["name".into()]),
                             where_query::WhereNode::Equality(where_query::WhereValue::String(
@@ -981,8 +957,8 @@ mod tests {
         let (_, second) = results.pop().unwrap();
         let (_, first) = results.pop().unwrap();
 
-        assert_eq!(first.borrow_record(), &value_2);
-        assert_eq!(second.borrow_record(), &value_1);
+        assert_eq!(first, value_2);
+        assert_eq!(second, value_1);
     }
 
     #[test]
@@ -1008,13 +984,13 @@ mod tests {
                 &[
                     (
                         "id".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::String("1".into())),
+                        RecordValue::IndexValue(IndexValue::String("1".into())),
                     ),
                     (
                         "owner".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(Box::new(
-                            Cow::Borrowed(&auth_user.public_key),
-                        ))),
+                        RecordValue::IndexValue(IndexValue::PublicKey(
+                            auth_user.public_key.clone(),
+                        )),
                     ),
                 ]
                 .into(),
@@ -1029,7 +1005,7 @@ mod tests {
                     "1".into(),
                     &[(
                         "id".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::String("1".into())),
+                        RecordValue::IndexValue(IndexValue::String("1".into())),
                     )]
                     .into(),
                     None,
@@ -1046,7 +1022,7 @@ mod tests {
                     "1".into(),
                     &[(
                         "id".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::String("1".into())),
+                        RecordValue::IndexValue(IndexValue::String("1".into())),
                     )]
                     .into(),
                     Some(&AuthUser {
@@ -1065,17 +1041,17 @@ mod tests {
                 &[
                     (
                         "id".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::String("1".into())),
+                        RecordValue::IndexValue(IndexValue::String("1".into())),
                     ),
                     (
                         "owner".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::PublicKey(Box::new(
-                            Cow::Borrowed(&auth_user.public_key),
-                        ))),
+                        RecordValue::IndexValue(IndexValue::PublicKey(
+                            auth_user.public_key.clone(),
+                        )),
                     ),
                     (
                         "name".into(),
-                        keys::RecordValue::IndexValue(keys::IndexValue::String("John".into())),
+                        RecordValue::IndexValue(IndexValue::String("John".into())),
                     ),
                 ]
                 .into(),

@@ -3,8 +3,7 @@ mod config;
 
 use std::{
     borrow::Cow,
-    cmp::{max, min},
-    collections::HashMap,
+    cmp::min,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -99,16 +98,14 @@ async fn get_record(
         let collection = indexer.collection(collection)?;
         let record = collection.get(id, auth.map(|a| a.into()).as_ref())?;
 
-        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(
-            record.map(|r| serde_json::to_string(r.borrow_record()).unwrap()),
-        )
+        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(record)
     })
     .await?;
 
     match record {
         Ok(Some(record)) => Ok(HttpResponse::Ok()
             .content_type("application/json")
-            .body(record)),
+            .json(record)),
         Ok(None) => Ok(HttpResponse::NotFound().body("Record not found")),
         Err(e) => Err(e),
     }
@@ -169,7 +166,7 @@ struct ListQuery {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
-    where_query: indexer::WhereQuery<'static>,
+    where_query: indexer::WhereQuery,
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
@@ -182,8 +179,8 @@ struct ListQuery {
 }
 
 #[derive(Serialize)]
-struct ListResponse<'a> {
-    data: Vec<&'a HashMap<Cow<'a, str>, indexer::RecordValue<'a>>>,
+struct ListResponse {
+    data: Vec<indexer::RecordRoot>,
     cursor_before: Option<indexer::Cursor>,
     cursor_after: Option<indexer::Cursor>,
 }
@@ -252,7 +249,7 @@ async fn get_records(
             .list(
                 indexer::ListQuery {
                     limit: Some(min(1000, query.limit.unwrap_or(1000))),
-                    where_query: &query.where_query,
+                    where_query: query.where_query.clone(),
                     order_by: &sort_indexes,
                     cursor_after: query.after.clone(),
                     cursor_before: query.before.clone(),
@@ -261,44 +258,35 @@ async fn get_records(
             )?
             .collect::<Result<Vec<_>, _>>()?;
 
-        let borrowed_records = records
-            .iter()
-            .map(|(_, r)| r.borrow_record())
-            .collect::<Vec<_>>();
-
-        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(serde_json::to_string(
-            &ListResponse {
-                data: borrowed_records,
-                cursor_before: records.first().map(|(c, _)| c.clone()),
-                cursor_after: records.last().map(|(c, _)| c.clone()),
-            },
-        )?)
+        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(ListResponse {
+            cursor_before: records.first().map(|(c, _)| c.clone()),
+            cursor_after: records.last().map(|(c, _)| c.clone()),
+            data: records.into_iter().map(|(_, r)| r).collect(),
+        })
     })
     .await?;
 
     match list_response {
         Ok(list_response) => Ok(HttpResponse::Ok()
             .content_type("application/json")
-            .body(list_response)),
+            .json(list_response)),
         Err(e) => Err(e),
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FunctionCall {
-    #[serde(borrow)]
-    args: Vec<indexer::RecordValue<'static>>,
+    args: Vec<indexer::RecordValue>,
 }
 
 #[post("/{collection}/records")]
 async fn post_record(
     state: web::Data<AppState>,
     path: web::Path<String>,
-    body: auth::SignedJSON<serde_json::Value>,
+    body: auth::SignedJSON<FunctionCall>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let body = FunctionCall::deserialize(body.data)?;
 
     let indexer = Arc::clone(&state.indexer);
     let gateway = Arc::clone(&state.gateway);
@@ -311,7 +299,7 @@ async fn post_record(
             collection,
             "constructor",
             "".to_string(),
-            body.args,
+            body.data.args,
             auth.as_ref(),
         ) {
             Ok(changes) => changes,
@@ -326,7 +314,7 @@ async fn post_record(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
                 Change::Update {
                     collection_id,
@@ -334,9 +322,9 @@ async fn post_record(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
-                Change::Delete { record_id } => todo!(),
+                Change::Delete { record_id: _ } => todo!(),
             }
         }
 
@@ -354,11 +342,10 @@ async fn post_record(
 async fn call_function(
     state: web::Data<AppState>,
     path: web::Path<(String, String, String)>,
-    body: auth::SignedJSON<serde_json::Value>,
+    body: auth::SignedJSON<FunctionCall>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let (collection, record, function) = path.into_inner();
     let auth = body.auth;
-    let body = FunctionCall::deserialize(body.data)?;
 
     let indexer = Arc::clone(&state.indexer);
     let gateway = Arc::clone(&state.gateway);
@@ -371,7 +358,7 @@ async fn call_function(
             collection,
             &function,
             record,
-            body.args,
+            body.data.args,
             auth.as_ref(),
         ) {
             Ok(changes) => changes,
@@ -386,7 +373,7 @@ async fn call_function(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
                 Change::Update {
                     collection_id,
@@ -394,9 +381,9 @@ async fn call_function(
                     record,
                 } => {
                     let collection = indexer.collection(collection_id)?;
-                    collection.set(record_id, &record, auth.as_ref());
+                    collection.set(record_id, &record, auth.as_ref())?;
                 }
-                Change::Delete { record_id } => todo!(),
+                Change::Delete { record_id: _ } => todo!(),
             }
         }
 

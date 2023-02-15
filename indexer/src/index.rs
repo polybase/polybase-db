@@ -1,5 +1,4 @@
-use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, cmp::Ordering, collections::HashMap};
+use std::{borrow::Cow, cmp::Ordering};
 
 use crate::{
     keys,
@@ -49,7 +48,7 @@ impl<'a> CollectionIndex<'a> {
 
     pub(crate) fn matches(
         &self,
-        where_query: &WhereQuery<'a>,
+        where_query: &WhereQuery,
         sort: &[CollectionIndexField<'a>],
     ) -> bool {
         let Ok(mut requirements) = index_requirements(where_query, sort) else { return false; };
@@ -114,7 +113,7 @@ impl EitherIndexField<'_> {
 }
 
 fn index_requirements<'a>(
-    where_query: &'a WhereQuery<'a>,
+    where_query: &'a WhereQuery,
     sorts: &[CollectionIndexField<'a>],
 ) -> Result<Vec<EitherIndexField<'a>>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let mut requirements = vec![];
@@ -122,15 +121,18 @@ fn index_requirements<'a>(
     for (field, node) in &where_query.0 {
         match node {
             WhereNode::Equality(_) => {
+                let path: Vec<Cow<str>> =
+                    field.0.iter().map(|x| Cow::Borrowed(x.as_str())).collect();
+
                 requirements.push(EitherIndexField {
                     equality: true,
                     inequality: false,
                     left: CollectionIndexField {
-                        path: field.0.clone(),
+                        path: path.clone(),
                         direction: keys::Direction::Ascending,
                     },
                     right: Some(CollectionIndexField {
-                        path: field.0.clone(),
+                        path,
                         direction: keys::Direction::Descending,
                     }),
                 });
@@ -153,7 +155,7 @@ fn index_requirements<'a>(
                     equality: false,
                     inequality: true,
                     left: CollectionIndexField {
-                        path: field.0.clone(),
+                        path: field.0.iter().map(|x| Cow::Borrowed(x.as_str())).collect(),
                         direction,
                     },
                     right: None,
@@ -222,8 +224,9 @@ fn index_requirements<'a>(
     Ok(requirements)
 }
 
+#[allow(dead_code)]
 fn index_recommendation<'a>(
-    where_query: &'a WhereQuery<'a>,
+    where_query: &'a WhereQuery,
     sorts: &[CollectionIndexField<'a>],
 ) -> Result<CollectionIndex<'a>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let mut index_fields = vec![];
@@ -247,6 +250,8 @@ fn index_recommendation<'a>(
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
+
     use crate::where_query::{FieldPath, WhereInequality, WhereValue};
 
     use super::*;
