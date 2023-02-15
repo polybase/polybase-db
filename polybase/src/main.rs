@@ -299,10 +299,7 @@ async fn post_record(
                 record,
             } => {
                 let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection
-                    .set(record_id, &record, auth.as_ref())
-                    .await
-                    .unwrap();
+                collection.set(record_id, &record).await.unwrap();
             }
             Change::Update {
                 collection_id,
@@ -310,10 +307,7 @@ async fn post_record(
                 record,
             } => {
                 let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection
-                    .set(record_id, &record, auth.as_ref())
-                    .await
-                    .unwrap();
+                collection.set(record_id, &record).await.unwrap();
             }
             Change::Delete { record_id: _ } => todo!(),
         }
@@ -357,10 +351,7 @@ async fn call_function(
                 record,
             } => {
                 let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection
-                    .set(record_id, &record, auth.as_ref())
-                    .await
-                    .unwrap();
+                collection.set(record_id, &record).await.unwrap();
             }
             Change::Update {
                 collection_id,
@@ -368,10 +359,7 @@ async fn call_function(
                 record,
             } => {
                 let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection
-                    .set(record_id, &record, auth.as_ref())
-                    .await
-                    .unwrap();
+                collection.set(record_id, &record).await.unwrap();
             }
             Change::Delete { record_id: _ } => todo!(),
         }

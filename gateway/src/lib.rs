@@ -999,7 +999,6 @@ mod tests {
                     ),
                 ]
                 .into(),
-                None,
             )
             .await
             .unwrap();
@@ -1021,7 +1020,6 @@ mod tests {
                     ),
                 ]
                 .into(),
-                None,
             )
             .await
             .unwrap();
