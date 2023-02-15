@@ -283,11 +283,10 @@ struct FunctionCall {
 async fn post_record(
     state: web::Data<AppState>,
     path: web::Path<String>,
-    body: auth::SignedJSON<serde_json::Value>,
+    body: auth::SignedJSON<FunctionCall>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let body = FunctionCall::deserialize(body.data)?;
 
     let indexer = Arc::clone(&state.indexer);
     let gateway = Arc::clone(&state.gateway);
@@ -300,7 +299,7 @@ async fn post_record(
             collection,
             "constructor",
             "".to_string(),
-            body.args,
+            body.data.args,
             auth.as_ref(),
         ) {
             Ok(changes) => changes,
@@ -343,11 +342,10 @@ async fn post_record(
 async fn call_function(
     state: web::Data<AppState>,
     path: web::Path<(String, String, String)>,
-    body: auth::SignedJSON<serde_json::Value>,
+    body: auth::SignedJSON<FunctionCall>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let (collection, record, function) = path.into_inner();
     let auth = body.auth;
-    let body = FunctionCall::deserialize(body.data)?;
 
     let indexer = Arc::clone(&state.indexer);
     let gateway = Arc::clone(&state.gateway);
@@ -360,7 +358,7 @@ async fn call_function(
             collection,
             &function,
             record,
-            body.args,
+            body.data.args,
             auth.as_ref(),
         ) {
             Ok(changes) => changes,
