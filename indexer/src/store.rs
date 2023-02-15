@@ -1,30 +1,15 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    convert::AsRef,
-    error::Error,
-    ops::{Deref, DerefMut},
-    path::Path,
-};
+use std::{convert::AsRef, error::Error, path::Path};
 
 use prost::Message;
-use rocksdb::DBPinnableSlice;
-use serde::{Deserialize, Serialize};
 
 use crate::{
     keys::{self, Key},
     proto,
-    record::{self, RecordRoot},
+    record::RecordRoot,
 };
 
 pub(crate) struct Store {
     db: rocksdb::DB,
-}
-
-enum RecordBacking<'a> {
-    Pinnable(DBPinnableSlice<'a>),
-    Static(&'static [u8]),
-    Vec(Vec<u8>),
 }
 
 pub struct StoreRecordValue {
@@ -133,6 +118,13 @@ impl Store {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::{
+        borrow::Cow,
+        ops::{Deref, DerefMut},
+    };
+
+    use crate::IndexValue;
+
     use super::*;
 
     pub(crate) struct TestStore(Option<Store>);
@@ -179,7 +171,7 @@ pub(crate) mod tests {
             "ns".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Owned(record::IndexValue::String("John".to_string()))],
+            vec![Cow::Owned(IndexValue::String("John".to_string()))],
         )
         .unwrap();
 
@@ -190,7 +182,7 @@ pub(crate) mod tests {
         let upper_bound = index.clone().wildcard();
         for record in store.list(&index, &upper_bound, false).unwrap() {
             let (key_box, value_box) = record.unwrap();
-            let key = Key::deserialize(&key_box[..]).unwrap();
+            let _key = Key::deserialize(&key_box[..]).unwrap();
             let value = proto::IndexRecord::decode(&value_box[..]).unwrap();
 
             // This doesn't work, not sure why.

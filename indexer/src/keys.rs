@@ -286,9 +286,9 @@ impl<'a> Key<'a> {
         }
     }
 
-    pub(crate) fn to_static(self) -> Key<'static> {
+    pub(crate) fn with_static(self) -> Key<'static> {
         match self {
-            Key::Wildcard(k) => Key::Wildcard(Box::new(k.to_static())),
+            Key::Wildcard(k) => Key::Wildcard(Box::new(k.with_static())),
             Key::Data { cid } => Key::Data {
                 cid: Cow::Owned(cid.into_owned()),
             },
@@ -318,21 +318,14 @@ impl<'a> Key<'a> {
             Key::Data { .. } => Err("Data keys have no values".into()),
             Key::SystemData { .. } => Err("SystemData keys have no values".into()),
             Key::Index {
-                cid,
-                directions,
+                cid: _,
+                directions: _,
                 values,
             } => {
                 values.push(Cow::Borrowed(&IndexValue::Null));
                 Ok(())
             }
         }
-    }
-
-    pub(crate) fn immediate_successor_value(
-        mut self,
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
-        self.immediate_successor_value_mut()?;
-        Ok(self)
     }
 }
 
@@ -431,25 +424,20 @@ where
     Ok(key)
 }
 
-pub(crate) fn immediate_successor(key: Vec<u8>) -> Vec<u8> {
-    let mut successor = key;
-    for i in (0..successor.len()).rev() {
-        if successor[i] == u8::MAX {
-            successor[i] = 0;
-        } else {
-            successor[i] += 1;
-            break;
-        }
-    }
-
-    successor
-}
-
 #[cfg(test)]
 mod test {
     use crate::record::RecordValue;
 
     use super::*;
+
+    impl Key<'_> {
+        pub(crate) fn immediate_successor_value(
+            mut self,
+        ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+            self.immediate_successor_value_mut()?;
+            Ok(self)
+        }
+    }
 
     #[test]
     fn test_index_value_number() {
@@ -469,20 +457,6 @@ mod test {
         let (field, _) = eat_field(&serialized);
         let deserialized = IndexValue::deserialize(field).unwrap();
         assert_eq!(deserialized, value);
-    }
-
-    #[test]
-    fn test_record_index_value_string_serde_deserialize() {
-        let serialized = r#""hello""#;
-        let deserialized = serde_json::from_str(serialized).unwrap();
-
-        match deserialized {
-            RecordValue::IndexValue(IndexValue::String(_)) => {
-                panic!("should not be owned")
-            }
-            RecordValue::IndexValue(IndexValue::String(_)) => {}
-            _ => panic!("should be string"),
-        }
     }
 
     #[test]

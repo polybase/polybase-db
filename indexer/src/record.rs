@@ -2,7 +2,10 @@ use std::{borrow::Cow, collections::HashMap, error::Error};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{keys, publickey};
+use crate::{
+    keys::{self, BYTE_BOOLEAN, BYTE_BYTES, BYTE_NULL, BYTE_NUMBER, BYTE_STRING},
+    publickey,
+};
 
 pub type RecordRoot = HashMap<String, RecordValue>;
 

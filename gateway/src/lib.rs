@@ -372,7 +372,7 @@ fn dereference_fields(
 }
 
 /// Turns dereferenced records back into references.
-fn reference_records<'a>(
+fn reference_records(
     collection: &indexer::Collection,
     collection_ast: &polylang::stableast::Collection,
     record: &mut indexer::RecordRoot,
@@ -1018,7 +1018,7 @@ mod tests {
                     (
                         "ast".into(),
                         indexer::RecordValue::IndexValue(indexer::IndexValue::String(
-                            serde_json::to_string(&stable_ast).unwrap().into(),
+                            serde_json::to_string(&stable_ast).unwrap(),
                         )),
                     ),
                 ]

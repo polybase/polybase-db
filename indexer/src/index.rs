@@ -1,5 +1,4 @@
-use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, cmp::Ordering, collections::HashMap};
+use std::{borrow::Cow, cmp::Ordering};
 
 use crate::{
     keys,
@@ -225,6 +224,7 @@ fn index_requirements<'a>(
     Ok(requirements)
 }
 
+#[allow(dead_code)]
 fn index_recommendation<'a>(
     where_query: &'a WhereQuery,
     sorts: &[CollectionIndexField<'a>],
@@ -250,6 +250,8 @@ fn index_recommendation<'a>(
 
 #[cfg(test)]
 mod test {
+    use std::collections::HashMap;
+
     use crate::where_query::{FieldPath, WhereInequality, WhereValue};
 
     use super::*;

@@ -3,8 +3,7 @@ mod config;
 
 use std::{
     borrow::Cow,
-    cmp::{max, min},
-    collections::HashMap,
+    cmp::min,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -335,7 +334,7 @@ async fn post_record(
                     let collection = indexer.collection(collection_id)?;
                     collection.set(record_id, &record, auth.as_ref())?;
                 }
-                Change::Delete { record_id } => todo!(),
+                Change::Delete { record_id: _ } => todo!(),
             }
         }
 
@@ -395,7 +394,7 @@ async fn call_function(
                     let collection = indexer.collection(collection_id)?;
                     collection.set(record_id, &record, auth.as_ref())?;
                 }
-                Change::Delete { record_id } => todo!(),
+                Change::Delete { record_id: _ } => todo!(),
             }
         }
 

@@ -91,7 +91,7 @@ pub(crate) struct KeyRange<'a> {
 }
 
 impl WhereQuery {
-    pub(crate) fn to_key_range<T>(
+    pub(crate) fn key_range<T>(
         self,
         namespace: String,
         paths: &[&[T]],
@@ -196,7 +196,7 @@ mod test {
                 let query = $query;
 
                 let key_range = query
-                    .to_key_range("namespace".to_string(), $fields, $directions)
+                    .key_range("namespace".to_string(), $fields, $directions)
                     .unwrap();
 
                 assert_eq!(key_range.lower, $lower, "lower");

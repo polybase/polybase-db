@@ -6,18 +6,16 @@ use std::{
 };
 
 use crate::{
-    index,
-    keys::{self},
-    proto,
+    index, keys, proto,
     publickey::PublicKey,
     record::{IndexValue, PathFinder, RecordReference, RecordRoot, RecordValue},
     stableast_ext::FieldWalker,
     store::{self, StoreRecordValue},
-    where_query::{self, FieldPath},
+    where_query,
 };
 use base64::Engine;
 use once_cell::sync::Lazy;
-use polylang::stableast::{self, Record};
+use polylang::stableast;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 
@@ -161,7 +159,7 @@ impl<'de> Deserialize<'de> for Cursor {
             .decode(s.as_bytes())
             .map_err(serde::de::Error::custom)?;
         let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
-        Self::new(key.to_static()).map_err(serde::de::Error::custom)
+        Self::new(key.with_static()).map_err(serde::de::Error::custom)
     }
 }
 
@@ -658,7 +656,7 @@ impl<'a> Collection<'a> {
 
         let where_query = where_query;
         let key_range = where_query
-            .to_key_range(
+            .key_range(
                 self.collection_id.clone(),
                 &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
                 &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
@@ -666,8 +664,8 @@ impl<'a> Collection<'a> {
             .map_err(|e| e.to_string())?;
 
         let key_range = where_query::KeyRange {
-            lower: key_range.lower.to_static(),
-            upper: key_range.upper.to_static(),
+            lower: key_range.lower.with_static(),
+            upper: key_range.upper.with_static(),
         };
 
         let mut reverse = index.should_list_in_reverse(order_by);
@@ -695,7 +693,7 @@ impl<'a> Collection<'a> {
             .map(|res| -> Result<_, Box<dyn Error + Send + Sync + 'static>> {
                 let (k, v) = res?;
 
-                let index_key = Cursor::new(keys::Key::deserialize(&k)?.to_static())?;
+                let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
                 let index_record = proto::IndexRecord::decode(&v[..])?;
                 let data_key = keys::Key::deserialize(&index_record.id)?;
                 let data = match self.store.get(&data_key)? {
