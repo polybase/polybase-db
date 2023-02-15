@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use rust_rbmerkle::RedBlackTree;
+use rbmerkle::RedBlackTree;
 use winter_crypto::{hashers::Rp64_256, Hasher};
 
 fn h(i: i32) -> <Rp64_256 as Hasher>::Digest {
