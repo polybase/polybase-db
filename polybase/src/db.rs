@@ -28,7 +28,7 @@ impl Db {
         }
     }
 
-    pub fn commit(&self, commit_until_key: [u8; 32]) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub async fn commit(&self, commit_until_key: [u8; 32]) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         // TODO: If there is a commit to collection metadata, we should ignore other changes?
 
         // Cachce collections
@@ -39,11 +39,11 @@ impl Db {
             match change {
                 Change::Create { record, collection_id, record_id } => {
                     key = get_key(&collection_id, &record_id);
-                    self.set(collection_id, record_id, record)?;
+                    self.set(collection_id, record_id, record).await?;
                 },
                 Change::Update { record, collection_id, record_id } => {
                     key = get_key(&collection_id, &record_id);
-                    self.set(collection_id, record_id, record)?;
+                    self.set(collection_id, record_id, record).await?;
                 },
                 Change::Delete { record_id, collection_id } => {
                     key = get_key(&collection_id, &record_id);
@@ -66,9 +66,9 @@ impl Db {
         Ok(())
     }
     
-    fn set(&self, collection_id: String, record_id: String, record: HashMap<String, RecordValue>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-        let collection = self.indexer.collection(collection_id.clone())?;
-        collection.set(record_id.clone(), &record, None)?;
+    async fn set(&self, collection_id: String, record_id: String, record: HashMap<String, RecordValue>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+        let collection = self.indexer.collection(collection_id.clone()).await?;
+        collection.set(record_id.clone(), &record).await?;
         let key = get_key(&collection_id, &record_id);
         let b = bincode::serialize(&record)?;
         let hash = Rp64_256::hash(&b);
@@ -77,7 +77,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn call(&self, 
+    pub async fn call(&self, 
         collection_id: String,
         function_name: &str,
         record_id: String,
@@ -85,17 +85,14 @@ impl Db {
         auth: Option<&indexer::AuthUser>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
         let indexer = Arc::clone(&self.indexer);
-        let changes = match self.gateway.call(
+        let changes = self.gateway.call(
             &indexer,
             collection_id,
             function_name,
             record_id,
             args,
             auth,
-        ) {
-            Ok(changes) => changes,
-            Err(e) => return Err(e),
-        };
+        ).await?;
 
         let mut pending = self.pending.write().unwrap();
         let mut pending_lock = self.pending_lock.write().unwrap();

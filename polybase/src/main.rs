@@ -14,19 +14,15 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use async_trait::async_trait;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use futures::TryStreamExt;
-use gateway::{Change, Gateway};
 use indexer::Indexer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
 use tokio::select;
 
-use gateway::{Change, Gateway};
-use indexer::Indexer;
 use crate::raft::Raft;
 use crate::db::Db;
 use crate::config::Config;
@@ -303,8 +299,6 @@ async fn post_record(
         Ok(()) => Ok(HttpResponse::Ok().body("Record created")),
         Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
     }
-
-    Ok(HttpResponse::Ok().body("Record created"))
 }
 
 #[post("/{collection}/records/{record}/call/{function}")]
@@ -332,8 +326,6 @@ async fn call_function(
         Ok(()) => Ok(HttpResponse::Ok().body("Function called")),
         Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
     }
-
-    Ok(HttpResponse::Ok().body("Function called"))
 }
 
 #[get("/v0/health")]
