@@ -359,7 +359,7 @@ async fn main() -> std::io::Result<()> {
     );
 
     let db = Arc::new(
-        Db::new(Arc::clone(&indexer), &config),
+        Db::new(Arc::clone(&indexer)),
     );
 
     let peers: Vec<String> = config.raft_peers.split(',').map(|s|s.into()).collect();

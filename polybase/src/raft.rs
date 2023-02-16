@@ -20,6 +20,10 @@ pub enum RaftMessage {
         args: Vec<indexer::RecordValue>,
         auth: Option<indexer::AuthUser>,
     },
+    // Commit a set of txns
+    Commit {
+        key: [u8; 32]
+    },
     Get { id: String },
 }
 
@@ -120,8 +124,12 @@ impl RaftStore for SharedDb {
                     auth,
                 );
 
-                // TODO: add to cache
-                vec![]
+                Vec::new()
+            },
+            RaftMessage::Commit { key } => {
+                let db = self.0.clone();
+                db.commit(key);
+                Vec::new()
             },
             _ => Vec::new(),
         };

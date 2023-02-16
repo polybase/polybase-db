@@ -484,8 +484,31 @@ pub enum Change {
         record: indexer::RecordRoot,
     },
     Delete {
+        collection_id: String,
         record_id: String,
     },
+}
+
+impl Change {
+    pub fn get_path(&self) -> (&String, &String) {
+        match self {
+            Change::Create {
+                collection_id,
+                record_id,
+                ..
+            } => (collection_id, record_id),
+            Change::Update {
+                collection_id,
+                record_id,
+                ..
+            } => (collection_id, record_id),
+            Change::Delete {
+                collection_id,
+                record_id,
+                ..
+            } => (collection_id, record_id),
+        }
+    }
 }
 
 impl Gateway {
