@@ -1,12 +1,14 @@
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 
-use indexer::{FieldWalker, IndexValue, Indexer, PathFinder, RecordReference, RecordValue};
+use indexer::{
+    Converter, FieldWalker, ForeignRecordReference, IndexValue, Indexer, PathFinder, RecordValue,
+};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FunctionOutput {
-    args: Vec<RecordValue>,
-    instance: indexer::RecordRoot,
+    args: Vec<serde_json::Value>,
+    instance: serde_json::Value,
     #[serde(rename = "selfdestruct")]
     self_destruct: bool,
 }
@@ -24,254 +26,39 @@ pub fn initialize() -> Gateway {
     Gateway { _x: () }
 }
 
-fn type_check_single_value(
-    parameter_type: &polylang::stableast::Type,
-    value: &RecordValue,
-) -> Result<(), String> {
-    match (parameter_type, value) {
-        (polylang::stableast::Type::Primitive(p), arg) => match (&p.value, arg) {
-            (
-                polylang::stableast::PrimitiveType::String,
-                RecordValue::IndexValue(IndexValue::String(_)),
-            ) => Ok(()),
-            (
-                polylang::stableast::PrimitiveType::Number,
-                RecordValue::IndexValue(IndexValue::Number(_)),
-            ) => Ok(()),
-            (
-                polylang::stableast::PrimitiveType::Boolean,
-                RecordValue::IndexValue(IndexValue::Boolean(_)),
-            ) => Ok(()),
-            _ => Err(format!("Expected {parameter_type:?}, but got {value:?}")),
-        },
-        (polylang::stableast::Type::Array(pt), RecordValue::Array(at)) => {
-            for (i, v) in at.iter().enumerate() {
-                type_check_single_value(&pt.value, v)
-                    .map_err(|e| format!("Array element {i} does not match parameter type: {e}"))?;
-            }
-
-            Ok(())
-        }
-        (polylang::stableast::Type::Map(pt), RecordValue::Map(at)) => {
-            for (k, v) in at.iter() {
-                type_check_single_value(&pt.value, v)
-                    .map_err(|e| format!("Map element {k} does not match parameter type: {e}"))?;
-            }
-
-            Ok(())
-        }
-        (polylang::stableast::Type::Object(_), RecordValue::Map(_)) => Ok(()),
-        (polylang::stableast::Type::Record(_), RecordValue::Map(m)) => {
-            // `m` must be a { id: string }
-
-            let Some(id) = m.get("id") else { return Err(
-                "Record does not have an id field".to_string());
-            };
-
-            type_check_single_value(
-                &polylang::stableast::Type::Primitive(polylang::stableast::Primitive {
-                    value: polylang::stableast::PrimitiveType::String,
-                }),
-                id,
-            )
-            .map_err(|e| format!("Record id does not match parameter type: {e}"))?;
-
-            if m.len() != 1 {
-                return Err(format!("Record has {} fields, but expected 1", m.len()));
-            }
-
-            Ok(())
-        }
-        (polylang::stableast::Type::ForeignRecord(_), RecordValue::Map(m)) => {
-            // `m` must be a { id: string, collectionId: string }
-
-            let Some(id) = m.get("id") else { return Err(
-                "Record does not have an id field".to_string());
-            };
-
-            type_check_single_value(
-                &polylang::stableast::Type::Primitive(polylang::stableast::Primitive {
-                    value: polylang::stableast::PrimitiveType::String,
-                }),
-                id,
-            )
-            .map_err(|e| format!("Record id does not match parameter type: {e}"))?;
-
-            let Some(collection_id) = m.get("collectionId") else { return Err(
-                "Record does not have a collectionId field".to_string());
-            };
-
-            type_check_single_value(
-                &polylang::stableast::Type::Primitive(polylang::stableast::Primitive {
-                    value: polylang::stableast::PrimitiveType::String,
-                }),
-                collection_id,
-            )
-            .map_err(|e| format!("Record collectionId does not match parameter type: {e}"))?;
-
-            if m.len() != 2 {
-                return Err(format!("Record has {} fields, but expected 2", m.len(),));
-            }
-
-            Ok(())
-        }
-        (
-            polylang::stableast::Type::PublicKey(_),
-            RecordValue::IndexValue(IndexValue::PublicKey(_)),
-        ) => Ok(()),
-        (polylang::stableast::Type::Unknown, _) => Ok(()),
-        _ => Err(format!("Expected {parameter_type:?}, but got {value:?}")),
-    }
-}
-
-fn type_check_args(
-    method: &polylang::stableast::Method,
-    args: &[RecordValue],
-) -> Result<(), String> {
-    for (i, param) in method
-        .attributes
-        .iter()
-        .filter_map(|a| {
-            if let polylang::stableast::MethodAttribute::Parameter(p) = a {
-                Some(p)
-            } else {
-                None
-            }
-        })
-        .enumerate()
-    {
-        let Some(arg) = args.get(i) else { return Err(
-            format!(
-                "Method {} expects {} arguments, but only {} were provided",
-                method.name,
-                method.attributes.iter().filter(|a| {
-                    matches!(a, polylang::stableast::MethodAttribute::Parameter(_))
-                }).count(),
-                args.len()
-            ));
-        };
-
-        type_check_single_value(&param.type_, arg).map_err(|e| {
-            format!(
-                "Argument {} to method {} does not match parameter type: {}",
-                i, method.name, e
-            )
-        })?;
-    }
-
-    Ok(())
-}
-
 async fn dereference_args(
     indexer: &Indexer,
     collection: &indexer::Collection<'_>,
-    method: &polylang::stableast::Method<'_>,
     args: Vec<RecordValue>,
     auth: Option<&indexer::AuthUser>,
 ) -> Result<Vec<RecordValue>, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let mut dereferenced_args = Vec::<RecordValue>::new();
 
-    let parameters = method
-        .attributes
-        .iter()
-        .filter_map(|a| {
-            if let polylang::stableast::MethodAttribute::Parameter(p) = a {
-                Some(p)
-            } else {
-                None
+    for arg in args {
+        let (collection, record_id) = match arg {
+            RecordValue::RecordReference(r) => (Cow::Borrowed(collection), r.id),
+            RecordValue::ForeignRecordReference(fr) => (
+                Cow::Owned(indexer.collection(fr.collection_id).await?),
+                fr.id,
+            ),
+            _ => {
+                dereferenced_args.push(arg);
+                continue;
             }
-        })
-        .collect::<Vec<_>>();
+        };
 
-    if parameters.len() != args.len() {
-        return Err(format!(
-            "Method {} expects {} arguments, but only {} were provided",
-            method.name,
-            parameters.len(),
-            args.len()
-        )
-        .into());
-    }
+        let record = collection
+            .get(record_id.clone(), auth)
+            .await?
+            .ok_or_else(|| {
+                format!(
+                    "Record {} not found in collection {}",
+                    record_id,
+                    collection.id(),
+                )
+            })?;
 
-    for (arg, param) in args.into_iter().zip(parameters.into_iter()) {
-        match &param.type_ {
-            polylang::stableast::Type::Record(_) => {
-                let record_id = match arg {
-                    RecordValue::Map(m) => {
-                        let Some(id) = m.get("id") else { return Err(
-                            "Record does not have an id field".to_string().into());
-                        };
-
-                        match id {
-                            RecordValue::IndexValue(IndexValue::String(s)) => s.to_string(),
-                            _ => return Err("Record id is not a string".to_string().into()),
-                        }
-                    }
-                    _ => return Err("Record is not a map".to_string().into()),
-                };
-
-                let Some(record) = collection.get(record_id.clone(), auth).await? else {
-                    return Err(format!("Record {record_id} not found").into());
-                };
-
-                dereferenced_args.push(RecordValue::Map(record));
-            }
-            polylang::stableast::Type::ForeignRecord(fr) => {
-                let foreign_collection_id =
-                    collection.namespace().to_string() + "/" + &fr.collection;
-
-                let (collection_id, record_id) = match arg {
-                    RecordValue::Map(m) => {
-                        let Some(id) = m.get("id") else { return Err(
-                            "Record does not have an id field".to_string().into());
-                        };
-
-                        let Some(collection_id) = m.get("collectionId") else { return Err(
-                            "Record does not have a collectionId field".to_string().into());
-                        };
-
-                        let id = match id {
-                            RecordValue::IndexValue(IndexValue::String(s)) => s.to_string(),
-                            _ => return Err("Record id is not a string".to_string().into()),
-                        };
-
-                        let collection_id = match collection_id {
-                            RecordValue::IndexValue(IndexValue::String(s)) => s.to_string(),
-                            _ => {
-                                return Err("Record collectionId is not a string"
-                                    .to_string()
-                                    .into())
-                            }
-                        };
-
-                        (collection_id, id)
-                    }
-                    _ => return Err("Record is not a map".to_string().into()),
-                };
-
-                if collection_id != foreign_collection_id {
-                    return Err(format!(
-                        "Collection mismatch, expected record in collection {}",
-                        &foreign_collection_id
-                    )
-                    .into());
-                }
-
-                let foreign_collection = indexer.collection(foreign_collection_id.clone()).await?;
-                let record = foreign_collection
-                    .get(record_id.clone(), auth)
-                    .await?
-                    .ok_or_else(|| {
-                        format!(
-                            "Record {} not found in collection {}",
-                            record_id, &foreign_collection_id
-                        )
-                    })?;
-
-                dereferenced_args.push(RecordValue::Map(record));
-            }
-            _ => dereferenced_args.push(arg),
-        }
+        dereferenced_args.push(RecordValue::Map(record));
     }
 
     Ok(dereferenced_args)
@@ -353,42 +140,88 @@ async fn dereference_fields(
 fn reference_records(
     collection: &indexer::Collection,
     collection_ast: &polylang::stableast::Collection,
-    record: &mut indexer::RecordRoot,
-) -> Result<indexer::RecordRoot, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    record: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let record_fields = find_record_fields(collection_ast);
 
-    let mut rv = RecordValue::Map(record.clone());
-    rv.walk_maps_mut::<Box<dyn std::error::Error + Send + Sync + 'static>>(&mut vec![], &mut |path, map| {
-        let Some((_, type_)) = record_fields.iter().find(|(p, _)| *p == path) else { return Ok(()); };
+    fn visitor(
+        collection_namespace: &str,
+        record_fields: &[(Vec<&str>, polylang::stableast::Type)],
+        path: &mut Vec<String>,
+        value: serde_json::Value,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error + Send + Sync + 'static>> {
+        if let Some((_, type_)) = record_fields.iter().find(|(p, _)| p == path) {
+            match type_ {
+                polylang::stableast::Type::Record(_) => {
+                    let serde_json::Value::Object(o) = value else {
+                        return Err("Record field is not an object".to_string().into());
+                    };
 
-        let Some(RecordValue::IndexValue(IndexValue::String(value))) = map.get("id") else { return Err(
-            "Record does not have an id field".to_string().into());
-        };
+                    let id = o
+                        .get("id")
+                        .ok_or_else(|| format!("Record field does not have an id field: {path:?}"))?
+                        .as_str()
+                        .ok_or_else(|| format!("Record field id is not a string: {path:?}"))?;
 
-        let collection = if let polylang::stableast::Type::ForeignRecord(fr) = type_ {
-            let foreign_collection_id =
-                collection.namespace().to_string() + "/" + &fr.collection;
+                    return Ok(serde_json::json!({ "id": id }));
+                }
+                polylang::stableast::Type::ForeignRecord(fr) => {
+                    let serde_json::Value::Object(o) = value else {
+                        return Err("Record field is not an object".to_string().into());
+                    };
 
-            Some(foreign_collection_id)
-        } else {
-            None
-        };
+                    let id = o
+                        .get("id")
+                        .ok_or_else(|| format!("Record field does not have an id field: {path:?}"))?
+                        .as_str()
+                        .ok_or_else(|| format!("Record field id is not a string: {path:?}"))?;
 
-        let mut reference = indexer::RecordRoot::new();
-        reference.insert("id".to_string(), RecordValue::IndexValue(IndexValue::String(value.to_string())));
-        if let Some(collection_id) = collection {
-            reference.insert("collectionId".to_string(), RecordValue::IndexValue(IndexValue::String(collection_id)));
+                    let foreign_collection_id =
+                        collection_namespace.to_string() + "/" + &fr.collection;
+
+                    return Ok(
+                        serde_json::json!({ "id": id, "collectionId": foreign_collection_id }),
+                    );
+                }
+                _ => {}
+            }
         }
 
-        *map = reference;
+        match value {
+            serde_json::Value::Object(o) => {
+                let mut new_o = serde_json::Map::new();
 
-        Ok(())
-    })?;
+                for (k, v) in o.into_iter() {
+                    path.push(k.clone());
+                    let res = visitor(collection_namespace, record_fields, path, v)?;
+                    path.pop();
 
-    match rv {
-        RecordValue::Map(m) => Ok(m),
-        _ => unreachable!(),
+                    new_o.insert(k, res);
+                }
+
+                Ok(serde_json::Value::Object(new_o))
+            }
+            serde_json::Value::Array(a) => {
+                let mut new_a = Vec::new();
+
+                for (i, v) in a.into_iter().enumerate() {
+                    path.push(i.to_string());
+                    new_a.push(visitor(collection_namespace, record_fields, path, v)?);
+                    path.pop();
+                }
+
+                Ok(serde_json::Value::Array(new_a))
+            }
+            serde_json::Value::Bool(_) => Ok(value),
+            serde_json::Value::Number(_) => Ok(value),
+            serde_json::Value::String(_) => Ok(value),
+            serde_json::Value::Null => Ok(value),
+        }
     }
+
+    let record = visitor(collection.namespace(), &record_fields, &mut vec![], record)?;
+
+    Ok(record)
 }
 
 async fn has_permission_to_call(
@@ -440,23 +273,32 @@ async fn has_permission_to_call(
             {
                 return Ok(true);
             }
-            RecordValue::Map(_) => {
-                let Ok(record_ref) = RecordReference::try_from(value) else {
-                    continue;
-                };
-
-                let collection = match record_ref.collection_id {
-                    Some(collection_id) => Cow::Owned(indexer.collection(collection_id).await?),
-                    None => Cow::Borrowed(collection),
-                };
-
+            RecordValue::RecordReference(r) => {
                 let record = collection
-                    .get(record_ref.id.clone(), Some(auth))
+                    .get(r.id.clone(), Some(auth))
                     .await?
                     .ok_or_else(|| {
                         format!(
                             "Record {} not found in collection {}",
-                            record_ref.id,
+                            r.id,
+                            collection.id()
+                        )
+                    })?;
+
+                if collection.has_delegate_access(&record, &Some(auth)).await? {
+                    return Ok(true);
+                }
+            }
+            RecordValue::ForeignRecordReference(fr) => {
+                let collection = indexer.collection(fr.collection_id.clone()).await?;
+
+                let record = collection
+                    .get(fr.id.clone(), Some(auth))
+                    .await?
+                    .ok_or_else(|| {
+                        format!(
+                            "Record {} not found in collection {}",
+                            fr.id,
                             collection.id()
                         )
                     })?;
@@ -472,6 +314,7 @@ async fn has_permission_to_call(
     Ok(false)
 }
 
+#[derive(Debug)]
 pub enum Change {
     Create {
         collection_id: String,
@@ -484,8 +327,37 @@ pub enum Change {
         record: indexer::RecordRoot,
     },
     Delete {
+        collection_id: String,
         record_id: String,
     },
+}
+
+fn get_collection_ast<'a>(
+    collection_id: String,
+    collection_name: &str,
+    collection_meta_record: &'a indexer::RecordRoot,
+) -> Result<polylang::stableast::Collection<'a>, Box<dyn std::error::Error + Send + Sync + 'static>>
+{
+    let Some(ast) = collection_meta_record.get("ast") else {
+        return Err("Collection has no AST".into());
+    };
+
+    let RecordValue::IndexValue(IndexValue::String(ast_str)) = ast else {
+        return Err("Collection AST is not a string".into());
+    };
+
+    let ast = serde_json::from_str::<polylang::stableast::Root>(ast_str)?;
+    let Some(collection_ast) = ast.0.into_iter().find_map(|a| {
+        if let polylang::stableast::RootNode::Collection(col) = a {
+            if col.name.as_ref() == collection_name { Some(col) } else { None }
+        } else {
+            None
+        }
+    }) else {
+        return Err("Collection not found in AST".into());
+    };
+
+    Ok(collection_ast)
 }
 
 impl Gateway {
@@ -495,7 +367,7 @@ impl Gateway {
         collection_id: String,
         function_name: &str,
         record_id: String,
-        args: Vec<RecordValue>,
+        args: Vec<serde_json::Value>,
         auth: Option<&indexer::AuthUser>,
     ) -> Result<Vec<Change>, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let mut changes = Vec::new();
@@ -506,26 +378,10 @@ impl Gateway {
             return Err("Collection not found".into());
         };
 
-        let Some(ast) = meta.get("ast") else {
-            return Err("Collection has no AST".into());
-        };
+        let collection_ast =
+            get_collection_ast(collection.id().to_string(), &collection.name(), &meta)?;
 
-        let RecordValue::IndexValue(IndexValue::String(ast_str)) = ast else {
-            return Err("Collection AST is not a string".into());
-        };
-
-        let ast = serde_json::from_str::<polylang::stableast::Root>(ast_str)?;
-        let Some(collection_ast) = ast.0.iter().find_map(|a| {
-            if let polylang::stableast::RootNode::Collection(col) = a {
-                if col.name.as_ref() == collection.name() { Some(col) } else { None }
-            } else {
-                None
-            }
-        }) else {
-            return Err("Collection not found in AST".into());
-        };
-
-        let js_collection = polylang::js::generate_js_collection(collection_ast);
+        let js_collection = polylang::js::generate_js_collection(&collection_ast);
 
         let Some(method) = collection_ast.attributes.iter().find_map(|a| {
             if let polylang::stableast::CollectionAttribute::Method(f) = a {
@@ -555,7 +411,7 @@ impl Gateway {
         if !has_permission_to_call(
             indexer,
             &collection,
-            collection_ast,
+            &collection_ast,
             method,
             &instance_record,
             auth,
@@ -565,40 +421,68 @@ impl Gateway {
             return Err("You do not have permission to call this function".into());
         }
 
-        type_check_args(method, &args)?;
+        let params = method
+            .attributes
+            .iter()
+            .filter_map(|a| match a {
+                polylang::stableast::MethodAttribute::Parameter(p) => Some(p),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if params.len() != args.len() {
+            return Err("Incorrect number of arguments".into());
+        }
 
-        let dereferenced_args = dereference_args(indexer, &collection, method, args, auth).await?;
+        let args = params
+            .iter()
+            .zip(args.into_iter())
+            .map(|(param, arg)| {
+                // TODO: consider what to do with optional arguments
+                Converter::convert((&param.type_, arg), false)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let dereferenced_args = dereference_args(indexer, &collection, args, auth).await?;
         let instance_record =
-            dereference_fields(indexer, &collection, collection_ast, instance_record, auth).await?;
+            dereference_fields(indexer, &collection, &collection_ast, instance_record, auth)
+                .await?;
         let mut output = self.run(
             &collection_id,
             &js_collection.code,
             function_name,
-            &instance_record,
-            &dereferenced_args,
+            &indexer::record_to_json(instance_record.clone())?,
+            &dereferenced_args
+                .clone()
+                .into_iter()
+                .map(|a| a.try_into())
+                .collect::<Result<Vec<_>, _>>()?,
             auth,
         )?;
-        output.instance = reference_records(&collection, collection_ast, &mut output.instance)?;
+        output.instance = reference_records(&collection, &collection_ast, output.instance)?;
+        let instance = indexer::json_to_record(&collection_ast, output.instance, false)?;
 
-        if function_name != "constructor" && output.instance.get("id") != instance_record.get("id")
-        {
+        if function_name != "constructor" && instance.get("id") != instance_record.get("id") {
             return Err("Record id was modified".into());
         }
 
-        let Some(output_instance_id) = output.instance.get("id") else {
+        let Some(output_instance_id) = instance.get("id") else {
             return Err("Record id was not returned".into());
         };
-        let RecordValue::IndexValue(IndexValue::String(output_instance_id)) =
-            output_instance_id else {
+        let RecordValue::IndexValue(IndexValue::String(output_instance_id)) = output_instance_id else {
             return Err("Record id was not a string".into());
         };
 
         let records_to_update = {
             let mut records_to_update = vec![];
 
-            for (i, (output_arg, input_arg)) in
-                output.args.iter().zip(dereferenced_args.iter()).enumerate()
+            let dereferenced_args_len = dereferenced_args.len();
+            for (i, (output_arg, input_arg)) in output
+                .args
+                .into_iter()
+                .zip(dereferenced_args.into_iter())
+                .enumerate()
             {
+                let input_arg = serde_json::Value::try_from(input_arg)?;
                 if output_arg == input_arg {
                     continue;
                 }
@@ -618,35 +502,47 @@ impl Gateway {
                         "Method {} has {} parameters, but only {} were provided",
                         method.name,
                         method.attributes.len(),
-                        dereferenced_args.len()
+                        dereferenced_args_len,
                     ).into());
                 };
 
-                match parameter.type_ {
-                    polylang::stableast::Type::Record(_)
-                    | polylang::stableast::Type::ForeignRecord(_) => {
-                        match (output_arg, input_arg) {
-                            (RecordValue::Map(output_map), RecordValue::Map(input_map)) => {
-                                let Some(output_id) = output_map.get("id") else {
-                                    return Err("Record id is missing".into());
-                                };
-                                let Some(input_id) = input_map.get("id") else {
-                                    return Err("Record id is missing".into());
-                                };
+                let Some(record) = (match &parameter.type_ {
+                    polylang::stableast::Type::Record(_) => {
+                        let Some(output_id) = output_arg.get("id") else {
+                            return Err("Record id is missing".into());
+                        };
 
-                                if output_id != input_id {
-                                    return Err("Record id was modified".into());
-                                }
-
-                                records_to_update.push(output_arg);
-                            }
-                            _ => {
-                                return Err("Record input and output argument must be a map".into());
-                            }
+                        if Some(output_id) != input_arg.get("id") {
+                            return Err("Record id was modified".into());
                         }
+
+                        Some(indexer::json_to_record(&collection_ast, output_arg, false)?)
+                    },
+                    polylang::stableast::Type::ForeignRecord(fr) => {
+                        let Some(output_id) = output_arg.get("id") else {
+                            return Err("Record id is missing".into());
+                        };
+
+                        if Some(output_id) != input_arg.get("id") {
+                            return Err("Record id was modified".into());
+                        }
+
+                        let collection_id = collection.namespace().to_string() + "/" + &fr.collection;
+
+                        let Some(collection_meta) = collection_collection.get(collection_id.clone(), auth).await? else {
+                            return Err(format!("Collection {collection_id} not found").into());
+                        };
+
+                        let ast = get_collection_ast(collection_id, fr.collection.as_ref(), &collection_meta)?;
+
+                        Some(indexer::json_to_record(&ast, output_arg, false)?)
                     }
-                    _ => {}
-                }
+                    _ => None,
+                }) else {
+                    continue;
+                };
+
+                records_to_update.push(record);
             }
 
             records_to_update
@@ -664,22 +560,18 @@ impl Gateway {
             changes.push(Change::Create {
                 collection_id,
                 record_id: output_instance_id.to_string(),
-                record: output.instance,
+                record: instance,
             });
         } else {
             changes.push(Change::Update {
                 collection_id,
                 record_id: output_instance_id.to_string(),
-                record: output.instance,
+                record: instance,
             });
         }
 
         for record in records_to_update {
-            let RecordValue::Map(m) = record else {
-                return Err("Record output argument must be a map".into());
-            };
-
-            let Some(id) = m.get("id") else {
+            let Some(id) = record.get("id") else {
                 return Err("Record id is missing".into());
             };
 
@@ -690,7 +582,7 @@ impl Gateway {
             changes.push(Change::Update {
                 collection_id: todo!("get the collection id before dereferencing"),
                 record_id: id.to_string(),
-                record: m.clone(),
+                record,
             });
         }
 
@@ -702,8 +594,8 @@ impl Gateway {
         collection_id: &str,
         collection_code: &str,
         function_name: &str,
-        instance: &indexer::RecordRoot,
-        args: &[RecordValue],
+        instance: &serde_json::Value,
+        args: &[serde_json::Value],
         auth: Option<&indexer::AuthUser>,
     ) -> Result<FunctionOutput, Box<dyn std::error::Error + Send + Sync + 'static>> {
         let mut isolate = v8::Isolate::new(Default::default());
@@ -771,12 +663,7 @@ impl Gateway {
                 &mut scope,
                 &serde_json::to_string(&{
                     if let Some(auth) = auth {
-                        HashMap::from([(
-                            "publicKey".to_string(),
-                            RecordValue::IndexValue(IndexValue::PublicKey(
-                                auth.public_key().clone(),
-                            )),
-                        )])
+                        HashMap::from([("publicKey".to_string(), auth.public_key().clone())])
                     } else {
                         HashMap::new()
                     }
@@ -1031,9 +918,7 @@ mod tests {
                 "ns/User".to_string(),
                 "changeName",
                 "1".to_string(),
-                vec![indexer::RecordValue::IndexValue(
-                    indexer::IndexValue::String("Tim".into()),
-                )],
+                vec!["Tim".into()],
                 None,
             )
             .await

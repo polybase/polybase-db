@@ -6,9 +6,10 @@ use std::{
 };
 
 use crate::{
-    index, keys, proto,
+    index, json_to_record, keys, proto,
     publickey::PublicKey,
-    record::{IndexValue, PathFinder, RecordReference, RecordRoot, RecordValue},
+    record::{ForeignRecordReference, IndexValue, PathFinder, RecordRoot, RecordValue},
+    record_to_json,
     stableast_ext::FieldWalker,
     store::{self},
     where_query,
@@ -165,6 +166,25 @@ impl<'de> Deserialize<'de> for Cursor {
     }
 }
 
+fn collection_ast_from_json<'a>(
+    ast_json: &'a str,
+    collection_name: &str,
+) -> Result<stableast::Collection<'a>, Box<dyn Error + Send + Sync + 'static>> {
+    let ast = serde_json::from_str::<polylang::stableast::Root>(ast_json)?;
+    let Some(collection_ast) = ast.0.into_iter().find_map(
+        |node| match node {
+            polylang::stableast::RootNode::Collection(collection) if collection.name == collection_name => {
+                Some(collection)
+            }
+            _ => None,
+        },
+    ) else {
+        return Err(format!("Collection {} not found in AST", collection_name).into());
+    };
+
+    Ok(collection_ast)
+}
+
 impl<'a> Collection<'a> {
     fn new(
         store: &'a store::Store,
@@ -187,6 +207,7 @@ impl<'a> Collection<'a> {
         let collection_collection = Self::new(
             store,
             "Collection".to_string(),
+            // TODO: add more indexes to this collection
             vec![index::CollectionIndex::new(vec![
                 index::CollectionIndexField::new(
                     vec![Cow::Borrowed("id")],
@@ -210,20 +231,13 @@ impl<'a> Collection<'a> {
             None => return Err("Collection record missing id".into()),
         };
 
-        let ast: stableast::Root = match record.get("ast") {
-            Some(RecordValue::IndexValue(IndexValue::String(ast))) => serde_json::from_str(ast)?,
+        let short_collection_name = id.split('/').last().unwrap();
+        let collection_ast: stableast::Collection = match record.get("ast") {
+            Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
+                collection_ast_from_json(ast, short_collection_name)?
+            }
             Some(_) => return Err("Collection record AST is not a string".into()),
             None => return Err("Collection record missing AST".into()),
-        };
-
-        let short_collection_name = id.split('/').last().unwrap();
-        let Some(collection_ast) = ast.0.iter().find(|ast| matches!(ast, stableast::RootNode::Collection(c) if c.name == short_collection_name)) else {
-            return Err("Collection record AST does not contain collection".into());
-        };
-
-        let collection_ast = match collection_ast {
-            stableast::RootNode::Collection(c) => c,
-            _ => unreachable!(),
         };
 
         let mut indexes = collection_ast
@@ -331,7 +345,7 @@ impl<'a> Collection<'a> {
         &self.collection_id[0..slash_index]
     }
 
-    #[async_recursion(?Send)]
+    #[async_recursion]
     pub(crate) async fn user_can_read(
         &self,
         record: &RecordRoot,
@@ -349,6 +363,7 @@ impl<'a> Collection<'a> {
         let mut authorized = false;
         for (key, value) in record {
             let mut record_references = vec![];
+            let mut foreign_record_references = vec![];
 
             value
                 .walk_all::<std::convert::Infallible>(
@@ -364,12 +379,11 @@ impl<'a> Collection<'a> {
                             {
                                 authorized = true;
                             }
-                            RecordValue::Map(_) => {
-                                let Ok(record_reference) = RecordReference::try_from(value) else {
-                                    return Ok(());
-                                };
-
-                                record_references.push(record_reference);
+                            RecordValue::ForeignRecordReference(fr) => {
+                                foreign_record_references.push(fr.clone());
+                            }
+                            RecordValue::RecordReference(r) => {
+                                record_references.push(r.clone());
                             }
                             _ => {}
                         }
@@ -380,14 +394,27 @@ impl<'a> Collection<'a> {
                 .unwrap(); // We never return an error
 
             for record_reference in record_references {
-                let collection = match record_reference.collection_id {
-                    Some(collection_id) => {
-                        Cow::Owned(Collection::load(self.store, collection_id).await?)
-                    }
-                    None => Cow::Borrowed(self),
+                let Some(record) = self.get(record_reference.id, Some(user)).await? else {
+                    continue;
                 };
 
-                let Some(record) = collection.get(record_reference.id, Some(user)).await? else {
+                if self
+                    .has_delegate_access(&record, &Some(user))
+                    .await
+                    .unwrap_or(false)
+                {
+                    authorized = true;
+                }
+            }
+
+            for foreign_record_reference in foreign_record_references {
+                let collection =
+                    Collection::load(self.store, foreign_record_reference.collection_id).await?;
+
+                let Some(record) = collection
+                    .get(foreign_record_reference.id, Some(user))
+                    .await?
+                else {
                     continue;
                 };
 
@@ -408,17 +435,17 @@ impl<'a> Collection<'a> {
         Ok(authorized)
     }
 
-    #[async_recursion(?Send)]
+    /// Returns true if the user is one of the delegates for the record
+    #[async_recursion]
     pub async fn has_delegate_access(
         &self,
-        record: &impl PathFinder,
+        record: &(impl PathFinder + Sync),
         user: &Option<&AuthUser>,
     ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
         let delegate_fields = match &self.authorization {
             Authorization::Public => return Ok(true),
             Authorization::Private(pa) => &pa.delegate_fields,
         };
-        dbg!(&delegate_fields);
 
         let Some(user) = user else { return Ok(false) };
 
@@ -431,19 +458,23 @@ impl<'a> Collection<'a> {
                 RecordValue::IndexValue(IndexValue::PublicKey(pk)) if pk == &user.public_key => {
                     return Ok(true);
                 }
-                RecordValue::Map(_) => {
-                    let Ok(record_ref) = RecordReference::try_from(delegate_value) else {
+                RecordValue::RecordReference(r) => {
+                    let Some(record) = self.get(r.id.clone(), Some(user)).await? else {
                         continue;
                     };
 
-                    let collection = match record_ref.collection_id {
-                        Some(collection_id) => {
-                            Cow::Owned(Collection::load(self.store, collection_id).await?)
-                        }
-                        None => Cow::Borrowed(self),
-                    };
+                    if self
+                        .has_delegate_access(&record, &Some(user))
+                        .await
+                        .unwrap_or(false)
+                    {
+                        return Ok(true);
+                    }
+                }
+                RecordValue::ForeignRecordReference(fr) => {
+                    let collection = Collection::load(self.store, fr.collection_id.clone()).await?;
 
-                    let Some(record) = collection.get(record_ref.id, Some(user)).await? else {
+                    let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
                         continue;
                     };
 
@@ -507,7 +538,7 @@ impl<'a> Collection<'a> {
         }))
     }
 
-    pub async fn set_record_metadata(
+    pub async fn update_record_metadata(
         &self,
         record_id: String,
         updated_at: &SystemTime,
@@ -577,6 +608,16 @@ impl<'a> Collection<'a> {
             None => return Err("id is required".into()),
         }
 
+        let collection_before = if self.collection_id == "Collection" {
+            match Collection::load(self.store, id.clone()).await {
+                Ok(c) => Some(c),
+                Err(err) if err.to_string() == "Collection not found" => None,
+                Err(err) => return Err(err),
+            }
+        } else {
+            None
+        };
+
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
         self.store
@@ -584,7 +625,8 @@ impl<'a> Collection<'a> {
             .await?;
 
         self.update_metadata(&SystemTime::now()).await?;
-        self.set_record_metadata(id, &SystemTime::now()).await?;
+        self.update_record_metadata(id.clone(), &SystemTime::now())
+            .await?;
 
         // TODO: ignore index failures
         let index_value = store::Value::IndexValue(proto::IndexRecord {
@@ -599,6 +641,14 @@ impl<'a> Collection<'a> {
             )?;
 
             self.store.set(&index_key, &index_value).await?;
+        }
+
+        if self.collection_id == "Collection" && id != "Collection" {
+            if let Some(collection_before) = collection_before {
+                let target_col = Collection::load(self.store, id).await?;
+
+                target_col.rebuild(collection_before, value).await?;
+            }
         }
 
         Ok(())
@@ -623,6 +673,18 @@ impl<'a> Collection<'a> {
         }
 
         Ok(Some(value))
+    }
+
+    pub async fn delete(&self, id: String) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
+
+        self.store.delete(&key).await?;
+
+        let now = SystemTime::now();
+        self.update_metadata(&now).await?;
+        self.update_record_metadata(id, &now).await?;
+
+        Ok(())
     }
 
     pub async fn list(
@@ -722,6 +784,62 @@ impl<'a> Collection<'a> {
             }
         })
         .take(limit.unwrap_or(usize::MAX)))
+    }
+
+    #[async_recursion]
+    async fn rebuild(
+        &self,
+        // The old collection record, loaded before the AST was changed
+        old_collection: Collection<'async_recursion>,
+        old_collection_record: &RecordRoot,
+    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+        let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
+        let meta = collection_collection
+            .get(self.id().to_string(), None)
+            .await?;
+        let Some(meta) = meta else {
+            return Err("Collection not found".into());
+        };
+
+        let collection_ast = match meta.get("ast") {
+            Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
+                collection_ast_from_json(ast, self.name())?
+            }
+            _ => return Err("Collection AST not found".into()),
+        };
+
+        // TODO: diff old and new ASTs to determine which indexes need to be rebuilt
+        // For now, let's just rebuild all indexes
+
+        let start_key = keys::Key::new_index(
+            self.id().to_string(),
+            &[&["id"]],
+            &[keys::Direction::Ascending],
+            vec![],
+        )?;
+        let end_key = start_key.clone().wildcard();
+        for entry in self.store.list(&start_key, &end_key, false)? {
+            let (_, value) = entry?;
+            let index_record = proto::IndexRecord::decode(&value[..])?;
+            let data_key = keys::Key::deserialize(&index_record.id)?;
+            let data = self.store.get(&data_key).await?;
+            let Some(data) = data else {
+                continue;
+            };
+            let Some(RecordValue::IndexValue(IndexValue::String(id))) = data.get("id") else {
+                return Err("Record ID not found".into());
+            };
+            let id = id.clone();
+
+            let json_data = record_to_json(data)?;
+            let new_data = json_to_record(&collection_ast, json_data, true)?;
+            // Delete from the old collection object (loaded from old ast), to delete the old data and indexes
+            old_collection.delete(id.clone()).await?;
+            // Insert into the new collection object (loaded from new ast), to create the new data and indexes
+            self.set(id.clone(), &new_data).await?;
+        }
+
+        Ok(())
     }
 }
 
