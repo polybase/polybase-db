@@ -7,6 +7,8 @@ mod auth;
 mod config;
 mod db;
 mod raft;
+mod pending;
+mod rollup;
 
 use std::{
     borrow::Cow,

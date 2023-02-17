@@ -110,30 +110,30 @@ struct SharedDb(Arc<Db>);
 #[async_trait]
 impl RaftStore for SharedDb {
     async fn apply(&mut self, message: &[u8]) -> RaftResult<Vec<u8>> {
-        let message: RaftMessage = deserialize(message).unwrap();
-        let message: Vec<u8> = match message {
-            RaftMessage::Call { collection_id, function_name, record_id, args, auth  } => {
-                let auth = auth.as_ref();
-                let db = self.0.clone();
+        // let db = self.0.clone();
+        // let message: RaftMessage = deserialize(message).unwrap();
+        // let message: Vec<u8> = match message {
+        //     RaftMessage::Call { collection_id, function_name, record_id, args, auth  } => {
+        //         let auth = auth.as_ref();
                 
-                db.call(
-                    collection_id,
-                    &function_name,
-                    record_id,
-                    args,
-                    auth,
-                );
+        //         db.call(
+        //             collection_id,
+        //             &function_name,
+        //             record_id,
+        //             args,
+        //             auth,
+        //         ).await;
 
-                Vec::new()
-            },
-            RaftMessage::Commit { key } => {
-                let db = self.0.clone();
-                db.commit(key);
-                Vec::new()
-            },
-            _ => Vec::new(),
-        };
-        Ok(message)
+        //         Vec::new()
+        //     },
+        //     RaftMessage::Commit { key } => {
+        //         // db.commit(key).await;
+        //         Vec::new()
+        //     },
+        //     _ => Vec::new(),
+        // };
+        // Ok(message)
+        Ok(vec![])
     }
 
     async fn query(&self, query: &[u8]) -> RaftResult<Vec<u8>> {

@@ -1,52 +1,57 @@
-use std::collections::{HashSet, HashMap};
-use std::sync::{RwLock, Arc};
+
+use std::sync::{Arc};
+use std::error::Error;
 use winter_crypto::{Hasher, Digest};
 use winter_crypto::{hashers::Rp64_256};
 
 use gateway::{Gateway, Change};
-use indexer::{Indexer, RecordValue};
-use rbmerkle::RedBlackTree;
+use indexer::{Indexer, RecordValue, RecordRoot};
+
+use crate::pending::{self, PendingQueue, PendingQueueError};
+use crate::rollup::{Rollup};
+
+pub type Result<T> = std::result::Result<T, DbError>;
+
+pub enum DbError {
+    RecordChangeExists,
+    GatewayError(Box<dyn Error + Send + Sync + 'static>),
+    IndexerUpdateError(Box<dyn Error + Send + Sync + 'static>),
+    SerializerError(bincode::Error),
+    RollupError
+}
 
 pub struct Db {
-    pending: RwLock<Vec<Change>>,
-    pending_lock: RwLock<HashSet<[u8; 32]>>,
+    pending: PendingQueue<[u8; 32], Change>,
     gateway: Gateway,
-    rollup: RwLock<RedBlackTree<[u8; 32], Rp64_256>>,
-
-    // TODO: indexer should be replaced with a kv store
+    rollup: Rollup,
     indexer: Arc<Indexer>,
 }
 
 impl Db {
     pub fn new(indexer: Arc<Indexer>) -> Self {
         Self{
-            pending: RwLock::new(Vec::new()),
-            pending_lock: RwLock::new(HashSet::new()),
+            pending: PendingQueue::new(),
+            rollup: Rollup::new(),
             gateway: gateway::initialize(),
             indexer,
-            rollup: RwLock::new(RedBlackTree::<[u8; 32], Rp64_256>::new()),
         }
     }
 
-    pub async fn commit(&self, commit_until_key: [u8; 32]) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub async fn commit(&self, commit_until_key: [u8; 32]) -> Result<()> {
         // TODO: If there is a commit to collection metadata, we should ignore other changes?
 
         // Cachce collections
-        for change in self.pending.write().unwrap().drain(..) {
-            let key;
-
+        while let Some(value) = self.pending.pop() {
+            let pending::Value{ key, value: change } = value;
             // Insert into indexer
             match change {
                 Change::Create { record, collection_id, record_id } => {
-                    key = get_key(&collection_id, &record_id);
-                    self.set(collection_id, record_id, record).await?;
+                    self.set(key, collection_id, record_id, record).await?;
                 },
                 Change::Update { record, collection_id, record_id } => {
-                    key = get_key(&collection_id, &record_id);
-                    self.set(collection_id, record_id, record).await?;
+                    self.set(key, collection_id, record_id, record).await?;
                 },
-                Change::Delete { record_id, collection_id } => {
-                    key = get_key(&collection_id, &record_id);
+                Change::Delete { record_id: _, collection_id: _ } => {
                     // todo!()
                 },
             }
@@ -57,24 +62,31 @@ impl Db {
             }
         }
 
-        // Remove all entries from the pending_lock
-        self.pending_lock.write().unwrap().clear();
-
-        // Get the new rollup hash
-        // self.update_hash();
-
         Ok(())
     }
-    
-    async fn set(&self, collection_id: String, record_id: String, record: HashMap<String, RecordValue>) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
-        collection.set(record_id.clone(), &record).await?;
-        let key = get_key(&collection_id, &record_id);
-        let b = bincode::serialize(&record)?;
-        let hash = Rp64_256::hash(&b);
-        let mut rollup = self.rollup.write().unwrap();
-        rollup.insert(key, hash);
-        Ok(())
+
+    async fn set(&self, key: [u8; 32], collection_id: String, record_id: String, record: RecordRoot) -> Result<()> {
+        // Get the indexer collection instance
+        let collection = match self.indexer.collection(collection_id.clone()).await {
+            Ok(collection) => collection,
+            Err(e) => {
+                return Err(DbError::IndexerUpdateError(e));
+            },
+        };
+
+        // Update the indexer
+        match collection.set(record_id.clone(), &record).await {
+            Ok(_) => {},
+            Err(e) => {
+                return Err(DbError::IndexerUpdateError(e));
+            },
+        }
+
+        // Add to the rollup
+        match self.rollup.insert(key, &record) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(DbError::RollupError),
+        }
     }
 
     pub async fn call(&self, 
@@ -83,34 +95,35 @@ impl Db {
         record_id: String,
         args: Vec<RecordValue>,
         auth: Option<&indexer::AuthUser>,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    ) -> Result<()> {
         let indexer = Arc::clone(&self.indexer);
-        let changes = self.gateway.call(
+
+        // Get changes
+        let changes = match self.gateway.call(
             &indexer,
             collection_id,
             function_name,
             record_id,
             args,
             auth,
-        ).await?;
-
-        let mut pending = self.pending.write().unwrap();
-        let mut pending_lock = self.pending_lock.write().unwrap();
+        ).await {
+            Ok(changes) => changes,
+            Err(e) => {
+                return Err(DbError::GatewayError(e));
+            },
+        };
 
         // First we cache the result, as it will be committed later
         for change in changes {
             let (collection_id, record_id) = change.get_path();
             let k = get_key(collection_id, record_id);
-
-            if pending_lock.contains(&k) {
-                return Err("Record already exists in cache".into());
+            match self.pending.insert(k, change) {
+                Ok(_) => {},
+                Err(PendingQueueError::KeyExists) => {
+                    return Err(DbError::RecordChangeExists);
+                },
             }
-
-            pending_lock.insert(k);
-            pending.push(change);
         }
-
-        // TODO: Return a handle that returns on next commit
 
         Ok(())
     }
