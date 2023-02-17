@@ -266,14 +266,9 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
                 }
             },
-            Type::PublicKey(_) => Ok(RecordValue::IndexValue(IndexValue::PublicKey({
-                let mut r = publickey::PublicKey::try_from(value);
-                if r.is_err() && always_cast {
-                    r = Ok(publickey::PublicKey::default());
-                }
-
-                r?
-            }))),
+            Type::PublicKey(_) => Ok(RecordValue::IndexValue(IndexValue::PublicKey(
+                publickey::PublicKey::try_from(value)?,
+            ))),
             Type::Record(_) => Ok(RecordValue::RecordReference({
                 let mut r = RecordReference::try_from(value);
                 if r.is_err() && always_cast {

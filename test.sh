@@ -37,6 +37,12 @@ function test_public() {
 
     # This also tests that there is a new index.
     http GET :8080/v0/collections/$account_col_escaped/records where=='{"name": ""}'
+
+    # Changing the type of name to PublicKey should fail
+    schema="@public collection User { id: string; name: string; constructor (name: string) { this.id = name; this.name = name; } } @public collection Account { id: string; user: User; name: PublicKey; info: { id: string; }; constructor (id: string, user: User) { this.id = id; this.user = user; this.info = { id: id }; } noop() {} }"
+
+    http POST ":8080/v0/collections/Collection/records/$account_col_escaped/call/updateCode" args:='["'"$schema"'"]' "X-Polybase-Signature: pk=$PK_1,sig=0x043705a6972c80f44ac338c3bf8917899773eb2e119fc52da13c02f98da6abe33a31aa1d600f753d01e3848d57b381395ad2b43a58c40ee3d951036d9345683600,t=$(date +%s),v=1,h=deadbeef"
+
 }
 
 function test_private() {

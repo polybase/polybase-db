@@ -186,19 +186,6 @@ impl From<PublicKey> for serde_json::Value {
     }
 }
 
-impl Default for PublicKey {
-    fn default() -> Self {
-        Self {
-            kty: "EC".to_string(),
-            crv: "secp256k1".to_string(),
-            alg: "ES256K".to_string(),
-            use_: "sig".to_string(),
-            x: [0u8; 32].to_vec(),
-            y: [0u8; 32].to_vec(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #[test]

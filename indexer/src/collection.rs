@@ -166,23 +166,66 @@ impl<'de> Deserialize<'de> for Cursor {
     }
 }
 
+fn collection_ast_from_root<'a>(
+    ast: stableast::Root<'a>,
+    collection_name: &str,
+) -> Option<stableast::Collection<'a>> {
+    ast.0.into_iter().find_map(|node| match node {
+        polylang::stableast::RootNode::Collection(collection)
+            if collection.name == collection_name =>
+        {
+            Some(collection)
+        }
+        _ => None,
+    })
+}
+
 fn collection_ast_from_json<'a>(
     ast_json: &'a str,
     collection_name: &str,
 ) -> Result<stableast::Collection<'a>, Box<dyn Error + Send + Sync + 'static>> {
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast_json)?;
-    let Some(collection_ast) = ast.0.into_iter().find_map(
-        |node| match node {
-            polylang::stableast::RootNode::Collection(collection) if collection.name == collection_name => {
-                Some(collection)
-            }
-            _ => None,
-        },
-    ) else {
+    let Some(collection_ast) = collection_ast_from_root(ast, collection_name) else {
         return Err(format!("Collection {} not found in AST", collection_name).into());
     };
 
     Ok(collection_ast)
+}
+
+pub fn validate_schema_change(
+    collection_name: &str,
+    old_ast: stableast::Root,
+    new_ast: stableast::Root,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let Some(old_ast) = collection_ast_from_root(old_ast, collection_name) else {
+        return Err(format!("Collection {collection_name} not found in old AST").into());
+    };
+    let Some(new_ast) = collection_ast_from_root(new_ast, collection_name) else {
+        return Err(format!("Collection {collection_name} not found in new AST").into());
+    };
+
+    // You cannot change the type of a field to PublicKey
+    let mut public_key_in_new = vec![];
+    new_ast.walk_fields(&mut vec![], &mut |path, field| {
+        if let stableast::Type::PublicKey(_) = field.type_() {
+            public_key_in_new.push(path.to_vec())
+        }
+    });
+
+    for path in public_key_in_new {
+        let Some(old_field) = old_ast.find_field(&path) else {
+            // Adding a new PublicKey field is fine
+            continue;
+        };
+
+        if let stableast::Type::PublicKey(_) = old_field.type_() {
+            continue;
+        }
+
+        return Err(format!("Cannot change type of field {path:?} to PublicKey. First, delete the field and then add with the new type.").into());
+    }
+
+    Ok(())
 }
 
 impl<'a> Collection<'a> {

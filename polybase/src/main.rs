@@ -13,7 +13,7 @@ use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer,
 use clap::Parser;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
-use indexer::Indexer;
+use indexer::{validate_schema_change, Indexer};
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 
@@ -368,6 +368,35 @@ async fn call_function(
                 record,
             } => {
                 let collection = state.indexer.collection(collection_id).await.unwrap();
+                if collection.id() == "Collection" {
+                    let old_record = collection
+                        .get(record_id.clone(), auth.as_ref())
+                        .await
+                        .unwrap()
+                        .expect("Collection not found");
+                    let old_ast = old_record
+                        .get("ast")
+                        .expect("Collection AST not found in collection record");
+
+                    let indexer::RecordValue::IndexValue(indexer::IndexValue::String(old_ast)) = old_ast
+                        else {
+                        return Err("Collection AST in old record is not a string".into());
+                    };
+
+                    let indexer::RecordValue::IndexValue(indexer::IndexValue::String(new_ast)) = record
+                            .get("ast")
+                            .expect("Collection AST not found in new collection record") else {
+                        return Err("Collection AST in new ".into());
+                    };
+
+                    validate_schema_change(
+                        record_id.split('/').last().unwrap(),
+                        serde_json::from_str(old_ast).unwrap(),
+                        serde_json::from_str(new_ast).unwrap(),
+                    )
+                    .unwrap();
+                }
+
                 collection.set(record_id, &record).await.unwrap();
             }
             Change::Delete {
