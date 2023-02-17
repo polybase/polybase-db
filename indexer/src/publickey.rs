@@ -1,8 +1,6 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-use crate::Converter;
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublicKey {
     /// Key type. Always `EC` for now.

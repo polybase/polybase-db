@@ -376,7 +376,7 @@ impl RecordValue {
                     current_path.pop();
                 }
             }
-            RecordValue::RecordReference(r) => {}
+            RecordValue::RecordReference(_) => {}
             RecordValue::ForeignRecordReference(_) => {}
         }
 
@@ -632,6 +632,8 @@ impl PathFinder for RecordValue {
 
         match self {
             RecordValue::IndexValue(_) => None,
+            RecordValue::RecordReference(_) => None,
+            RecordValue::ForeignRecordReference(_) => None,
             RecordValue::Map(m) => m.find_path(path),
             RecordValue::Array(a) => {
                 if let Ok(index) = head.as_ref().parse::<usize>() {
@@ -648,8 +650,6 @@ impl PathFinder for RecordValue {
                     None
                 }
             }
-            RecordValue::RecordReference(_) => todo!(),
-            RecordValue::ForeignRecordReference(_) => todo!(),
         }
     }
 
@@ -663,6 +663,8 @@ impl PathFinder for RecordValue {
 
         match self {
             RecordValue::IndexValue(_) => None,
+            RecordValue::RecordReference(_) => None,
+            RecordValue::ForeignRecordReference(_) => None,
             RecordValue::Map(m) => m.find_path_mut(path),
             RecordValue::Array(a) => {
                 if let Ok(index) = head.as_ref().parse::<usize>() {
@@ -679,8 +681,6 @@ impl PathFinder for RecordValue {
                     None
                 }
             }
-            RecordValue::RecordReference(_) => todo!(),
-            RecordValue::ForeignRecordReference(_) => todo!(),
         }
     }
 }

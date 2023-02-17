@@ -8,7 +8,7 @@ use std::{
 use crate::{
     index, json_to_record, keys, proto,
     publickey::PublicKey,
-    record::{ForeignRecordReference, IndexValue, PathFinder, RecordRoot, RecordValue},
+    record::{IndexValue, PathFinder, RecordRoot, RecordValue},
     record_to_json,
     stableast_ext::FieldWalker,
     store::{self},
@@ -186,7 +186,7 @@ fn collection_ast_from_json<'a>(
 ) -> Result<stableast::Collection<'a>, Box<dyn Error + Send + Sync + 'static>> {
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast_json)?;
     let Some(collection_ast) = collection_ast_from_root(ast, collection_name) else {
-        return Err(format!("Collection {} not found in AST", collection_name).into());
+        return Err(format!("Collection {collection_name} not found in AST").into());
     };
 
     Ok(collection_ast)
@@ -834,7 +834,7 @@ impl<'a> Collection<'a> {
         &self,
         // The old collection record, loaded before the AST was changed
         old_collection: Collection<'async_recursion>,
-        old_collection_record: &RecordRoot,
+        _old_collection_record: &RecordRoot,
     ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
         let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
         let meta = collection_collection
