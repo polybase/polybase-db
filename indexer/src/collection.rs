@@ -331,7 +331,7 @@ impl<'a> Collection<'a> {
         &self.collection_id[0..slash_index]
     }
 
-    #[async_recursion(?Send)]
+    #[async_recursion]
     pub(crate) async fn user_can_read(
         &self,
         record: &RecordRoot,
@@ -408,10 +408,10 @@ impl<'a> Collection<'a> {
         Ok(authorized)
     }
 
-    #[async_recursion(?Send)]
+    #[async_recursion]
     pub async fn has_delegate_access(
         &self,
-        record: &impl PathFinder,
+        record: &(impl PathFinder + Sync),
         user: &Option<&AuthUser>,
     ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
         let delegate_fields = match &self.authorization {
