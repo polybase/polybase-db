@@ -1,21 +1,16 @@
 #[macro_use]
 extern crate slog;
-extern crate slog_term;
 extern crate slog_async;
+extern crate slog_term;
 
 mod auth;
 mod config;
 mod db;
-mod raft;
+mod errors;
 mod pending;
+mod raft;
 mod rollup;
 
-use std::{
-    borrow::Cow,
-    cmp::min,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use futures::TryStreamExt;
@@ -23,11 +18,17 @@ use indexer::Indexer;
 use serde::{Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
+use std::{
+    borrow::Cow,
+    cmp::min,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 use tokio::select;
 
-use crate::raft::Raft;
-use crate::db::Db;
 use crate::config::Config;
+use crate::db::Db;
+use crate::raft::Raft;
 
 struct RouteState {
     db: Arc<Db>,
@@ -289,13 +290,15 @@ async fn post_record(
 
     let raft = Arc::clone(&state.raft);
 
-    let res = raft.call(
-        collection,
-        "constructor".to_string(),
-        "".to_string(),
-        body.data.args,
-        auth.as_ref(),
-    ).await;
+    let res = raft
+        .call(
+            collection,
+            "constructor".to_string(),
+            "".to_string(),
+            body.data.args,
+            auth.as_ref(),
+        )
+        .await;
 
     match res {
         Ok(()) => Ok(HttpResponse::Ok().body("Record created")),
@@ -316,13 +319,9 @@ async fn call_function(
 
     let raft = Arc::clone(&state.raft);
 
-    let res = raft.call(
-        collection,
-        record,
-        function,
-        body.data.args,
-        auth.as_ref(),
-    ).await;
+    let res = raft
+        .call(collection, record, function, body.data.args, auth.as_ref())
+        .await;
 
     match res {
         Ok(()) => Ok(HttpResponse::Ok().body("Function called")),
@@ -352,18 +351,11 @@ async fn main() -> std::io::Result<()> {
         .unwrap(),
     );
 
-    let db = Arc::new(
-        Db::new(Arc::clone(&indexer)),
-    );
+    let db = Arc::new(Db::new(Arc::clone(&indexer)));
 
-    let peers: Vec<String> = config.raft_peers.split(',').map(|s|s.into()).collect();
+    let peers: Vec<String> = config.raft_peers.split(',').map(|s| s.into()).collect();
 
-    let (raft, raft_handle) = Raft::new(
-        config.raft_laddr,
-        peers,
-        Arc::clone(&db), 
-        logger.clone()
-    );
+    let (raft, raft_handle) = Raft::new(config.raft_laddr, peers, Arc::clone(&db), logger.clone());
 
     let raft = Arc::new(raft);
 
