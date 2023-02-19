@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use bincode::{deserialize, serialize};
+// use bincode::{serde_json::from_slice, serialize};
 use rand::Rng;
 use rmqtt_raft::{Config as RaftConfig, Mailbox, Raft as RmqttRaft, Store as RmqttRaftStore};
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,7 @@ pub enum RaftError {
     Db(db::DbError),
 
     #[error("serializer error: {0}")]
-    Serializer(#[source] bincode::Error),
+    Serializer(#[source] serde_json::Error),
 
     #[error("sync receive error: {0}")]
     SyncReceive(#[from] tokio::sync::watch::error::RecvError),
@@ -71,7 +71,6 @@ pub struct Raft {
 // commit_interval and Raft
 struct RaftShared {
     db: Arc<Db>,
-    logger: slog::Logger,
     shared: Arc<RaftSharedState>,
     mailbox: Mailbox,
 }
@@ -81,12 +80,12 @@ struct RaftShared {
 // and we can't wrap in an Arc otherwise it won't adhere to the RaftStore trait
 struct RaftConnector {
     db: Arc<Db>,
-    logger: slog::Logger,
     shared: Arc<RaftSharedState>,
 }
 
 // Wrapper so we can have common impl for RaftShared and RaftConnector
 struct RaftSharedState {
+    logger: slog::Logger,
     state: Mutex<RaftState>,
 }
 
@@ -119,6 +118,7 @@ impl Raft {
         };
 
         let shared = Arc::new(RaftSharedState {
+            logger: logger.clone(),
             state: Mutex::new(RaftState {
                 commit_id: None,
                 shutdown: false,
@@ -129,7 +129,6 @@ impl Raft {
 
         let connector = RaftConnector {
             db: db.clone(),
-            logger: logger.clone(),
             shared: Arc::clone(&shared),
         };
 
@@ -138,7 +137,6 @@ impl Raft {
 
         let shared = Arc::new(RaftShared {
             db: Arc::clone(&db),
-            logger: logger.clone(),
             mailbox,
             shared: Arc::clone(&shared),
         });
@@ -163,7 +161,7 @@ impl Raft {
         auth: Option<&indexer::AuthUser>,
     ) -> Result<()> {
         debug!(
-            self.shared.logger,
+            self.shared.shared.logger,
             "received call: {collection_id}/{record_id}, {function_name}()"
         );
 
@@ -175,9 +173,9 @@ impl Raft {
             auth: auth.cloned(),
         };
 
-        let message = serialize(&message).unwrap();
+        let message = serde_json::to_vec(&message).unwrap();
         let resp = self.shared.mailbox.send(message).await?;
-        let resp: RaftCallResponse = deserialize(&resp)?;
+        let resp: RaftCallResponse = serde_json::from_slice(&resp)?;
 
         // Wait for the commit to be applied
         self.shared.shared.wait_for_commit(resp.commit_id).await;
@@ -213,11 +211,11 @@ impl RaftShared {
             let message = RaftMessage::Commit {
                 commit_id: current_commit_id + 1,
             };
-            let message = serialize(&message).unwrap();
+            let message = serde_json::to_vec(&message).unwrap();
             match self.mailbox.send(message).await {
                 Ok(_) => {}
                 Err(e) => {
-                    error!(self.logger, "error sending commit message: {e:?}");
+                    error!(self.shared.logger, "error sending commit message: {e:?}");
                 }
             }
         }
@@ -230,7 +228,8 @@ impl RaftSharedState {
 
         // Last commit exists and has been invalidated
         if let Some(state_commit_id) = state.commit_id {
-            if state_commit_id <= commit_id {
+            if state_commit_id >= commit_id {
+                debug!(self.logger, "commit is out of date"; "local" => state_commit_id, "remote" => commit_id);
                 return false;
             }
         }
@@ -313,7 +312,7 @@ impl RmqttRaftStore for RaftConnector {
     // node and if it succeeds, it is called on all other nodes.
     async fn apply(&mut self, message: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
         let db = self.db.clone();
-        let message: RaftMessage = deserialize(message).unwrap();
+        let message: RaftMessage = serde_json::from_slice(message).unwrap();
         match message {
             RaftMessage::Call {
                 collection_id,
@@ -325,7 +324,7 @@ impl RmqttRaftStore for RaftConnector {
                 let auth = auth.as_ref();
 
                 debug!(
-                    self.logger,
+                    self.shared.logger,
                     "apply call: {collection_id}/{record_id}, {function_name}()"
                 );
 
@@ -333,7 +332,7 @@ impl RmqttRaftStore for RaftConnector {
                     .await?;
 
                 let commit_id = self.shared.commit_id();
-                let resp = serialize(&RaftCallResponse { commit_id })?;
+                let resp = serde_json::to_vec(&RaftCallResponse { commit_id }).unwrap();
 
                 Ok(resp)
             }
@@ -342,7 +341,7 @@ impl RmqttRaftStore for RaftConnector {
 
                 // Check if we have any changes to commit
                 if key.is_none() {
-                    debug!(self.logger, "no changes to commit: {commit_id}");
+                    debug!(self.shared.logger, "no changes to commit: {commit_id}");
                     return Ok(Vec::new());
                 }
 
@@ -350,13 +349,12 @@ impl RmqttRaftStore for RaftConnector {
                 let key = key.unwrap();
 
                 if !self.shared.start_commit(commit_id) {
-                    debug!(self.logger, "commit is out of date: {commit_id}");
                     return Ok(Vec::new());
                 }
 
                 let timer = Instant::now();
 
-                info!(self.logger, "commit started: {commit_id}");
+                info!(self.shared.logger, "commit started: {commit_id}");
 
                 // Send commit to DB
                 self.db.commit(key).await?;
@@ -364,7 +362,7 @@ impl RmqttRaftStore for RaftConnector {
                 // Finalise the commit, and notify all call waiters
                 self.shared.end_commit()?;
 
-                info!(self.logger, "commit ended: {commit_id}"; "time" => timer.elapsed().as_millis());
+                info!(self.shared.logger, "commit ended: {commit_id}"; "time" => timer.elapsed().as_millis());
 
                 // No resp needed for commit
                 Ok(Vec::new())
@@ -424,8 +422,8 @@ impl From<RaftError> for rmqtt_raft::Error {
     }
 }
 
-impl From<bincode::Error> for RaftError {
-    fn from(e: bincode::Error) -> Self {
+impl From<serde_json::Error> for RaftError {
+    fn from(e: serde_json::Error) -> Self {
         Self::Serializer(e)
     }
 }

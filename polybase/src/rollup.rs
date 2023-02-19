@@ -1,7 +1,7 @@
 use std::sync::RwLock;
 use winter_crypto::hashers::Rp64_256;
-use winter_crypto::{Digest, Hasher};
 
+use crate::hash;
 use indexer::RecordRoot;
 use rbmerkle::RedBlackTree;
 
@@ -33,7 +33,7 @@ impl Rollup {
         };
 
         // Capture the hash of the bin record
-        let record_hash = Rp64_256::hash(&record_bytes);
+        let record_hash = hash::hash(record_bytes);
 
         // Lock the tree
         let mut tree = match self.tree.write() {

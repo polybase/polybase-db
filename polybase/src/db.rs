@@ -1,11 +1,12 @@
 use std::error::Error;
 use std::sync::Arc;
-use winter_crypto::hashers::Rp64_256;
-use winter_crypto::{Digest, Hasher};
+// use winter_crypto::hashers::Rp64_256;
+// use winter_crypto::{Digest, Hasher};
 
 use gateway::{Change, Gateway};
 use indexer::{Indexer, RecordRoot, RecordValue};
 
+use crate::hash;
 use crate::pending::{PendingQueue, PendingQueueError};
 use crate::rollup::Rollup;
 
@@ -16,7 +17,7 @@ pub enum DbError {
     #[error("pending queue error")]
     RecordChangeExists,
 
-    #[error("gateway error")]
+    #[error("gateway error: {0}")]
     GatewayError(Box<dyn Error + Send + Sync + 'static>),
 
     #[error("indexer error")]
@@ -187,5 +188,5 @@ impl Db {
 
 fn get_key(namespace: &String, id: &String) -> [u8; 32] {
     let b = [namespace.as_bytes(), id.as_bytes()].concat();
-    Rp64_256::hash(&b).as_bytes()
+    hash::hash_bytes(b)
 }
