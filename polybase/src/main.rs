@@ -6,6 +6,7 @@ extern crate slog_term;
 mod auth;
 mod config;
 mod db;
+mod errors;
 mod hash;
 mod pending;
 mod raft;
