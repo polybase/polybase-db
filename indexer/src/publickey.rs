@@ -148,36 +148,36 @@ impl TryFrom<serde_json::Value> for PublicKey {
 
                 let kty = match kty_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "kty" }),
+                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "kty" }),
                 };
 
                 let crv = match crv_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "crv" }),
+                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "crv" }),
                 };
 
                 let alg = match alg_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "alg" }),
+                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "alg" }),
                 };
 
                 let use_ = match use_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "use" }),
+                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "use" }),
                 };
 
                 let x = match x_v {
                     serde_json::Value::String(s) => {
                         base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
                     }
-                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "x" }),
+                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "x" }),
                 };
 
                 let y = match y_v {
                     serde_json::Value::String(s) => {
                         base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
                     }
-                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "y" }),
+                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "y" }),
                 };
 
                 Ok(Self {
@@ -189,7 +189,7 @@ impl TryFrom<serde_json::Value> for PublicKey {
                     y,
                 })
             }
-            x => return Err(PublicKeyError::InvalidTypeExpectedObject),
+            _ => Err(PublicKeyError::InvalidTypeExpectedObject),
         }
     }
 }

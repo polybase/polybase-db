@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::sync::Arc;
 
 use gateway::{Change, Gateway};
@@ -22,7 +21,7 @@ pub enum DbError {
     CollectionASTInvalid(String),
 
     #[error("gateway error: {0}")]
-    GatewayError(Box<dyn Error + Send + Sync + 'static>),
+    GatewayError(gateway::GatewayError),
 
     #[error("indexer error")]
     IndexerUpdateError(indexer::IndexerError),

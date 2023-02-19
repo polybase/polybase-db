@@ -1205,6 +1205,7 @@ dependencies = [
  "rand",
  "serde",
  "serde_json",
+ "thiserror",
  "tokio",
  "v8",
 ]
