@@ -108,7 +108,7 @@ async fn get_record(
     match record {
         Ok(Some(record)) => Ok(HttpResponse::Ok()
             .content_type("application/json")
-            .json(record)),
+            .json(indexer::record_to_json(record).unwrap())),
         Ok(None) => Ok(HttpResponse::NotFound().body("Record not found")),
         Err(e) => Err(e),
     }
@@ -183,7 +183,7 @@ struct ListQuery {
 
 #[derive(Serialize)]
 struct ListResponse {
-    data: Vec<indexer::RecordRoot>,
+    data: Vec<serde_json::Value>,
     cursor_before: Option<indexer::Cursor>,
     cursor_after: Option<indexer::Cursor>,
 }
@@ -259,7 +259,10 @@ async fn get_records(
         Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(ListResponse {
             cursor_before: records.first().map(|(c, _)| c.clone()),
             cursor_after: records.last().map(|(c, _)| c.clone()),
-            data: records.into_iter().map(|(_, r)| r).collect(),
+            data: records
+                .into_iter()
+                .map(|(_, r)| indexer::record_to_json(r).unwrap())
+                .collect(),
         })
     }
     .await;
@@ -274,7 +277,7 @@ async fn get_records(
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FunctionCall {
-    args: Vec<indexer::RecordValue>,
+    args: Vec<serde_json::Value>,
 }
 
 #[post("/{collection}/records")]

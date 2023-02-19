@@ -1,10 +1,8 @@
 use std::error::Error;
 use std::sync::Arc;
-// use winter_crypto::hashers::Rp64_256;
-// use winter_crypto::{Digest, Hasher};
 
 use gateway::{Change, Gateway};
-use indexer::{Indexer, RecordRoot, RecordValue};
+use indexer::{validate_schema_change, Indexer, RecordRoot, RecordValue};
 
 use crate::hash;
 use crate::pending::{PendingQueue, PendingQueueError};
@@ -16,6 +14,12 @@ pub type Result<T> = std::result::Result<T, DbError>;
 pub enum DbError {
     #[error("pending queue error")]
     RecordChangeExists,
+
+    #[error("collection not found")]
+    CollectionNotFound,
+
+    #[error("collection AST is invalid: {0}")]
+    CollectionASTInvalid(String),
 
     #[error("gateway error: {0}")]
     GatewayError(Box<dyn Error + Send + Sync + 'static>),
@@ -146,7 +150,7 @@ impl Db {
         collection_id: String,
         function_name: &str,
         record_id: String,
-        args: Vec<RecordValue>,
+        args: Vec<serde_json::Value>,
         auth: Option<&indexer::AuthUser>,
     ) -> Result<()> {
         let indexer = Arc::clone(&self.indexer);
@@ -174,6 +178,10 @@ impl Db {
         for change in changes {
             let (collection_id, record_id) = change.get_path();
             let k = get_key(collection_id, record_id);
+
+            // Check if we are updating collection schema
+            if collection_id == "Collection" {}
+
             match self.pending.insert(k, change) {
                 Ok(_) => {}
                 Err(PendingQueueError::KeyExists) => {
@@ -181,6 +189,51 @@ impl Db {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    async fn validate_schema_update(
+        &self,
+        collection_id: &String,
+        record_id: &String,
+        record: &RecordRoot,
+        auth: Option<&indexer::AuthUser>,
+    ) -> Result<()> {
+        let collection = match self.indexer.collection(collection_id.clone()).await {
+            Ok(collection) => collection,
+            Err(e) => {
+                return Err(DbError::IndexerUpdateError(e));
+            }
+        };
+
+        let old_record = collection
+            .get(record_id.clone(), auth)
+            .await
+            .unwrap()
+            .expect("Collection not found");
+
+        let old_ast = old_record
+            .get("ast")
+            .expect("Collection AST not found in collection record");
+
+        let indexer::RecordValue::IndexValue(indexer::IndexValue::String(old_ast)) = old_ast
+            else {
+                return Err(DbError::CollectionASTInvalid("Collection AST in old record is not a string".into()));
+            };
+
+        let indexer::RecordValue::IndexValue(indexer::IndexValue::String(new_ast)) = record
+                .get("ast")
+                .expect("Collection AST not found in new collection record") else {
+            return Err(DbError::CollectionASTInvalid("Collection AST in new ".into()));
+        };
+
+        validate_schema_change(
+            record_id.split('/').last().unwrap(),
+            serde_json::from_str(old_ast).unwrap(),
+            serde_json::from_str(new_ast).unwrap(),
+        )
+        .unwrap();
 
         Ok(())
     }

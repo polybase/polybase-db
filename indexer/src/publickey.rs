@@ -102,6 +102,88 @@ impl PublicKey {
     }
 }
 
+impl TryFrom<serde_json::Value> for PublicKey {
+    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+        match value {
+            serde_json::Value::Object(mut o) => {
+                let kty_v = o.remove("kty").ok_or("Missing kty")?;
+                let crv_v = o.remove("crv").ok_or("Missing crv")?;
+                let alg_v = o.remove("alg").ok_or("Missing alg")?;
+                let use_v = o.remove("use").ok_or("Missing use")?;
+                let x_v = o.remove("x").ok_or("Missing x")?;
+                let y_v = o.remove("y").ok_or("Missing y")?;
+
+                let kty = match kty_v {
+                    serde_json::Value::String(s) => s,
+                    x => return Err(format!("Expected string for kty, got {x:?}").into()),
+                };
+
+                let crv = match crv_v {
+                    serde_json::Value::String(s) => s,
+                    x => return Err(format!("Expected string for crv, got {x:?}").into()),
+                };
+
+                let alg = match alg_v {
+                    serde_json::Value::String(s) => s,
+                    x => return Err(format!("Expected string for alg, got {x:?}").into()),
+                };
+
+                let use_ = match use_v {
+                    serde_json::Value::String(s) => s,
+                    x => return Err(format!("Expected string for use, got {x:?}").into()),
+                };
+
+                let x = match x_v {
+                    serde_json::Value::String(s) => base64::engine::general_purpose::URL_SAFE
+                        .decode(s.as_bytes())
+                        .map_err(|e| format!("Invalid base64 for x: {e}"))?,
+                    x => return Err(format!("Expected string for x, got {x:?}").into()),
+                };
+
+                let y = match y_v {
+                    serde_json::Value::String(s) => base64::engine::general_purpose::URL_SAFE
+                        .decode(s.as_bytes())
+                        .map_err(|e| format!("Invalid base64 for y: {e}"))?,
+                    x => return Err(format!("Expected string for y, got {x:?}").into()),
+                };
+
+                Ok(Self {
+                    kty,
+                    crv,
+                    alg,
+                    use_,
+                    x,
+                    y,
+                })
+            }
+            x => return Err(format!("Expected object, got {x:?}").into()),
+        }
+    }
+}
+
+impl From<PublicKey> for serde_json::Value {
+    fn from(pk: PublicKey) -> Self {
+        let mut o = serde_json::Map::new();
+
+        o.insert("kty".to_string(), serde_json::Value::String(pk.kty));
+        o.insert("crv".to_string(), serde_json::Value::String(pk.crv));
+        o.insert("alg".to_string(), serde_json::Value::String(pk.alg));
+        o.insert("use".to_string(), serde_json::Value::String(pk.use_));
+        o.insert(
+            "x".to_string(),
+            serde_json::Value::String(base64::engine::general_purpose::URL_SAFE.encode(&pk.x)),
+        );
+        o.insert(
+            "y".to_string(),
+            serde_json::Value::String(base64::engine::general_purpose::URL_SAFE.encode(&pk.y)),
+        );
+
+        serde_json::Value::Object(o)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
