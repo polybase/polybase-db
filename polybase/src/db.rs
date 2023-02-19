@@ -25,7 +25,7 @@ pub enum DbError {
     GatewayError(Box<dyn Error + Send + Sync + 'static>),
 
     #[error("indexer error")]
-    IndexerUpdateError(Box<dyn Error + Send + Sync + 'static>),
+    IndexerError(Box<dyn Error + Send + Sync + 'static>),
 
     #[error("serialize error: {0}")]
     SerializerError(#[from] bincode::Error),
@@ -53,6 +53,22 @@ impl Db {
 
     pub fn last_record_id(&self) -> Option<[u8; 32]> {
         self.pending.back_key()
+    }
+
+    pub async fn get(
+        &self,
+        collection_id: String,
+        record_id: String,
+    ) -> Result<Option<RecordRoot>> {
+        let collection = match self.indexer.collection(collection_id.clone()).await {
+            Ok(collection) => collection,
+            Err(e) => {
+                return Err(DbError::IndexerError(e));
+            }
+        };
+
+        let record = collection.get_without_auth_check(record_id).await;
+        record.map_err(|e| DbError::IndexerError(e))
     }
 
     pub async fn commit(&self, commit_until_key: [u8; 32]) -> Result<()> {
@@ -96,7 +112,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerError(e));
             }
         };
 
@@ -104,7 +120,7 @@ impl Db {
         match collection.delete(record_id.clone()).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerError(e));
             }
         }
 
@@ -126,7 +142,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerError(e));
             }
         };
 
@@ -134,7 +150,7 @@ impl Db {
         match collection.set(record_id.clone(), &record).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerError(e));
             }
         }
 
@@ -152,8 +168,9 @@ impl Db {
         record_id: String,
         args: Vec<serde_json::Value>,
         auth: Option<&indexer::AuthUser>,
-    ) -> Result<()> {
+    ) -> Result<String> {
         let indexer = Arc::clone(&self.indexer);
+        let mut output_record_id = record_id.clone();
 
         // Get changes
         let changes = match self
@@ -179,6 +196,16 @@ impl Db {
             let (collection_id, record_id) = change.get_path();
             let k = get_key(collection_id, record_id);
 
+            // Get the ID of created record
+            if let Change::Create {
+                collection_id: _,
+                record_id,
+                record,
+            } = &change
+            {
+                output_record_id = record_id.clone();
+            }
+
             // Check if we are updating collection schema
             if let Change::Update {
                 collection_id,
@@ -201,7 +228,7 @@ impl Db {
             }
         }
 
-        Ok(())
+        Ok(output_record_id)
     }
 
     async fn validate_schema_update(
@@ -214,7 +241,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerError(e));
             }
         };
 

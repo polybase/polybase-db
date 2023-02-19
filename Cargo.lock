@@ -1996,6 +1996,7 @@ dependencies = [
  "clap 4.1.6",
  "derive_more",
  "futures",
+ "futures-util",
  "gateway",
  "hex",
  "indexer",
