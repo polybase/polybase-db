@@ -18,11 +18,35 @@ pub enum RecordError {
     #[error("invalid type prefix {b}")]
     InvalidTypePrefix { b: u8 },
 
-    #[error("value {value:?} is not of type {type_:?}")]
-    InvalidType {
-        value: RecordValue,
-        type_: polylang::stableast::Type,
+    #[error("value {value:?} at field {field:?} does not match the schema type")]
+    InvalidSerdeJSONType {
+        value: serde_json::Value,
+        field: Option<String>,
     },
+
+    #[error("missing field {field:?}")]
+    MissingField { field: String },
+
+    #[error("unexpected fields {fields:?}")]
+    UnexpectedFields { fields: Vec<String> },
+
+    #[error("expected value to be an object, got {got:?}")]
+    ExpectedObject { got: serde_json::Value },
+
+    #[error("failed to convert number to f64")]
+    FailedToConvertNumberToF64,
+
+    #[error("failed to convert f64 ({f:?}) to serde number")]
+    FailedToConvertF64ToSerdeNumber { f: f64 },
+
+    #[error("foreign record reference has wrong collection id {collection_id:?}")]
+    ForeignRecordReferenceHasWrongCollectionId { collection_id: String },
+
+    #[error("unknown type")]
+    UnknownType,
+
+    #[error("public key error")]
+    PublicKeyError(#[from] publickey::PublicKeyError),
 
     #[error("try from int error")]
     TryFromIntError(#[from] std::num::TryFromIntError),
@@ -35,6 +59,9 @@ pub enum RecordError {
 
     #[error("IO error")]
     IOError(#[from] std::io::Error),
+
+    #[error("serde_json error")]
+    SerdeJSONError(#[from] serde_json::Error),
 }
 
 pub type RecordRoot = HashMap<String, RecordValue>;
@@ -43,10 +70,10 @@ pub fn json_to_record(
     collection: &polylang::stableast::Collection,
     value: serde_json::Value,
     always_cast: bool,
-) -> Result<RecordRoot, Box<dyn Error + Send + Sync + 'static>> {
+) -> Result<RecordRoot> {
     let mut map = HashMap::new();
     let serde_json::Value::Object(mut value) = value else {
-        return Err("Expected value to be an object".into());
+        return Err(RecordError::ExpectedObject { got: value });
     };
 
     for (field, ty, required) in collection.attributes.iter().filter_map(|a| match a {
@@ -63,7 +90,7 @@ pub fn json_to_record(
                     continue;
                 }
 
-                return Err(format!("Missing field: {field}").into());
+                return Err(RecordError::MissingField { field: field.to_string() });
             } else {
                 continue;
             }
@@ -75,9 +102,7 @@ pub fn json_to_record(
     Ok(map)
 }
 
-pub fn record_to_json(
-    value: RecordRoot,
-) -> Result<serde_json::Value, Box<dyn Error + Send + Sync + 'static>> {
+pub fn record_to_json(value: RecordRoot) -> Result<serde_json::Value> {
     let mut map = serde_json::Map::new();
 
     for (field, value) in value {
@@ -100,17 +125,11 @@ pub enum RecordValue {
 pub trait Converter {
     /// If always_cast is true, the converter will try to cast values of mismatched types,
     /// if it fails, then it will set them to the default value for the schema type.
-    fn convert(
-        self,
-        always_cast: bool,
-    ) -> Result<RecordValue, Box<dyn Error + Send + Sync + 'static>>;
+    fn convert(self, always_cast: bool) -> Result<RecordValue>;
 }
 
 impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
-    fn convert(
-        self,
-        always_cast: bool,
-    ) -> Result<RecordValue, Box<dyn Error + Send + Sync + 'static>> {
+    fn convert(self, always_cast: bool) -> Result<RecordValue> {
         use polylang::stableast::{PrimitiveType, Type};
 
         let (ty, value) = self;
@@ -141,14 +160,17 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         if always_cast {
                             Ok(RecordValue::IndexValue(IndexValue::String("".to_string())))
                         } else {
-                            Err(format!("type mismatch: {x:?}").into())
+                            Err(RecordError::InvalidSerdeJSONType {
+                                value: x,
+                                field: None,
+                            })
                         }
                     }
                 },
                 (PrimitiveType::Number, value) => match value {
                     serde_json::Value::Number(n) => {
                         Ok(RecordValue::IndexValue(IndexValue::Number({
-                            let mut r = n.as_f64().ok_or("failed to convert number to f64");
+                            let mut r = n.as_f64().ok_or(RecordError::FailedToConvertNumberToF64);
                             if r.is_err() && always_cast {
                                 r = Ok(0.0);
                             }
@@ -173,7 +195,10 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         if always_cast {
                             Ok(RecordValue::IndexValue(IndexValue::Number(0.0)))
                         } else {
-                            Err(format!("type mismatch: {x:?}").into())
+                            Err(RecordError::InvalidSerdeJSONType {
+                                value: x,
+                                field: None,
+                            })
                         }
                     }
                 },
@@ -194,7 +219,10 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         if always_cast {
                             Ok(RecordValue::IndexValue(IndexValue::Boolean(false)))
                         } else {
-                            Err(format!("type mismatch: {x:?}").into())
+                            Err(RecordError::InvalidSerdeJSONType {
+                                value: x,
+                                field: None,
+                            })
                         }
                     }
                 },
@@ -228,7 +256,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     )?]))
                 }
                 serde_json::Value::Object(_) if always_cast => {
-                    // Turn this into an array with one object (o)
+                    // Turn this into an array with one object
                     let arr = vec![Converter::convert((t.value.as_ref(), value), always_cast)?];
                     Ok(RecordValue::Array(arr))
                 }
@@ -236,7 +264,10 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     if always_cast {
                         Ok(RecordValue::Array(vec![]))
                     } else {
-                        Err(format!("type mismatch: {x:?}").into())
+                        Err(RecordError::InvalidSerdeJSONType {
+                            value: x,
+                            field: None,
+                        })
                     }
                 }
             },
@@ -252,7 +283,10 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     if always_cast {
                         Ok(RecordValue::Map(HashMap::new()))
                     } else {
-                        Err(format!("type mismatch: {x:?}").into())
+                        Err(RecordError::InvalidSerdeJSONType {
+                            value: x,
+                            field: None,
+                        })
                     }
                 }
             },
@@ -268,7 +302,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                                     continue;
                                 }
 
-                                return Err(format!("missing field: {}", field.name).into());
+                                return Err(RecordError::MissingField { field: field.name.to_string() });
                             } else {
                                 continue;
                             }
@@ -278,11 +312,9 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
 
                     if !o.is_empty() {
-                        return Err(format!(
-                            "unexpected fields: {:?}",
-                            o.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
-                        )
-                        .into());
+                        return Err(RecordError::UnexpectedFields {
+                            fields: o.keys().map(|k| k.to_owned()).collect::<Vec<_>>(),
+                        });
                     }
 
                     Ok(RecordValue::Map(map))
@@ -291,7 +323,10 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     if always_cast {
                         Ok(RecordValue::Map(HashMap::new()))
                     } else {
-                        Err(format!("type mismatch: {x:?}").into())
+                        Err(RecordError::InvalidSerdeJSONType {
+                            value: x,
+                            field: None,
+                        })
                     }
                 }
             },
@@ -312,12 +347,10 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     let short_collection_name = fr.collection.split('/').last().unwrap();
 
                     if short_collection_name != fr.collection {
-                        return Err::<_, Box<dyn std::error::Error + Send + Sync>>(
-                            format!(
-                                "foreign record reference has wrong collection id: {}",
-                                fr.collection
-                            )
-                            .into(),
+                        return Err::<_, RecordError>(
+                            RecordError::ForeignRecordReferenceHasWrongCollectionId {
+                                collection_id: fr.collection.clone().into_owned(),
+                            },
                         );
                     }
 
@@ -331,15 +364,15 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
 
                 Ok(RecordValue::ForeignRecordReference(r?))
             }
-            Type::Unknown => Err("unknown type".into()),
+            Type::Unknown => Err(RecordError::UnknownType),
         }
     }
 }
 
 impl TryFrom<RecordValue> for serde_json::Value {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Error = RecordError;
 
-    fn try_from(value: RecordValue) -> Result<Self, Self::Error> {
+    fn try_from(value: RecordValue) -> Result<Self> {
         match value {
             RecordValue::IndexValue(v) => Ok(serde_json::Value::try_from(v)?),
             RecordValue::Map(m) => {
@@ -363,13 +396,14 @@ impl TryFrom<RecordValue> for serde_json::Value {
 }
 
 impl TryFrom<IndexValue> for serde_json::Value {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Error = RecordError;
 
-    fn try_from(value: IndexValue) -> Result<Self, Self::Error> {
+    fn try_from(value: IndexValue) -> Result<Self> {
         Ok(match value {
             IndexValue::String(s) => serde_json::Value::String(s),
             IndexValue::Number(n) => serde_json::Value::Number(
-                serde_json::Number::from_f64(n).ok_or_else(|| format!("invalid number: {n}"))?,
+                serde_json::Number::from_f64(n)
+                    .ok_or(RecordError::FailedToConvertF64ToSerdeNumber { f: n })?,
             ),
             IndexValue::Boolean(b) => serde_json::Value::Bool(b),
             IndexValue::PublicKey(p) => serde_json::Value::from(p),
@@ -490,28 +524,35 @@ pub struct RecordReference {
 }
 
 impl TryFrom<serde_json::Value> for RecordReference {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Error = RecordError;
 
-    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+    fn try_from(value: serde_json::Value) -> Result<Self> {
         match value {
             serde_json::Value::Object(mut o) => {
                 let id = match o.remove("id") {
                     Some(serde_json::Value::String(s)) => s,
-                    Some(_) => return Err("id must be a string".into()),
-                    None => return Err("missing id".into()),
+                    Some(v) => {
+                        return Err(RecordError::InvalidSerdeJSONType {
+                            value: v,
+                            field: Some("id".to_string()),
+                        })
+                    }
+                    None => {
+                        return Err(RecordError::MissingField {
+                            field: "id".to_string(),
+                        })
+                    }
                 };
 
                 if !o.is_empty() {
-                    return Err(format!(
-                        "unexpected fields: {:?}",
-                        o.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
-                    )
-                    .into());
+                    return Err(RecordError::UnexpectedFields {
+                        fields: o.keys().map(|k| k.to_string()).collect(),
+                    });
                 }
 
                 Ok(RecordReference { id })
             }
-            x => Err(format!("expected object, got {x:?}").into()),
+            x => Err(RecordError::ExpectedObject { got: x }),
         }
     }
 }
@@ -530,66 +571,51 @@ pub struct ForeignRecordReference {
     pub collection_id: String,
 }
 
-impl TryFrom<&RecordValue> for RecordReference {
+impl TryFrom<serde_json::Value> for ForeignRecordReference {
     type Error = RecordError;
 
-    fn try_from(value: &RecordValue) -> Result<Self> {
-        match value {
-            RecordValue::Map(m) => {
-                let id = match m.get("id") {
-                    Some(RecordValue::IndexValue(IndexValue::String(s))) => s.to_string(),
-                    _ => return Err("foreign record reference must have an id".into()),
-                };
-
-                let collection_id = match m.get("collectionId") {
-                    Some(RecordValue::IndexValue(IndexValue::String(s))) => s.to_string(),
-                    Some(_) => return Err("collectionId must be a string".into()),
-                    None => return Err("missing collectionId".into()),
-                };
-
-                if !m.is_empty() {
-                    return Err(format!(
-                        "unexpected fields: {:?}",
-                        m.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
-                    )
-                    .into());
-                }
-
-                Ok(ForeignRecordReference { id, collection_id })
-            }
-            x => Err(format!("expected a map, got {x:?}").into()),
-        }
-    }
-}
-
-impl TryFrom<serde_json::Value> for ForeignRecordReference {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
-
-    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+    fn try_from(value: serde_json::Value) -> Result<Self> {
         match value {
             serde_json::Value::Object(mut m) => {
                 let id = match m.remove("id") {
                     Some(serde_json::Value::String(s)) => s,
-                    _ => return Err("foreign record reference must have an id".into()),
+                    Some(v) => {
+                        return Err(RecordError::InvalidSerdeJSONType {
+                            value: v,
+                            field: Some("id".to_string()),
+                        })
+                    }
+                    _ => {
+                        return Err(RecordError::MissingField {
+                            field: "id".to_string(),
+                        })
+                    }
                 };
 
                 let collection_id = match m.remove("collectionId") {
                     Some(serde_json::Value::String(s)) => s,
-                    Some(_) => return Err("collectionId must be a string".into()),
-                    None => return Err("missing collectionId".into()),
+                    Some(v) => {
+                        return Err(RecordError::InvalidSerdeJSONType {
+                            value: v,
+                            field: Some("collectionId".to_string()),
+                        })
+                    }
+                    None => {
+                        return Err(RecordError::MissingField {
+                            field: "collectionId".to_string(),
+                        })
+                    }
                 };
 
                 if !m.is_empty() {
-                    return Err(format!(
-                        "unexpected fields: {:?}",
-                        m.keys().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")
-                    )
-                    .into());
+                    return Err(RecordError::UnexpectedFields {
+                        fields: m.keys().map(|k| k.to_string()).collect(),
+                    });
                 }
 
                 Ok(ForeignRecordReference { id, collection_id })
             }
-            x => Err(format!("expected a map, got {x:?}").into()),
+            v => Err(RecordError::ExpectedObject { got: v }),
         }
     }
 }

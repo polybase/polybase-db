@@ -1,6 +1,23 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
+pub type Result<T> = std::result::Result<T, PublicKeyError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum PublicKeyError {
+    #[error("missing field {name:?}")]
+    MissingField { name: &'static str },
+
+    #[error("invalid type, expected object")]
+    InvalidTypeExpectedObject,
+
+    #[error("invalid type for field {field:?}, expected string")]
+    InvalidTypeExpectedString { field: &'static str },
+
+    #[error("base64 decode error")]
+    Base64DecodeError(#[from] base64::DecodeError),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublicKey {
     /// Key type. Always `EC` for now.
@@ -26,14 +43,14 @@ pub struct PublicKey {
     y: Vec<u8>,
 }
 
-fn to_url_safe_base64<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+fn to_url_safe_base64<S>(bytes: &[u8], serializer: S) -> std::result::Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
     serializer.serialize_str(&base64::engine::general_purpose::URL_SAFE.encode(bytes))
 }
 
-fn from_url_safe_base64<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+fn from_url_safe_base64<'de, D>(deserializer: D) -> std::result::Result<Vec<u8>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
@@ -44,7 +61,7 @@ where
 }
 
 impl PublicKey {
-    pub fn es256k(x: [u8; 32], y: [u8; 32]) -> Result<Self, secp256k1::Error> {
+    pub fn es256k(x: [u8; 32], y: [u8; 32]) -> std::result::Result<Self, secp256k1::Error> {
         let mut pk = Vec::with_capacity(65);
         let prefix = 4u8;
         pk.push(prefix);
@@ -75,7 +92,9 @@ impl PublicKey {
         Self::from_secp256k1_key(&pk).unwrap()
     }
 
-    pub fn from_secp256k1_key(key: &secp256k1::PublicKey) -> Result<Self, secp256k1::Error> {
+    pub fn from_secp256k1_key(
+        key: &secp256k1::PublicKey,
+    ) -> std::result::Result<Self, secp256k1::Error> {
         let uncompressed = key.serialize_uncompressed();
         let x = uncompressed[1..33].try_into().unwrap();
         let y = uncompressed[33..65].try_into().unwrap();
@@ -103,50 +122,62 @@ impl PublicKey {
 }
 
 impl TryFrom<serde_json::Value> for PublicKey {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Error = PublicKeyError;
 
-    fn try_from(value: serde_json::Value) -> Result<Self, Self::Error> {
+    fn try_from(value: serde_json::Value) -> Result<Self> {
         match value {
             serde_json::Value::Object(mut o) => {
-                let kty_v = o.remove("kty").ok_or("Missing kty")?;
-                let crv_v = o.remove("crv").ok_or("Missing crv")?;
-                let alg_v = o.remove("alg").ok_or("Missing alg")?;
-                let use_v = o.remove("use").ok_or("Missing use")?;
-                let x_v = o.remove("x").ok_or("Missing x")?;
-                let y_v = o.remove("y").ok_or("Missing y")?;
+                let kty_v = o
+                    .remove("kty")
+                    .ok_or(PublicKeyError::MissingField { name: "kty" })?;
+                let crv_v = o
+                    .remove("crv")
+                    .ok_or(PublicKeyError::MissingField { name: "crv" })?;
+                let alg_v = o
+                    .remove("alg")
+                    .ok_or(PublicKeyError::MissingField { name: "alg" })?;
+                let use_v = o
+                    .remove("use")
+                    .ok_or(PublicKeyError::MissingField { name: "use" })?;
+                let x_v = o
+                    .remove("x")
+                    .ok_or(PublicKeyError::MissingField { name: "x" })?;
+                let y_v = o
+                    .remove("y")
+                    .ok_or(PublicKeyError::MissingField { name: "y" })?;
 
                 let kty = match kty_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(format!("Expected string for kty, got {x:?}").into()),
+                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "kty" }),
                 };
 
                 let crv = match crv_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(format!("Expected string for crv, got {x:?}").into()),
+                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "crv" }),
                 };
 
                 let alg = match alg_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(format!("Expected string for alg, got {x:?}").into()),
+                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "alg" }),
                 };
 
                 let use_ = match use_v {
                     serde_json::Value::String(s) => s,
-                    x => return Err(format!("Expected string for use, got {x:?}").into()),
+                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "use" }),
                 };
 
                 let x = match x_v {
-                    serde_json::Value::String(s) => base64::engine::general_purpose::URL_SAFE
-                        .decode(s.as_bytes())
-                        .map_err(|e| format!("Invalid base64 for x: {e}"))?,
-                    x => return Err(format!("Expected string for x, got {x:?}").into()),
+                    serde_json::Value::String(s) => {
+                        base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
+                    }
+                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "x" }),
                 };
 
                 let y = match y_v {
-                    serde_json::Value::String(s) => base64::engine::general_purpose::URL_SAFE
-                        .decode(s.as_bytes())
-                        .map_err(|e| format!("Invalid base64 for y: {e}"))?,
-                    x => return Err(format!("Expected string for y, got {x:?}").into()),
+                    serde_json::Value::String(s) => {
+                        base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
+                    }
+                    x => return Err(PublicKeyError::InvalidTypeExpectedString { field: "y" }),
                 };
 
                 Ok(Self {
@@ -158,7 +189,7 @@ impl TryFrom<serde_json::Value> for PublicKey {
                     y,
                 })
             }
-            x => return Err(format!("Expected object, got {x:?}").into()),
+            x => return Err(PublicKeyError::InvalidTypeExpectedObject),
         }
     }
 }

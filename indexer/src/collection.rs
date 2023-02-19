@@ -8,7 +8,7 @@ use std::{
 use crate::{
     index, json_to_record, keys, proto,
     publickey::PublicKey,
-    record::{IndexValue, PathFinder, RecordRoot, RecordValue},
+    record::{self, IndexValue, PathFinder, RecordRoot, RecordValue},
     record_to_json,
     stableast_ext::FieldWalker,
     store::{self},
@@ -21,6 +21,80 @@ use once_cell::sync::Lazy;
 use polylang::stableast;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+
+pub type Result<T> = std::result::Result<T, CollectionError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum CollectionError {
+    #[error("invalid key type")]
+    InvalidKeyType,
+
+    #[error("collection {name} not found")]
+    CollectionNotFound { name: String },
+
+    #[error("collection {name} not found in AST")]
+    CollectionNotFoundInAST { name: String },
+
+    #[error("cannot change type of field {path:?} to PublicKey. First, delete the field and then add it back with the new type.")]
+    CannotChangeFieldTypeToPublicKey { path: Vec<String> },
+
+    #[error("collection record ID is not a string")]
+    CollectionRecordIDIsNotAString,
+
+    #[error("collection record AST is not a string")]
+    CollectionRecordASTIsNotAString,
+
+    #[error("collection record missing ID")]
+    CollectionRecordMissingID,
+
+    #[error("collection record missing AST")]
+    CollectionRecordMissingAST,
+
+    #[error("metadata is missing lastRecordUpdatedAt")]
+    MetadataMissingLastRecordUpdatedAt,
+
+    #[error("metadata is missing updatedAt")]
+    MetadataMissingUpdatedAt,
+
+    #[error("record ID argument does not match record data ID value")]
+    RecordIDArgDoesNotMatchRecordDataID,
+
+    #[error("record ID must be a string")]
+    RecordIDMustBeAString,
+
+    #[error("record is missing ID field")]
+    RecordMissingID,
+
+    #[error("unauthorized read")]
+    UnauthorizedRead,
+
+    #[error("no index found matching the query")]
+    NoIndexFoundMatchingTheQuery,
+
+    #[error("keys error")]
+    KeysError(#[from] keys::KeysError),
+
+    #[error("store error")]
+    StoreError(#[from] store::StoreError),
+
+    #[error("where query error")]
+    WhereQueryError(#[from] where_query::WhereQueryError),
+
+    #[error("record error")]
+    RecordError(#[from] record::RecordError),
+
+    #[error("parse int error")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("system time error")]
+    SystemTimeError(#[from] std::time::SystemTimeError),
+
+    #[error("serde_json error")]
+    SerdeJSONError(#[from] serde_json::Error),
+
+    #[error("prost decode error")]
+    ProstDecodeError(#[from] prost::DecodeError),
+}
 
 static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
     let mut hm = HashMap::new();
@@ -132,10 +206,10 @@ impl AuthUser {
 pub struct Cursor(keys::Key<'static>);
 
 impl Cursor {
-    fn new(key: keys::Key<'static>) -> Result<Self, String> {
+    fn new(key: keys::Key<'static>) -> Result<Self> {
         match key {
             keys::Key::Index { .. } => {}
-            _ => return Err("Invalid key type, expected index".to_string()),
+            _ => return Err(CollectionError::InvalidKeyType),
         }
 
         Ok(Self(key))
@@ -143,7 +217,7 @@ impl Cursor {
 }
 
 impl Serialize for Cursor {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -153,7 +227,7 @@ impl Serialize for Cursor {
 }
 
 impl<'de> Deserialize<'de> for Cursor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
@@ -183,10 +257,10 @@ fn collection_ast_from_root<'a>(
 fn collection_ast_from_json<'a>(
     ast_json: &'a str,
     collection_name: &str,
-) -> Result<stableast::Collection<'a>, Box<dyn Error + Send + Sync + 'static>> {
+) -> Result<stableast::Collection<'a>> {
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast_json)?;
     let Some(collection_ast) = collection_ast_from_root(ast, collection_name) else {
-        return Err(format!("Collection {collection_name} not found in AST").into());
+        return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
     };
 
     Ok(collection_ast)
@@ -196,12 +270,12 @@ pub fn validate_schema_change(
     collection_name: &str,
     old_ast: stableast::Root,
     new_ast: stableast::Root,
-) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+) -> Result<()> {
     let Some(old_ast) = collection_ast_from_root(old_ast, collection_name) else {
-        return Err(format!("Collection {collection_name} not found in old AST").into());
+        return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
     };
     let Some(new_ast) = collection_ast_from_root(new_ast, collection_name) else {
-        return Err(format!("Collection {collection_name} not found in new AST").into());
+        return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
     };
 
     // You cannot change the type of a field to PublicKey
@@ -222,7 +296,9 @@ pub fn validate_schema_change(
             continue;
         }
 
-        return Err(format!("Cannot change type of field {path:?} to PublicKey. First, delete the field and then add with the new type.").into());
+        return Err(CollectionError::CannotChangeFieldTypeToPublicKey {
+            path: path.iter().map(|s| (*s).to_owned()).collect(),
+        });
     }
 
     Ok(())
@@ -243,10 +319,7 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub(crate) async fn load(
-        store: &'a store::Store,
-        id: String,
-    ) -> Result<Collection<'_>, Box<dyn Error + Send + Sync + 'static>> {
+    pub(crate) async fn load(store: &'a store::Store, id: String) -> Result<Collection<'_>> {
         let collection_collection = Self::new(
             store,
             "Collection".to_string(),
@@ -264,14 +337,14 @@ impl<'a> Collection<'a> {
             return Ok(collection_collection);
         }
 
-        let Some(record) = collection_collection.get(id, None).await? else {
-            return Err("Collection not found".into());
+        let Some(record) = collection_collection.get(id.clone(), None).await? else {
+            return Err(CollectionError::CollectionNotFound { name: id });
         };
 
         let id = match record.get("id") {
             Some(RecordValue::IndexValue(IndexValue::String(id))) => id,
-            Some(_) => return Err("Collection record id is not a string".into()),
-            None => return Err("Collection record missing id".into()),
+            Some(_) => return Err(CollectionError::CollectionRecordIDIsNotAString),
+            None => return Err(CollectionError::CollectionRecordMissingID),
         };
 
         let short_collection_name = id.split('/').last().unwrap();
@@ -279,8 +352,8 @@ impl<'a> Collection<'a> {
             Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
                 collection_ast_from_json(ast, short_collection_name)?
             }
-            Some(_) => return Err("Collection record AST is not a string".into()),
-            None => return Err("Collection record missing AST".into()),
+            Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
+            None => return Err(CollectionError::CollectionRecordMissingAST),
         };
 
         let mut indexes = collection_ast
@@ -393,7 +466,7 @@ impl<'a> Collection<'a> {
         &self,
         record: &RecordRoot,
         user: &Option<&AuthUser>,
-    ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<bool> {
         let read_fields = match &self.authorization {
             Authorization::Public => return Ok(true),
             Authorization::Private(pa) => &pa.read_fields,
@@ -484,7 +557,7 @@ impl<'a> Collection<'a> {
         &self,
         record: &(impl PathFinder + Sync),
         user: &Option<&AuthUser>,
-    ) -> Result<bool, Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<bool> {
         let delegate_fields = match &self.authorization {
             Authorization::Public => return Ok(true),
             Authorization::Private(pa) => &pa.delegate_fields,
@@ -536,7 +609,7 @@ impl<'a> Collection<'a> {
         Ok(false)
     }
 
-    async fn update_metadata(&self, time: &SystemTime) -> Result<(), Box<dyn Error + Send + Sync>> {
+    async fn update_metadata(&self, time: &SystemTime) -> Result<()> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
@@ -559,9 +632,7 @@ impl<'a> Collection<'a> {
         Ok(())
     }
 
-    pub async fn get_metadata(
-        &self,
-    ) -> Result<Option<CollectionMetadata>, Box<dyn Error + Send + Sync>> {
+    pub async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
@@ -573,7 +644,7 @@ impl<'a> Collection<'a> {
             Some(RecordValue::IndexValue(IndexValue::String(s))) => {
                 SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
             }
-            _ => return Err("Invalid metadata, missing lastRecordUpdatedAt".into()),
+            _ => return Err(CollectionError::MetadataMissingLastRecordUpdatedAt),
         };
 
         Ok(Some(CollectionMetadata {
@@ -585,7 +656,7 @@ impl<'a> Collection<'a> {
         &self,
         record_id: String,
         updated_at: &SystemTime,
-    ) -> Result<(), Box<dyn Error + Send + Sync>> {
+    ) -> Result<()> {
         let record_metadata_key = keys::Key::new_system_data(format!(
             "{}/records/{}/metadata",
             &self.collection_id, record_id
@@ -611,10 +682,7 @@ impl<'a> Collection<'a> {
         Ok(())
     }
 
-    pub async fn get_record_metadata(
-        &self,
-        record_id: &str,
-    ) -> Result<Option<RecordMetadata>, Box<dyn Error + Send + Sync>> {
+    pub async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
         let record_metadata_key = keys::Key::new_system_data(format!(
             "{}/records/{}/metadata",
             &self.collection_id, record_id
@@ -628,33 +696,29 @@ impl<'a> Collection<'a> {
             Some(RecordValue::IndexValue(IndexValue::String(s))) => {
                 SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
             }
-            _ => return Err("Invalid metadata, missing updatedAt".into()),
+            _ => return Err(CollectionError::MetadataMissingUpdatedAt),
         };
 
         Ok(Some(RecordMetadata { updated_at }))
     }
 
-    pub async fn set(
-        &self,
-        id: String,
-        value: &RecordRoot,
-    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    pub async fn set(&self, id: String, value: &RecordRoot) -> Result<()> {
         match value.get("id") {
             Some(rv) => match rv {
                 RecordValue::IndexValue(IndexValue::String(record_id)) => {
                     if &id != record_id {
-                        return Err("id must match the record_id".into());
+                        return Err(CollectionError::RecordIDArgDoesNotMatchRecordDataID);
                     }
                 }
-                _ => return Err("id must be a string".into()),
+                _ => return Err(CollectionError::RecordIDMustBeAString),
             },
-            None => return Err("id is required".into()),
+            None => return Err(CollectionError::RecordMissingID),
         }
 
         let collection_before = if self.collection_id == "Collection" {
             match Collection::load(self.store, id.clone()).await {
                 Ok(c) => Some(c),
-                Err(err) if err.to_string() == "Collection not found" => None,
+                Err(CollectionError::CollectionNotFound { .. }) => None,
                 Err(err) => return Err(err),
             }
         } else {
@@ -697,11 +761,7 @@ impl<'a> Collection<'a> {
         Ok(())
     }
 
-    pub async fn get(
-        &self,
-        id: String,
-        user: Option<&AuthUser>,
-    ) -> Result<Option<RecordRoot>, Box<dyn Error + Send + Sync + 'static>> {
+    pub async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>> {
         if self.collection_id == "Collection" && id == "Collection" {
             return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
         }
@@ -712,13 +772,13 @@ impl<'a> Collection<'a> {
         };
 
         if !self.user_can_read(&value, &user).await? {
-            return Err("unauthorized".into());
+            return Err(CollectionError::UnauthorizedRead);
         }
 
         Ok(Some(value))
     }
 
-    pub async fn delete(&self, id: String) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    pub async fn delete(&self, id: String) -> Result<()> {
         let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
         self.store.delete(&key).await?;
@@ -740,24 +800,17 @@ impl<'a> Collection<'a> {
             cursor_after,
         }: ListQuery<'_>,
         user: &'a Option<&'a AuthUser>,
-    ) -> Result<
-        impl futures::Stream<
-                Item = Result<(Cursor, RecordRoot), Box<dyn Error + Send + Sync + 'static>>,
-            > + '_,
-        Box<dyn Error + Send + Sync + 'static>,
-    > {
+    ) -> Result<impl futures::Stream<Item = Result<(Cursor, RecordRoot)>> + '_> {
         let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
-            return Err("No index found matching the query".into());
+            return Err(CollectionError::NoIndexFoundMatchingTheQuery);
         };
 
         let where_query = where_query;
-        let key_range = where_query
-            .key_range(
-                self.collection_id.clone(),
-                &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-                &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-            )
-            .map_err(|e| e.to_string())?;
+        let key_range = where_query.key_range(
+            self.collection_id.clone(),
+            &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+            &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+        )?;
 
         let key_range = where_query::KeyRange {
             lower: key_range.lower.with_static(),
@@ -835,20 +888,20 @@ impl<'a> Collection<'a> {
         // The old collection record, loaded before the AST was changed
         old_collection: Collection<'async_recursion>,
         _old_collection_record: &RecordRoot,
-    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    ) -> Result<()> {
         let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;
         let Some(meta) = meta else {
-            return Err("Collection not found".into());
+            return Err(CollectionError::CollectionNotFound { name: self.name().to_string() });
         };
 
         let collection_ast = match meta.get("ast") {
             Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
                 collection_ast_from_json(ast, self.name())?
             }
-            _ => return Err("Collection AST not found".into()),
+            _ => return Err(CollectionError::CollectionRecordMissingAST),
         };
 
         // TODO: diff old and new ASTs to determine which indexes need to be rebuilt
@@ -870,7 +923,7 @@ impl<'a> Collection<'a> {
                 continue;
             };
             let Some(RecordValue::IndexValue(IndexValue::String(id))) = data.get("id") else {
-                return Err("Record ID not found".into());
+                return Err(CollectionError::RecordMissingID);
             };
             let id = id.clone();
 

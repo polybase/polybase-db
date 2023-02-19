@@ -25,7 +25,7 @@ pub enum DbError {
     GatewayError(Box<dyn Error + Send + Sync + 'static>),
 
     #[error("indexer error")]
-    IndexerUpdateError(Box<dyn Error + Send + Sync + 'static>),
+    IndexerUpdateError(indexer::IndexerError),
 
     #[error("serialize error: {0}")]
     SerializerError(#[from] bincode::Error),
@@ -96,7 +96,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerUpdateError(e.into()));
             }
         };
 
@@ -104,7 +104,7 @@ impl Db {
         match collection.delete(record_id.clone()).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerUpdateError(e.into()));
             }
         }
 
@@ -126,7 +126,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerUpdateError(e.into()));
             }
         };
 
@@ -134,7 +134,7 @@ impl Db {
         match collection.set(record_id.clone(), &record).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerUpdateError(e.into()));
             }
         }
 
@@ -214,7 +214,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerUpdateError(e));
+                return Err(DbError::IndexerUpdateError(e.into()));
             }
         };
 
