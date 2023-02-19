@@ -1,6 +1,6 @@
 use std::collections::{HashSet, VecDeque};
-use std::sync::{Mutex};
 use std::hash::Hash;
+use std::sync::Mutex;
 
 type Result<T> = std::result::Result<T, PendingQueueError>;
 
@@ -9,28 +9,21 @@ pub enum PendingQueueError {
 }
 
 pub struct PendingQueue<K, V> {
-   state: Mutex<PendingState<K, V>>
+    state: Mutex<PendingState<K, V>>,
 }
 
 struct PendingState<K, V> {
-    pending: VecDeque<Value<K, V>>,
+    pending: VecDeque<(K, V)>,
     pending_lock: HashSet<K>,
 }
 
-pub struct Value <K, V> {
-    pub key: K,
-    pub value: V,
-}
-
-impl <K: Eq + PartialEq + Hash + Clone, V> PendingQueue <K, V> {
+impl<K: Eq + PartialEq + Hash + Clone, V> PendingQueue<K, V> {
     pub fn new() -> Self {
-        Self{
-            state: Mutex::new(
-                PendingState {
-                    pending: VecDeque::new(),
-                    pending_lock: HashSet::new(),
-                }
-            )
+        Self {
+            state: Mutex::new(PendingState {
+                pending: VecDeque::new(),
+                pending_lock: HashSet::new(),
+            }),
         }
     }
 
@@ -40,26 +33,31 @@ impl <K: Eq + PartialEq + Hash + Clone, V> PendingQueue <K, V> {
             return Err(PendingQueueError::KeyExists);
         }
         state.pending_lock.insert(key.clone());
-        state.pending.push_back(Value { key, value });
+        state.pending.push_back((key, value));
         Ok(())
     }
 
-    pub fn pop(&self) -> Option<Value<K, V>>  {
+    pub fn pop(&self) -> Option<(K, V)> {
         let mut state = self.state.lock().unwrap();
         let value = state.pending.pop_front()?;
-        state.pending_lock.remove(&value.key);
+        state.pending_lock.remove(&value.0);
         Some(value)
+    }
+
+    pub fn back_key(&self) -> Option<K> {
+        let state = self.state.lock().unwrap();
+        state.pending.back().map(|(k, _)| k.clone())
     }
 }
 
-impl <K: Eq + PartialEq + Hash + Clone, V> Default for PendingQueue <K, V> {
+impl<K: Eq + PartialEq + Hash + Clone, V> Default for PendingQueue<K, V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl <K: Eq + PartialEq  + Hash + Clone, V> Iterator for PendingQueue <K, V> {
-    type Item = Value<K, V>;
+impl<K: Eq + PartialEq + Hash + Clone, V> Iterator for PendingQueue<K, V> {
+    type Item = (K, V);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.pop()
