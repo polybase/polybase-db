@@ -21,6 +21,14 @@ pub struct Config {
     #[arg(long, env = "RPC_LADDR", default_value = "0.0.0.0:8080")]
     pub rpc_laddr: String,
 
+    /// RAFT listen address
+    #[arg(long, env = "RAFT_LADDR", default_value = "0.0.0.0:5001")]
+    pub raft_laddr: String,
+
+    /// RAFT peer addresses
+    #[arg(long, env = "RAFT_PEERS", default_value = "")]
+    pub raft_peers: String,
+
     /// Sentry DSN
     #[arg(long, env = "SENTRY_DSN", default_value = "")]
     pub sentry_dsn: Option<String>,

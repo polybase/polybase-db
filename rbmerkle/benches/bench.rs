@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use rust_rbmerkle::RedBlackTree;
+use rbmerkle::RedBlackTree;
 use winter_crypto::{hashers::Rp64_256, Hasher};
 
 fn h(i: i32) -> <Rp64_256 as Hasher>::Digest {
@@ -18,7 +18,7 @@ fn insert_with_hash() {
     let mut tree: RedBlackTree<i32, Rp64_256> = RedBlackTree::new();
     let hash = h(0);
     for i in 0..10000 {
-        tree.insert(i,hash);
+        tree.insert(i, hash);
     }
     tree.root_hash();
 }

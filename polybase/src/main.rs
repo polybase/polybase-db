@@ -1,25 +1,38 @@
+#[macro_use]
+extern crate slog;
+extern crate slog_async;
+extern crate slog_term;
+
 mod auth;
 mod config;
+mod db;
+mod hash;
+mod pending;
+mod raft;
+mod rollup;
 
+use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
+use clap::Parser;
+use futures::TryStreamExt;
+use indexer::Indexer;
+use serde::{Deserialize, Serialize};
+use serde_with::serde_as;
+use slog::Drain;
 use std::{
     borrow::Cow,
     cmp::min,
     sync::Arc,
     time::{Duration, SystemTime},
 };
+use tokio::select;
 
 use crate::config::Config;
-use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
-use clap::Parser;
-use futures::TryStreamExt;
-use gateway::{Change, Gateway};
-use indexer::{validate_schema_change, Indexer};
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
+use crate::db::Db;
+use crate::raft::Raft;
 
-struct AppState {
+struct RouteState {
     indexer: Arc<Indexer>,
-    gateway: Arc<Gateway>,
+    raft: Arc<Raft>,
 }
 
 #[get("/")]
@@ -38,7 +51,7 @@ struct GetRecordQuery {
 
 #[get("/{collection}/records/{id}")]
 async fn get_record(
-    state: web::Data<AppState>,
+    state: web::Data<RouteState>,
     path: web::Path<(String, String)>,
     query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
@@ -177,7 +190,7 @@ struct ListResponse {
 
 #[get("/{collection}/records")]
 async fn get_records(
-    state: web::Data<AppState>,
+    state: web::Data<RouteState>,
     path: web::Path<String>,
     query: web::Query<ListQuery>,
     body: auth::SignedJSON<()>,
@@ -269,147 +282,53 @@ struct FunctionCall {
 
 #[post("/{collection}/records")]
 async fn post_record(
-    state: web::Data<AppState>,
+    state: web::Data<RouteState>,
     path: web::Path<String>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let collection = path.into_inner();
     let auth = body.auth;
+    let auth = auth.map(|a| a.into());
 
-    let auth = auth.map(indexer::AuthUser::from);
-    let changes = state
-        .gateway
+    let raft = Arc::clone(&state.raft);
+
+    let res = raft
         .call(
-            &state.indexer,
             collection,
-            "constructor",
+            "constructor".to_string(),
             "".to_string(),
             body.data.args,
             auth.as_ref(),
         )
         .await;
 
-    let changes = match changes {
-        Ok(changes) => changes,
-        Err(e) => return Ok(HttpResponse::InternalServerError().body(e.to_string())),
-    };
-
-    for change in changes {
-        match change {
-            Change::Create {
-                collection_id,
-                record_id,
-                record,
-            } => {
-                let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection.set(record_id, &record).await.unwrap();
-            }
-            Change::Update {
-                collection_id,
-                record_id,
-                record,
-            } => {
-                let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection.set(record_id, &record).await.unwrap();
-            }
-            Change::Delete {
-                collection_id,
-                record_id,
-            } => {
-                let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection.delete(record_id).await.unwrap();
-            }
-        }
+    match res {
+        Ok(()) => Ok(HttpResponse::Ok().body("Record created")),
+        Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
     }
-
-    Ok(HttpResponse::Ok().body("Record created"))
 }
 
 #[post("/{collection}/records/{record}/call/{function}")]
 async fn call_function(
-    state: web::Data<AppState>,
+    state: web::Data<RouteState>,
     path: web::Path<(String, String, String)>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<impl Responder, Box<dyn std::error::Error>> {
     let (collection, record, function) = path.into_inner();
     let auth = body.auth;
-
+    // let auth = auth.map(|a| a.into());
     let auth = auth.map(indexer::AuthUser::from);
-    let changes = state
-        .gateway
-        .call(
-            &state.indexer,
-            collection,
-            &function,
-            record,
-            body.data.args,
-            auth.as_ref(),
-        )
+
+    let raft = Arc::clone(&state.raft);
+
+    let res = raft
+        .call(collection, record, function, body.data.args, auth.as_ref())
         .await;
 
-    let changes = match changes {
-        Ok(changes) => changes,
-        Err(e) => return Ok(HttpResponse::InternalServerError().body(e.to_string())),
-    };
-
-    for change in changes {
-        match change {
-            Change::Create {
-                collection_id,
-                record_id,
-                record,
-            } => {
-                let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection.set(record_id, &record).await.unwrap();
-            }
-            Change::Update {
-                collection_id,
-                record_id,
-                record,
-            } => {
-                let collection = state.indexer.collection(collection_id).await.unwrap();
-                if collection.id() == "Collection" {
-                    let old_record = collection
-                        .get(record_id.clone(), auth.as_ref())
-                        .await
-                        .unwrap()
-                        .expect("Collection not found");
-                    let old_ast = old_record
-                        .get("ast")
-                        .expect("Collection AST not found in collection record");
-
-                    let indexer::RecordValue::IndexValue(indexer::IndexValue::String(old_ast)) = old_ast
-                        else {
-                        return Err("Collection AST in old record is not a string".into());
-                    };
-
-                    let indexer::RecordValue::IndexValue(indexer::IndexValue::String(new_ast)) = record
-                            .get("ast")
-                            .expect("Collection AST not found in new collection record") else {
-                        return Err("Collection AST in new ".into());
-                    };
-
-                    validate_schema_change(
-                        record_id.split('/').last().unwrap(),
-                        serde_json::from_str(old_ast).unwrap(),
-                        serde_json::from_str(new_ast).unwrap(),
-                    )
-                    .unwrap();
-                }
-
-                collection.set(record_id, &record).await.unwrap();
-            }
-            Change::Delete {
-                collection_id,
-                record_id,
-            } => {
-                let collection = state.indexer.collection(collection_id).await.unwrap();
-                collection.delete(record_id).await.unwrap();
-            }
-        }
+    match res {
+        Ok(()) => Ok(HttpResponse::Ok().body("Function called")),
+        Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
     }
-
-    Ok(HttpResponse::Ok().body("Function called"))
 }
 
 #[get("/v0/health")]
@@ -421,6 +340,11 @@ async fn health() -> impl Responder {
 async fn main() -> std::io::Result<()> {
     let config = Config::parse();
 
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    let drain = slog_async::Async::new(drain).build().fuse();
+    let logger = slog::Logger::root(drain, slog_o!("version" => env!("CARGO_PKG_VERSION")));
+
     let indexer = Arc::new(
         Indexer::new(format!(
             "{}/polybase-indexer-data",
@@ -429,13 +353,19 @@ async fn main() -> std::io::Result<()> {
         .unwrap(),
     );
 
-    let gateway = Arc::new(gateway::initialize());
+    let db = Arc::new(Db::new(Arc::clone(&indexer)));
 
-    HttpServer::new(move || {
+    let peers: Vec<String> = config.raft_peers.split(',').map(|s| s.into()).collect();
+
+    let (raft, raft_handle) = Raft::new(config.raft_laddr, peers, Arc::clone(&db), logger.clone());
+
+    let raft = Arc::new(raft);
+
+    let server = HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(AppState {
+            .app_data(web::Data::new(RouteState {
                 indexer: Arc::clone(&indexer),
-                gateway: Arc::clone(&gateway),
+                raft: Arc::clone(&raft),
             }))
             .service(root)
             .service(
@@ -447,6 +377,13 @@ async fn main() -> std::io::Result<()> {
             )
     })
     .bind(config.rpc_laddr)?
-    .run()
-    .await
+    .run();
+
+    select!(
+        _ = server => (),
+        _ = raft_handle => (),
+        _ = tokio::signal::ctrl_c() => (),
+    );
+
+    Ok(())
 }

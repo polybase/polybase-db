@@ -332,6 +332,28 @@ pub enum Change {
     },
 }
 
+impl Change {
+    pub fn get_path(&self) -> (&String, &String) {
+        match self {
+            Change::Create {
+                collection_id,
+                record_id,
+                ..
+            } => (collection_id, record_id),
+            Change::Update {
+                collection_id,
+                record_id,
+                ..
+            } => (collection_id, record_id),
+            Change::Delete {
+                collection_id,
+                record_id,
+                ..
+            } => (collection_id, record_id),
+        }
+    }
+}
+
 fn get_collection_ast<'a>(
     collection_id: String,
     collection_name: &str,

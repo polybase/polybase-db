@@ -113,7 +113,7 @@ pub struct ListQuery<'a> {
     pub cursor_after: Option<Cursor>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
     public_key: PublicKey,
 }

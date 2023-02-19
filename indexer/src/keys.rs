@@ -148,7 +148,7 @@ impl<'a> fmt::Debug for Key<'a> {
 }
 
 impl<'a> Key<'a> {
-    pub(crate) fn new_data(namespace: String, id: String) -> Result<Self, cid::Error> {
+    pub fn new_data(namespace: String, id: String) -> Result<Self, cid::Error> {
         let data = proto::DataKey { namespace, id };
         let mut cid = Vec::with_capacity(36);
         generate_cid(&data.encode_to_vec(), &mut cid)?;
