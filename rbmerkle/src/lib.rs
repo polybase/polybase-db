@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use winter_crypto::{Hasher, hashers::{Rp64_256}};
+use winter_crypto::{hashers::Rp64_256, Hasher};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum Color {
@@ -8,8 +8,12 @@ enum Color {
 }
 
 impl Color {
-    fn is_red(self) -> bool { self == Color::Red }
-    fn is_black(self) -> bool { self == Color::Black }
+    fn is_red(self) -> bool {
+        self == Color::Red
+    }
+    fn is_black(self) -> bool {
+        self == Color::Black
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -54,26 +58,29 @@ impl<T: Ord + Clone + Debug, H: Hasher> Node<T, H> {
 }
 
 // A Red-Black Merkle Tree is a self-balancing binary search tree that supports merkle proofs.
-// Each node has an additional attribute called color that can be either red or black. For each node, all 
+// Each node has an additional attribute called color that can be either red or black. For each node, all
 // simple paths from the node to descendant leaves contain the same number of black nodes.
 // These rules ensure that the height of the tree remains logarithmic, and the tree remains balanced.
 //
 // The rules for a Red-Black tree are as follows:
-// 
+//
 // 1. Every node is either red or black.
 // 2. The root node is always black.
 // 3. Every leaf node (NULL) is black.
 // 4. If a node is red, then both its children must be black.
 #[derive(Debug)]
 pub struct RedBlackTree<T, H: Hasher> {
-  root: Option<usize>,
-  // TODO: use a vector instead of a hashmap
-  nodes: Vec<Node<T, H>>
+    root: Option<usize>,
+    // TODO: use a vector instead of a hashmap
+    nodes: Vec<Node<T, H>>,
 }
 
 impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
     pub fn new() -> Self {
-        RedBlackTree { root: None, nodes: Vec::new() }
+        RedBlackTree {
+            root: None,
+            nodes: Vec::new(),
+        }
     }
 
     pub fn has(&self, key: T) -> bool {
@@ -83,7 +90,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
     pub fn insert(&mut self, key: T, value: H::Digest) {
         if let Some(id) = self.find(key) {
             self.nodes[id].value = value;
-            return
+            return;
         }
 
         // Create the new node
@@ -104,11 +111,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
             parent_key = Some(n.key);
             // We can unwrap here, as we know the node exists,
             // otherwise the while would have broken
-            node_id = if key < n.key {
-                n.left
-            } else {
-                n.right
-            };
+            node_id = if key < n.key { n.left } else { n.right };
         }
 
         if let Some(pk) = parent_key {
@@ -129,7 +132,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
         self.set_color(self.root, Color::Black);
     }
 
-    pub fn root_hash (&mut self) -> Option<H::Digest> {
+    pub fn root_hash(&mut self) -> Option<H::Digest> {
         self.hash_subtree(self.root)
     }
 
@@ -148,8 +151,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
     }
 
     // Rotate the tree in the given direction
-    fn rotate(&mut self, id: Option<usize>, direction: Direction)
-    {
+    fn rotate(&mut self, id: Option<usize>, direction: Direction) {
         let new_root_id;
         let parent_id = self.node(id).and_then(|n| n.parent);
         let is_left_child = self.is_child(id, Direction::Left);
@@ -167,8 +169,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
             // 4. Replace 5 with 7
             // Swap the new_root and existing node
             Direction::Left => {
-                new_root_id = self.node(id)
-                    .and_then(|n| n.right);
+                new_root_id = self.node(id).and_then(|n| n.right);
                 let new_root_left_id = self.node(new_root_id).and_then(|n| n.left);
                 self.set_child(id, Direction::Right, new_root_left_id);
                 self.set_child(new_root_id, Direction::Left, id);
@@ -184,8 +185,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
             // 3. Take 5 as new right child of 3
             // 4. Replace 5 with 3
             Direction::Right => {
-                new_root_id = self.node(id)
-                    .and_then(|n| n.left);
+                new_root_id = self.node(id).and_then(|n| n.left);
                 let new_root_right_id = self.node(new_root_id).and_then(|n| n.right);
                 self.set_child(id, Direction::Left, new_root_right_id);
                 self.set_child(new_root_id, Direction::Right, id);
@@ -200,31 +200,29 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
         }
     }
 
-
     fn fixup(&mut self, id: Option<usize>) {
         let node = self.node(id);
         let parent_id = node.and_then(|n| n.parent);
         let parent = self.node(parent_id);
 
         // Check if parent is explicitly red (i.e. exists and has parent)
-        if !parent.map(|n|n.color.is_red()).unwrap_or(false) {
+        if !parent.map(|n| n.color.is_red()).unwrap_or(false) {
             return;
         }
 
         let grandparent_id = parent.and_then(|n| n.parent);
-        let uncle_id = parent
-            .and_then(|parent| {
-                let gp =  self.node(parent.parent);
-                if self.is_child(parent_id, Direction::Left) {
-                   gp.and_then(|gp| gp.right)
-                } else {
-                   gp.and_then(|gp| gp.left)
-                }
-            });
+        let uncle_id = parent.and_then(|parent| {
+            let gp = self.node(parent.parent);
+            if self.is_child(parent_id, Direction::Left) {
+                gp.and_then(|gp| gp.right)
+            } else {
+                gp.and_then(|gp| gp.left)
+            }
+        });
 
         if self.is_red(uncle_id) {
             // Case 1: Uncle is red, recolour grandparent, parent and uncle
-            self.set_color(parent_id,  Color::Black);
+            self.set_color(parent_id, Color::Black);
             self.set_color(uncle_id, Color::Black);
             self.set_color(grandparent_id, Color::Red);
             self.fixup(grandparent_id);
@@ -246,7 +244,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
                 } else {
                     self.rotate(grandparent_id, Direction::Left);
                 }
-                self.set_color(parent_id,  Color::Black);
+                self.set_color(parent_id, Color::Black);
                 self.set_color(grandparent_id, Color::Red);
             }
         }
@@ -258,19 +256,19 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
 
         // Check if the key to be deleted exists
         if id.is_none() {
-            return
+            return;
         }
 
         let z_id = id;
         let z = self.node(id);
-        let z_right = z.and_then(|n|n.right);
-        let z_left = z.and_then(|n|n.left);
-        let z_color = z.map(|n|n.color).unwrap_or(Color::Black);
+        let z_right = z.and_then(|n| n.right);
+        let z_left = z.and_then(|n| n.left);
+        let z_color = z.map(|n| n.color).unwrap_or(Color::Black);
 
         // Save the original colour
         let mut original_color = z_color;
-        let x_id ;
-        let y_id ;
+        let x_id;
+        let y_id;
 
         if z_left.is_none() {
             x_id = z_right;
@@ -282,12 +280,12 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
             y_id = self.minimum(z_right);
 
             let y = self.node(y_id);
-            let y_right = y.and_then(|n|n.right);
-            let y_left = y.and_then(|n|n.left);
-            original_color = y.map(|n|n.color).unwrap_or(Color::Black);
+            let y_right = y.and_then(|n| n.right);
+            let y_left = y.and_then(|n| n.left);
+            original_color = y.map(|n| n.color).unwrap_or(Color::Black);
             x_id = y_right;
 
-            if y.and_then(|n|n.parent) == z_id {
+            if y.and_then(|n| n.parent) == z_id {
                 self.set_parent(x_id, y_id);
             } else {
                 self.delete_transplant(y_id, y_right);
@@ -310,7 +308,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
         self.delete_swap(id.unwrap())
     }
 
-    // Remove the deleted node from the vector, first we have to move 
+    // Remove the deleted node from the vector, first we have to move
     // it to the end of the vector, so it doesn't mess up the indexing
     // for all other nodes
     fn delete_swap(&mut self, id: usize) {
@@ -337,8 +335,8 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
 
         // Actually swap the position
         self.nodes.swap(id, last_index);
-        
-        // Remove the node to be deleted now it is at 
+
+        // Remove the node to be deleted now it is at
         // the end of the vector
         self.nodes.pop();
     }
@@ -352,7 +350,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
         // If u is root, set v as root
         if u_parent_id.is_none() {
             self.root = v_id;
-        } 
+        }
         // If u is left child of parent, set v as left child
         else if u_id == u_parent.and_then(|n| n.left) {
             self.set_child(u_parent_id, Direction::Left, v_id);
@@ -364,7 +362,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
         self.set_parent(v_id, u_parent_id);
     }
 
-    fn delete_fixup(&mut self, id : Option<usize>) {
+    fn delete_fixup(&mut self, id: Option<usize>) {
         let mut x_id = id;
         while x_id.is_some() {
             if self.root == x_id || self.is_red(x_id) {
@@ -388,13 +386,14 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
                 self.rotate(w_parent, direction);
                 w_id = self.parent_child(x_id, direction.opposite())
             }
-    
+
             // Type 2
-            if !self.is_red(self.child(w_id, Direction::Left)) && !self.is_red(self.child(w_id, Direction::Right)) {
+            if !self.is_red(self.child(w_id, Direction::Left))
+                && !self.is_red(self.child(w_id, Direction::Right))
+            {
                 self.set_color(w_id, Color::Red);
                 x_id = self.parent(x_id);
-            } 
-            else {
+            } else {
                 // Type 3
                 if !self.is_red(self.child(w_id, direction.opposite())) {
                     self.set_color(self.child(w_id, direction), Color::Black);
@@ -414,18 +413,14 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
 
         self.set_color(x_id, Color::Black);
     }
-    
+
     fn find(&self, key: T) -> Option<usize> {
         let mut current_id = self.root;
         while let Some(n) = self.node(current_id) {
             if n.key == key {
                 return current_id;
             }
-            current_id = if key < n.key {
-                n.left
-            } else {
-                n.right
-            };
+            current_id = if key < n.key { n.left } else { n.right };
         }
         current_id
     }
@@ -451,8 +446,10 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
         let indent = "     ".repeat(depth);
         if id.is_some() {
             let node = self.node(id).unwrap();
-            println!("{indent} key={:?}, left={:?}, right={:?} parent={:?}, hash={:?}",
-                node.key, node.left, node.right, node.parent, node.hash);
+            println!(
+                "{indent} key={:?}, left={:?}, right={:?} parent={:?}, hash={:?}",
+                node.key, node.left, node.right, node.parent, node.hash
+            );
             self.print_node(node.left, depth + 1);
             self.print_node(node.right, depth + 1);
         } else {
@@ -470,40 +467,45 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
     }
 
     fn parent(&self, id: Option<usize>) -> Option<usize> {
-        self.node(id)
-                .and_then(|node| node.parent)
+        self.node(id).and_then(|node| node.parent)
     }
 
-    fn child(&self, id: Option<usize>, direction: Direction)  -> Option<usize> {
-        self.node(id)
-            .and_then(|node| {
-                match direction {
-                    Direction::Left => node.left,
-                    Direction::Right => node.right,
-                }
-            })
+    fn child(&self, id: Option<usize>, direction: Direction) -> Option<usize> {
+        self.node(id).and_then(|node| match direction {
+            Direction::Left => node.left,
+            Direction::Right => node.right,
+        })
     }
 
     fn parent_child(&self, id: Option<usize>, direction: Direction) -> Option<usize> {
         self.parent(id)
-        .and_then(|n| self.node(Some(n)))
-        .and_then(|parent| {
-            match direction {
+            .and_then(|n| self.node(Some(n)))
+            .and_then(|parent| match direction {
                 Direction::Left => parent.left,
                 Direction::Right => parent.right,
-            }
-        })
+            })
     }
 
     fn is_child(&self, id: Option<usize>, direction: Direction) -> bool {
         self.parent(id)
             .and_then(|p_id| self.node(Some(p_id)))
-            .and_then(|parent| if direction == Direction::Left { parent.left } else { parent.right })
+            .and_then(|parent| {
+                if direction == Direction::Left {
+                    parent.left
+                } else {
+                    parent.right
+                }
+            })
             .map(|child_id| Some(child_id) == id)
             .unwrap_or(false)
     }
 
-    fn set_child(&mut self, parent_id: Option<usize>, direction: Direction, child_id: Option<usize>) {
+    fn set_child(
+        &mut self,
+        parent_id: Option<usize>,
+        direction: Direction,
+        child_id: Option<usize>,
+    ) {
         if let Some(node) = self.node_mut(parent_id) {
             if direction == Direction::Left {
                 node.left = child_id;
@@ -547,7 +549,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
 
 impl<T: Ord + Copy + std::hash::Hash + Debug, H: Hasher> Default for RedBlackTree<T, H> {
     fn default() -> Self {
-       Self::new()
+        Self::new()
     }
 }
 
@@ -597,7 +599,11 @@ mod tests {
 
     fn assert_node(node: &Node<i32, Rp64_256>, partial: TestNode) {
         let key = node.key;
-        let TestNode { left, right, parent } = partial;
+        let TestNode {
+            left,
+            right,
+            parent,
+        } = partial;
         assert_eq!(node.left, left, "key: {key} / left = {left:?}");
         assert_eq!(node.right, right, "key: {key} / right != {right:?}");
         assert_eq!(node.parent, parent, "key: {key} / parent != {parent:?}");
@@ -606,7 +612,7 @@ mod tests {
     #[test]
     fn test_insert_root() {
         let mut tree: RedBlackTree<i32, Rp64_256> = RedBlackTree::new();
-        tree.insert(1, h(0),);
+        tree.insert(1, h(0));
         assert!(tree.has(1));
         assert_eq!(tree.root.unwrap(), 0);
     }
@@ -615,8 +621,24 @@ mod tests {
     fn test_set_child() {
         let mut tree: RedBlackTree<i32, Rp64_256> = RedBlackTree::new();
         tree.root = Some(0);
-        tree.nodes.push(Node{ key: 0, value: h(0), left: None, right: None, parent: None, color: Color::Black, hash: None });
-        tree.nodes.push(Node{ key: 1, value: h(0), left: None, right: None, parent: None, color: Color::Black, hash: None });
+        tree.nodes.push(Node {
+            key: 0,
+            value: h(0),
+            left: None,
+            right: None,
+            parent: None,
+            color: Color::Black,
+            hash: None,
+        });
+        tree.nodes.push(Node {
+            key: 1,
+            value: h(0),
+            left: None,
+            right: None,
+            parent: None,
+            color: Color::Black,
+            hash: None,
+        });
         tree.set_child(Some(0), Direction::Left, Some(1));
         assert_eq!(tree.nodes[0].left, Some(1));
         assert_eq!(tree.nodes[1].parent, Some(0));
@@ -630,12 +652,43 @@ mod tests {
     fn test_rotate() {
         let mut tree: RedBlackTree<i32, Rp64_256> = RedBlackTree::new();
         tree.root = Some(0);
-        tree.nodes.push(Node{ key: 3, value: h(0), left: Some(2), right: None, parent: None, color: Color::Black, hash: None });
-        tree.nodes.push(Node{ key: 2, value: h(0), left: Some(1), right: None, parent: Some(3), color: Color::Red, hash: None });
-        tree.nodes.push(Node{ key: 1, value: h(0), left: None, right: None, parent: Some(2), color: Color::Red, hash: None });
+        tree.nodes.push(Node {
+            key: 3,
+            value: h(0),
+            left: Some(2),
+            right: None,
+            parent: None,
+            color: Color::Black,
+            hash: None,
+        });
+        tree.nodes.push(Node {
+            key: 2,
+            value: h(0),
+            left: Some(1),
+            right: None,
+            parent: Some(3),
+            color: Color::Red,
+            hash: None,
+        });
+        tree.nodes.push(Node {
+            key: 1,
+            value: h(0),
+            left: None,
+            right: None,
+            parent: Some(2),
+            color: Color::Red,
+            hash: None,
+        });
         tree.rotate(Some(0), Direction::Right);
 
-        assert_node(get_node(&tree, 3).unwrap(), TestNode{ left: None, right: None, parent: Some(2) });
+        assert_node(
+            get_node(&tree, 3).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: Some(2),
+            },
+        );
     }
 
     #[test]
@@ -673,19 +726,89 @@ mod tests {
         // Check structure
         assert_eq!(tree.root, tree.find(12));
         // Root
-        assert_node(get_node(&tree, 12).unwrap(), TestNode { left: tree.find(2), right: tree.find(32), parent: None });
+        assert_node(
+            get_node(&tree, 12).unwrap(),
+            TestNode {
+                left: tree.find(2),
+                right: tree.find(32),
+                parent: None,
+            },
+        );
         // Left
-        assert_node(get_node(&tree, 2).unwrap(), TestNode { left: tree.find(1), right: tree.find(3), parent: tree.find(12) });
-        assert_node(get_node(&tree, 1).unwrap(), TestNode { left: None, right: None, parent: tree.find(2) });
-        assert_node(get_node(&tree, 3).unwrap(), TestNode { left: None, right: tree.find(6), parent: tree.find(2) });
-        assert_node(get_node(&tree, 6).unwrap(), TestNode { left: None, right: None, parent: tree.find(3) });
+        assert_node(
+            get_node(&tree, 2).unwrap(),
+            TestNode {
+                left: tree.find(1),
+                right: tree.find(3),
+                parent: tree.find(12),
+            },
+        );
+        assert_node(
+            get_node(&tree, 1).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: tree.find(2),
+            },
+        );
+        assert_node(
+            get_node(&tree, 3).unwrap(),
+            TestNode {
+                left: None,
+                right: tree.find(6),
+                parent: tree.find(2),
+            },
+        );
+        assert_node(
+            get_node(&tree, 6).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: tree.find(3),
+            },
+        );
         // Right
-        assert_node(get_node(&tree, 32).unwrap(), TestNode { left: tree.find(14), right: tree.find(122), parent: tree.find(12) });
-        assert_node(get_node(&tree, 14).unwrap(), TestNode { left: None, right: tree.find(20), parent: tree.find(32) });
-        assert_node(get_node(&tree, 20).unwrap(), TestNode { left: None, right: None, parent: tree.find(14) });
-        assert_node(get_node(&tree, 122).unwrap(), TestNode { left: tree.find(41), right: tree.find(123), parent: tree.find(32) });
-        assert_node(get_node(&tree, 123).unwrap(), TestNode { left: None, right: None, parent: tree.find(122) });
-    
+        assert_node(
+            get_node(&tree, 32).unwrap(),
+            TestNode {
+                left: tree.find(14),
+                right: tree.find(122),
+                parent: tree.find(12),
+            },
+        );
+        assert_node(
+            get_node(&tree, 14).unwrap(),
+            TestNode {
+                left: None,
+                right: tree.find(20),
+                parent: tree.find(32),
+            },
+        );
+        assert_node(
+            get_node(&tree, 20).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: tree.find(14),
+            },
+        );
+        assert_node(
+            get_node(&tree, 122).unwrap(),
+            TestNode {
+                left: tree.find(41),
+                right: tree.find(123),
+                parent: tree.find(32),
+            },
+        );
+        assert_node(
+            get_node(&tree, 123).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: tree.find(122),
+            },
+        );
+
         // tree.print();
     }
 
@@ -712,15 +835,64 @@ mod tests {
         assert_eq!(tree.root, tree.find(13));
 
         // Root
-        assert_node(get_node(&tree, 13).unwrap(), TestNode { left: tree.find(8), right: tree.find(15), parent: None });
+        assert_node(
+            get_node(&tree, 13).unwrap(),
+            TestNode {
+                left: tree.find(8),
+                right: tree.find(15),
+                parent: None,
+            },
+        );
         // Left
-        assert_node(get_node(&tree, 8).unwrap(), TestNode { left: tree.find(1), right: tree.find(9), parent: tree.find(13) });
-        assert_node(get_node(&tree, 1).unwrap(), TestNode { left: None, right: None, parent: tree.find(8) });
-        assert_node(get_node(&tree, 9).unwrap(), TestNode { left: None, right: tree.find(10), parent: tree.find(8) });
-        assert_node(get_node(&tree, 10).unwrap(), TestNode { left: None, right: None, parent: tree.find(9) });
+        assert_node(
+            get_node(&tree, 8).unwrap(),
+            TestNode {
+                left: tree.find(1),
+                right: tree.find(9),
+                parent: tree.find(13),
+            },
+        );
+        assert_node(
+            get_node(&tree, 1).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: tree.find(8),
+            },
+        );
+        assert_node(
+            get_node(&tree, 9).unwrap(),
+            TestNode {
+                left: None,
+                right: tree.find(10),
+                parent: tree.find(8),
+            },
+        );
+        assert_node(
+            get_node(&tree, 10).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: tree.find(9),
+            },
+        );
         // Right
-        assert_node(get_node(&tree, 15).unwrap(), TestNode { left: None, right: tree.find(23), parent: tree.find(13) });
-        assert_node(get_node(&tree, 23).unwrap(), TestNode { left: None, right: None, parent: tree.find(15) });
+        assert_node(
+            get_node(&tree, 15).unwrap(),
+            TestNode {
+                left: None,
+                right: tree.find(23),
+                parent: tree.find(13),
+            },
+        );
+        assert_node(
+            get_node(&tree, 23).unwrap(),
+            TestNode {
+                left: None,
+                right: None,
+                parent: tree.find(15),
+            },
+        );
 
         // tree.print();
     }
@@ -734,9 +906,9 @@ mod tests {
 
         assert!(tree.root_hash().is_some());
 
-        assert!(get_node(&tree, 1).and_then(|t|t.hash).is_some());
-        assert!(get_node(&tree, 2).and_then(|t|t.hash).is_some());
-        assert!(get_node(&tree, 3).and_then(|t|t.hash).is_some());
+        assert!(get_node(&tree, 1).and_then(|t| t.hash).is_some());
+        assert!(get_node(&tree, 2).and_then(|t| t.hash).is_some());
+        assert!(get_node(&tree, 3).and_then(|t| t.hash).is_some());
 
         // println!("{:?}", tree.root_hash().unwrap().as_bytes())
     }

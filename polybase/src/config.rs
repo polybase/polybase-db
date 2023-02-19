@@ -1,6 +1,6 @@
 // mod config;
 
-use clap::{Parser,ValueEnum};
+use clap::{Parser, ValueEnum};
 
 /// Polybase is a p2p decentralized database
 #[derive(Parser, Debug)]
@@ -14,7 +14,7 @@ pub struct Config {
     pub root_dir: String,
 
     /// Log level
-    #[arg(value_enum, long, env="LOG_LEVEL", default_value = "INFO")]
+    #[arg(value_enum, long, env = "LOG_LEVEL", default_value = "INFO")]
     pub log_level: LogLevel,
 
     /// RPC listen address

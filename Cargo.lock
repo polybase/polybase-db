@@ -2010,6 +2010,7 @@ dependencies = [
  "slog",
  "slog-async",
  "slog-term",
+ "thiserror",
  "tokio",
  "winter-crypto",
 ]
