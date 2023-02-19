@@ -1,3 +1,4 @@
 mod code;
-mod http;
+pub mod http;
+pub mod logger;
 mod reason;

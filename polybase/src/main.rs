@@ -12,7 +12,12 @@ mod pending;
 mod raft;
 mod rollup;
 
-use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    get,
+    http::StatusCode,
+    middleware::{ErrorHandlerResponse, ErrorHandlers},
+    post, web, App, HttpResponse, HttpServer, Responder,
+};
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::Indexer;
@@ -22,6 +27,7 @@ use slog::Drain;
 use std::{
     borrow::Cow,
     cmp::min,
+    collections::HashMap,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -29,11 +35,15 @@ use tokio::select;
 
 use crate::config::Config;
 use crate::db::Db;
+use crate::errors::http::HTTPError;
+use crate::errors::logger::SlogMiddleware;
 use crate::raft::Raft;
 
 struct RouteState {
+    db: Arc<Db>,
     indexer: Arc<Indexer>,
     raft: Arc<Raft>,
+    logger: slog::Logger,
 }
 
 #[get("/")]
@@ -281,32 +291,35 @@ struct FunctionCall {
     args: Vec<serde_json::Value>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FunctionResponse {
+    data: HashMap<String, indexer::RecordValue>,
+}
+
 #[post("/{collection}/records")]
 async fn post_record(
     state: web::Data<RouteState>,
     path: web::Path<String>,
     body: auth::SignedJSON<FunctionCall>,
-) -> Result<impl Responder, Box<dyn std::error::Error>> {
-    let collection = path.into_inner();
-    let auth = body.auth;
-    let auth = auth.map(|a| a.into());
+) -> Result<web::Json<FunctionResponse>, HTTPError> {
+    let collection_id = path.into_inner();
+    let auth = body.auth.map(|a| a.into());
 
     let raft = Arc::clone(&state.raft);
 
-    let res = raft
+    let record_id = raft
         .call(
-            collection,
+            collection_id.clone(),
             "constructor".to_string(),
             "".to_string(),
             body.data.args,
             auth.as_ref(),
         )
-        .await;
+        .await?;
 
-    match res {
-        Ok(()) => Ok(HttpResponse::Ok().body("Record created")),
-        Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
-    }
+    let record = state.db.get(collection_id, record_id).await?.unwrap();
+
+    Ok(web::Json(FunctionResponse { data: record }))
 }
 
 #[post("/{collection}/records/{record}/call/{function}")]
@@ -327,7 +340,7 @@ async fn call_function(
         .await;
 
     match res {
-        Ok(()) => Ok(HttpResponse::Ok().body("Function called")),
+        Ok(_) => Ok(HttpResponse::Ok().body("Function called")),
         Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
     }
 }
@@ -365,9 +378,13 @@ async fn main() -> std::io::Result<()> {
     let server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(RouteState {
+                db: Arc::clone(&db),
                 indexer: Arc::clone(&indexer),
                 raft: Arc::clone(&raft),
+                logger: logger.clone(),
             }))
+            .wrap(SlogMiddleware::new(logger.clone()))
+            // .wrap(ErrorHandlers::new().default_handler(|res| actix_error_middleware(logger, res)))
             .service(root)
             .service(
                 web::scope("/v0/collections")

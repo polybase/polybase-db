@@ -16,8 +16,8 @@ pub enum RaftError {
     #[error("raft error: {0}")]
     Raft(#[source] rmqtt_raft::Error),
 
-    #[error("db error: {0}")]
-    Db(db::DbError),
+    #[error("raft db error")]
+    Db(#[from] db::DbError),
 
     #[error("serializer error: {0}")]
     Serializer(#[source] serde_json::Error),
@@ -57,6 +57,7 @@ pub enum RaftMessage {
 #[derive(Serialize, Deserialize, Clone)]
 struct RaftCallResponse {
     commit_id: usize,
+    record_id: String,
 }
 
 // Main raft with public impl, we also watch this struct for
@@ -159,7 +160,7 @@ impl Raft {
         record_id: String,
         args: Vec<serde_json::Value>,
         auth: Option<&indexer::AuthUser>,
-    ) -> Result<()> {
+    ) -> Result<String> {
         debug!(
             self.shared.shared.logger,
             "received call: {collection_id}/{record_id}, {function_name}()"
@@ -180,7 +181,7 @@ impl Raft {
         // Wait for the commit to be applied
         self.shared.shared.wait_for_commit(resp.commit_id).await;
 
-        Ok(())
+        Ok(resp.record_id)
     }
 }
 
@@ -328,11 +329,16 @@ impl RmqttRaftStore for RaftConnector {
                     "apply call: {collection_id}/{record_id}, {function_name}()"
                 );
 
-                db.call(collection_id, &function_name, record_id, args, auth)
+                let record_id = db
+                    .call(collection_id, &function_name, record_id, args, auth)
                     .await?;
 
                 let commit_id = self.shared.commit_id();
-                let resp = serde_json::to_vec(&RaftCallResponse { commit_id }).unwrap();
+                let resp = serde_json::to_vec(&RaftCallResponse {
+                    commit_id,
+                    record_id,
+                })
+                .unwrap();
 
                 Ok(resp)
             }

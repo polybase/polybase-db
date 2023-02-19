@@ -22,6 +22,9 @@ pub enum ReasonCode {
     #[display(fmt = "function/invalid-call")]
     FunctionInvalidCall,
 
+    #[display(fmt = "collection/not-found")]
+    CollectionNotFound,
+
     #[display(fmt = "collection/id-exist")]
     CollectionIdExists,
 
@@ -30,6 +33,9 @@ pub enum ReasonCode {
 
     #[display(fmt = "collection/invalid-schema")]
     CollectionInvalidSchema,
+
+    #[display(fmt = "internal")]
+    Internal,
 }
 
 impl ReasonCode {
@@ -41,9 +47,11 @@ impl ReasonCode {
             ReasonCode::FunctionNotFound => ErrorCode::NotFound,
             ReasonCode::FunctionInvalidArgs => ErrorCode::InvalidArgument,
             ReasonCode::FunctionInvalidCall => ErrorCode::InvalidArgument,
+            ReasonCode::CollectionNotFound => ErrorCode::NotFound,
             ReasonCode::CollectionIdExists => ErrorCode::AlreadyExists,
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,
+            ReasonCode::Internal => ErrorCode::Internal,
         }
     }
 }

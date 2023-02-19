@@ -777,6 +777,19 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
+    pub async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
+        if self.collection_id == "Collection" && id == "Collection" {
+            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
+        }
+
+        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
+        let Some(value) = self.store.get(&key).await? else {
+            return Ok(None);
+        };
+
+        Ok(Some(value))
+    }
+
     pub async fn delete(&self, id: String) -> Result<()> {
         let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
