@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::path::Path;
 
 mod collection;
@@ -22,24 +21,45 @@ pub use record::{
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 
+#[derive(Debug, thiserror::Error)]
+pub enum IndexerError {
+    #[error("collection error")]
+    Collection(#[from] collection::CollectionError),
+
+    #[error("store error")]
+    Store(#[from] store::StoreError),
+
+    #[error("index error")]
+    Index(#[from] index::IndexError),
+
+    #[error("keys error")]
+    Keys(#[from] keys::KeysError),
+
+    #[error("public key error")]
+    PublicKey(#[from] publickey::PublicKeyError),
+
+    #[error("record error")]
+    Record(#[from] record::RecordError),
+
+    #[error("where query error")]
+    WhereQuery(#[from] where_query::WhereQueryError),
+}
+
 pub struct Indexer {
     store: store::Store,
 }
 
 impl Indexer {
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, Box<dyn Error + Send + Sync + 'static>> {
+    pub fn new(path: impl AsRef<Path>) -> store::Result<Self> {
         let store = store::Store::open(path)?;
         Ok(Self { store })
     }
 
-    pub fn destroy(self) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    pub fn destroy(self) -> store::Result<()> {
         self.store.destroy()
     }
 
-    pub async fn collection(
-        &self,
-        id: String,
-    ) -> Result<Collection, Box<dyn Error + Send + Sync + 'static>> {
+    pub async fn collection(&self, id: String) -> collection::Result<Collection> {
         Collection::load(&self.store, id).await
     }
 }

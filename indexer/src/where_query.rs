@@ -5,6 +5,20 @@ use serde::{Deserialize, Serialize};
 use crate::keys::{self, Direction};
 use crate::record::IndexValue;
 
+pub type Result<T> = std::result::Result<T, WhereQueryError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum WhereQueryError {
+    #[error("paths and directions must have the same length")]
+    PathsAndDirectionsLengthMismatch,
+
+    #[error("inequality can only be the last condition")]
+    InequalityNotLast,
+
+    #[error("keys error")]
+    KeysError(#[from] keys::KeysError),
+}
+
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub(crate) struct FieldPath(pub(crate) Vec<String>);
 
@@ -15,7 +29,7 @@ impl PartialEq<&[&str]> for FieldPath {
 }
 
 impl<'de> Deserialize<'de> for FieldPath {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
@@ -29,7 +43,7 @@ impl<'de> Deserialize<'de> for FieldPath {
 }
 
 impl Serialize for FieldPath {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
@@ -96,12 +110,12 @@ impl WhereQuery {
         namespace: String,
         paths: &[&[T]],
         directions: &[keys::Direction],
-    ) -> Result<KeyRange<'static>, Box<dyn std::error::Error + Send + Sync + 'static>>
+    ) -> Result<KeyRange<'static>>
     where
         T: for<'other> PartialEq<String> + AsRef<str>,
     {
         if paths.len() != directions.len() {
-            return Err("Paths and directions must have the same length".into());
+            return Err(WhereQueryError::PathsAndDirectionsLengthMismatch);
         }
 
         let mut lower_values = Vec::<Cow<IndexValue>>::with_capacity(paths.len());
@@ -113,7 +127,7 @@ impl WhereQuery {
         for (path, direction) in paths.iter().zip(directions.iter()) {
             if let Some((_, node)) = self.0.iter().find(|(field_path, _)| *path == field_path.0) {
                 if ineq_found {
-                    return Err("Inequality can only be the last condition".into());
+                    return Err(WhereQueryError::InequalityNotLast);
                 }
 
                 match node {

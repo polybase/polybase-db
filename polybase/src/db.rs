@@ -1,4 +1,3 @@
-use std::error::Error;
 use std::sync::Arc;
 
 use gateway::{Change, Gateway};
@@ -22,10 +21,10 @@ pub enum DbError {
     CollectionASTInvalid(String),
 
     #[error("gateway error: {0}")]
-    GatewayError(Box<dyn Error + Send + Sync + 'static>),
+    GatewayError(gateway::GatewayError),
 
     #[error("indexer error")]
-    IndexerError(Box<dyn Error + Send + Sync + 'static>),
+    IndexerError(indexer::IndexerError),
 
     #[error("serialize error: {0}")]
     SerializerError(#[from] bincode::Error),
@@ -63,12 +62,12 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerError(e));
+                return Err(DbError::IndexerError(e.into()));
             }
         };
 
         let record = collection.get_without_auth_check(record_id).await;
-        record.map_err(|e| DbError::IndexerError(e))
+        record.map_err(|e| DbError::IndexerError(e.into()))
     }
 
     pub async fn commit(&self, commit_until_key: [u8; 32]) -> Result<()> {
@@ -112,7 +111,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerError(e));
+                return Err(DbError::IndexerError(e.into()));
             }
         };
 
@@ -120,7 +119,7 @@ impl Db {
         match collection.delete(record_id.clone()).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(DbError::IndexerError(e));
+                return Err(DbError::IndexerError(e.into()));
             }
         }
 
@@ -142,7 +141,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerError(e));
+                return Err(DbError::IndexerError(e.into()));
             }
         };
 
@@ -150,7 +149,7 @@ impl Db {
         match collection.set(record_id.clone(), &record).await {
             Ok(_) => {}
             Err(e) => {
-                return Err(DbError::IndexerError(e));
+                return Err(DbError::IndexerError(e.into()));
             }
         }
 
@@ -241,7 +240,7 @@ impl Db {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
-                return Err(DbError::IndexerError(e));
+                return Err(DbError::IndexerError(e.into()));
             }
         };
 

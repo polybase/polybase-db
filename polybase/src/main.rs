@@ -121,7 +121,7 @@ async fn get_record(
             .content_type("application/json")
             .json(indexer::record_to_json(record).unwrap())),
         Ok(None) => Ok(HttpResponse::NotFound().body("Record not found")),
-        Err(e) => Err(e),
+        Err(e) => Err(e.into()),
     }
 }
 

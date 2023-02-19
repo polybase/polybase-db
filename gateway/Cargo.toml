@@ -12,6 +12,7 @@ polylang = { git = "https://github.com/polybase/polylang", branch = "eng-283-ind
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 v8 = "0.62.2"
+thiserror = "1.0"
 
 [dev-dependencies]
 rand = "0.8.5"

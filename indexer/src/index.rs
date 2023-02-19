@@ -5,6 +5,14 @@ use crate::{
     where_query::{WhereNode, WhereQuery},
 };
 
+pub type Result<T> = std::result::Result<T, IndexError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum IndexError {
+    #[error("can only sort by inequality if it's the same direction")]
+    InequalitySortDirectionMismatch,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct CollectionIndexField<'a> {
     pub(crate) path: Vec<Cow<'a, str>>,
@@ -115,7 +123,7 @@ impl EitherIndexField<'_> {
 fn index_requirements<'a>(
     where_query: &'a WhereQuery,
     sorts: &[CollectionIndexField<'a>],
-) -> Result<Vec<EitherIndexField<'a>>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+) -> Result<Vec<EitherIndexField<'a>>> {
     let mut requirements = vec![];
 
     for (field, node) in &where_query.0 {
@@ -191,7 +199,7 @@ fn index_requirements<'a>(
             .map(|r| r.inequality && r.left.path == sort.path && r.left.direction != sort.direction)
             .unwrap_or(false)
         {
-            return Err("Can only sort by inequality if it's the same direction".into());
+            return Err(IndexError::InequalitySortDirectionMismatch);
         }
 
         if let Some(last_req) = requirements.last_mut() {
@@ -228,7 +236,7 @@ fn index_requirements<'a>(
 fn index_recommendation<'a>(
     where_query: &'a WhereQuery,
     sorts: &[CollectionIndexField<'a>],
-) -> Result<CollectionIndex<'a>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+) -> Result<CollectionIndex<'a>> {
     let mut index_fields = vec![];
     let requirements = index_requirements(where_query, sorts)?;
 

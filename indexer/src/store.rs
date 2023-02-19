@@ -1,4 +1,4 @@
-use std::{convert::AsRef, error::Error, path::Path, sync::Arc};
+use std::{convert::AsRef, path::Path, sync::Arc};
 
 use prost::Message;
 
@@ -7,6 +7,26 @@ use crate::{
     proto,
     record::RecordRoot,
 };
+
+pub type Result<T> = std::result::Result<T, StoreError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("invalid key/value combination")]
+    InvalidKeyValueCombination,
+
+    #[error("keys error")]
+    KeysError(#[from] keys::KeysError),
+
+    #[error("RocksDB error")]
+    RocksDBError(#[from] rocksdb::Error),
+
+    #[error("serde_json error")]
+    SerdeJSONError(#[from] serde_json::Error),
+
+    #[error("tokio task join error")]
+    TokioTaskJoinError(#[from] tokio::task::JoinError),
+}
 
 pub(crate) struct Store {
     db: Arc<rocksdb::DB>,
@@ -18,7 +38,7 @@ pub(crate) enum Value<'a> {
 }
 
 impl<'a> Value<'a> {
-    fn serialize(&self) -> Result<Vec<u8>, serde_json::Error> {
+    fn serialize(&self) -> Result<Vec<u8>> {
         match self {
             Value::DataValue(value) => Ok(serde_json::to_vec(value)?),
             Value::IndexValue(value) => Ok(value.encode_to_vec()),
@@ -27,7 +47,7 @@ impl<'a> Value<'a> {
 }
 
 impl Store {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, Box<dyn Error + Send + Sync + 'static>> {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut options = rocksdb::Options::default();
         options.create_if_missing(true);
         options.set_comparator("polybase", keys::comparator);
@@ -37,16 +57,12 @@ impl Store {
         Ok(Self { db: Arc::new(db) })
     }
 
-    pub(crate) async fn set(
-        &self,
-        key: &Key<'_>,
-        value: &Value<'_>,
-    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    pub(crate) async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
         match (key, value) {
             (Key::Data { .. }, Value::DataValue(_)) => {}
             (Key::SystemData { .. }, Value::DataValue(_)) => {}
             (Key::Index { .. }, Value::IndexValue(_)) => {}
-            _ => return Err("invalid key/value combination".into()),
+            _ => return Err(StoreError::InvalidKeyValueCombination),
         }
 
         let key = key.serialize()?;
@@ -57,10 +73,7 @@ impl Store {
         Ok(())
     }
 
-    pub(crate) async fn get(
-        &self,
-        key: &Key<'_>,
-    ) -> Result<Option<RecordRoot>, Box<dyn Error + Send + Sync + 'static>> {
+    pub(crate) async fn get(&self, key: &Key<'_>) -> Result<Option<RecordRoot>> {
         let key = key.serialize()?;
         let db = Arc::clone(&self.db);
 
@@ -71,10 +84,7 @@ impl Store {
         .await?
     }
 
-    pub(crate) async fn delete(
-        &self,
-        key: &Key<'_>,
-    ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    pub(crate) async fn delete(&self, key: &Key<'_>) -> Result<()> {
         let key = key.serialize()?;
         let db = Arc::clone(&self.db);
         tokio::task::spawn_blocking(move || db.delete(key)).await??;
@@ -87,11 +97,7 @@ impl Store {
         lower_bound: &Key,
         upper_bound: &Key,
         reverse: bool,
-    ) -> Result<
-        impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>), Box<dyn Error + Send + Sync + 'static>>>
-            + '_,
-        Box<dyn Error + Send + Sync + 'static>,
-    > {
+    ) -> Result<impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>)>> + '_> {
         let mut opts = rocksdb::ReadOptions::default();
         opts.set_iterate_lower_bound(lower_bound.serialize()?);
         opts.set_iterate_upper_bound(upper_bound.serialize()?);
@@ -112,7 +118,7 @@ impl Store {
             }))
     }
 
-    pub(crate) fn destroy(self) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    pub(crate) fn destroy(self) -> Result<()> {
         let path = self.db.path().to_path_buf();
 
         drop(self.db);
