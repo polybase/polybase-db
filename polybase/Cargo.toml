@@ -18,7 +18,7 @@ hex = "0.4.3"
 futures = "0.3.26"
 sha3 = "0.10.6"
 secp256k1 = { version = "0.26", features = ["recovery", "global-context"] }
-clap = { version = "4.1.4", features = ["env", "derive"]}
+clap = { version = "4.1.4", features = ["env", "derive"] }
 rmqtt-raft = "0.2.3"
 async-trait = "0.1.64"
 bincode = "1.3.3"
@@ -29,4 +29,5 @@ slog-term = "2"
 slog = "2"
 rand = "0.8.5"
 bytes = "1.4.0"
+derive_more = "0.99.17"
 thiserror = "1.0.38"

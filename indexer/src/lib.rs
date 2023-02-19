@@ -11,11 +11,14 @@ mod stableast_ext;
 mod store;
 mod where_query;
 
-pub use collection::{AuthUser, Collection, Cursor, ListQuery};
+pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
 pub use index::CollectionIndexField;
 pub use keys::Direction;
 pub use publickey::PublicKey;
-pub use record::{IndexValue, PathFinder, RecordReference, RecordRoot, RecordValue};
+pub use record::{
+    json_to_record, record_to_json, Converter, ForeignRecordReference, IndexValue, PathFinder,
+    RecordRoot, RecordValue,
+};
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 

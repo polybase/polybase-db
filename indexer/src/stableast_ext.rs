@@ -22,6 +22,19 @@ pub trait FieldWalker<'ast> {
         path: &mut Vec<&'ast str>,
         f: &mut impl FnMut(&[&'ast str], Field<'ast>),
     );
+
+    /// Find a field by its path.
+    fn find_field(&'ast self, path: &[&str]) -> Option<Field<'ast>> {
+        let mut found = None;
+
+        self.walk_fields(&mut Vec::new(), &mut |p, f| {
+            if p == path {
+                found = Some(f);
+            }
+        });
+
+        found
+    }
 }
 
 impl<'ast> FieldWalker<'ast> for stableast::Collection<'ast> {

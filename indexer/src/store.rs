@@ -1,4 +1,4 @@
-use std::{convert::AsRef, path::Path};
+use std::{convert::AsRef, path::Path, sync::Arc};
 
 use prost::Message;
 
@@ -29,7 +29,7 @@ pub enum StoreError {
 }
 
 pub(crate) struct Store {
-    db: std::sync::Arc<rocksdb::DB>,
+    db: Arc<rocksdb::DB>,
 }
 
 pub(crate) enum Value<'a> {
@@ -54,9 +54,7 @@ impl Store {
 
         let db = rocksdb::DB::open(&options, path)?;
 
-        Ok(Self {
-            db: std::sync::Arc::new(db),
-        })
+        Ok(Self { db: Arc::new(db) })
     }
 
     pub(crate) async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
@@ -69,7 +67,7 @@ impl Store {
 
         let key = key.serialize()?;
         let value = value.serialize()?;
-        let db = std::sync::Arc::clone(&self.db);
+        let db = Arc::clone(&self.db);
         tokio::task::spawn_blocking(move || db.put(key, value)).await??;
 
         Ok(())
@@ -77,13 +75,21 @@ impl Store {
 
     pub(crate) async fn get(&self, key: &Key<'_>) -> Result<Option<RecordRoot>> {
         let key = key.serialize()?;
-        let db = std::sync::Arc::clone(&self.db);
+        let db = Arc::clone(&self.db);
 
         tokio::task::spawn_blocking(move || match db.get_pinned(key)? {
             Some(slice) => Ok(Some(serde_json::from_slice(slice.as_ref())?)),
             None => Ok(None),
         })
         .await?
+    }
+
+    pub(crate) async fn delete(&self, key: &Key<'_>) -> Result<()> {
+        let key = key.serialize()?;
+        let db = Arc::clone(&self.db);
+        tokio::task::spawn_blocking(move || db.delete(key)).await??;
+
+        Ok(())
     }
 
     pub(crate) fn list(

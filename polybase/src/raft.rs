@@ -39,7 +39,7 @@ pub enum RaftMessage {
         collection_id: String,
         function_name: String,
         record_id: String,
-        args: Vec<indexer::RecordValue>,
+        args: Vec<serde_json::Value>,
         auth: Option<indexer::AuthUser>,
     },
     // Commit a set of txns
@@ -157,7 +157,7 @@ impl Raft {
         collection_id: String,
         function_name: String,
         record_id: String,
-        args: Vec<indexer::RecordValue>,
+        args: Vec<serde_json::Value>,
         auth: Option<&indexer::AuthUser>,
     ) -> Result<()> {
         debug!(
