@@ -30,7 +30,7 @@ impl Indexer {
     }
 
     pub fn destroy(self) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-        self.store.destroy()
+        self.store.destroy().map_err(|e| e.into())
     }
 
     pub async fn collection(

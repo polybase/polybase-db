@@ -8,6 +8,35 @@ use crate::{
     record::{IndexValue, RecordRoot},
 };
 
+pub type Result<T> = std::result::Result<T, KeysError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum KeysError {
+    #[error("invalid direction byte {n}")]
+    InvalidDirection { n: u8 },
+
+    #[error("path and directions must be the same length")]
+    PathAndDirectionsLengthMismatch,
+
+    #[error("record is missing fields: {fields:?}")]
+    RecordIsMissingFields { fields: Vec<String> },
+
+    #[error("invalid key type byte {n}")]
+    InvalidKeyType { n: u8 },
+
+    #[error("key does not have immediate successor")]
+    KeyDoesNotHaveImmediateSuccessor,
+
+    #[error("record error")]
+    RecordError(#[from] crate::record::RecordError),
+
+    #[error("try from int error")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+
+    #[error("CID error")]
+    CIDError(#[from] cid::Error),
+}
+
 const MULTICODEC_PROTOBUF: u64 = 0x50;
 
 // 1 byte: prefix
@@ -106,7 +135,7 @@ fn eat_field(start: &[u8]) -> (&[u8], &[u8]) {
     (field, rest)
 }
 
-fn generate_cid(data: &[u8], out: &mut Vec<u8>) -> Result<(), cid::Error> {
+fn generate_cid(data: &[u8], out: &mut Vec<u8>) -> std::result::Result<(), cid::Error> {
     let mut hasher = cid::multihash::Sha2_256::default();
     hasher.update(data);
     let hash = cid::multihash::Code::Sha2_256.wrap(hasher.finalize())?;
@@ -149,7 +178,7 @@ impl<'a> fmt::Debug for Key<'a> {
 }
 
 impl<'a> Key<'a> {
-    pub fn new_data(namespace: String, id: String) -> Result<Self, cid::Error> {
+    pub fn new_data(namespace: String, id: String) -> Result<Self> {
         let data = proto::DataKey { namespace, id };
         let mut cid = Vec::with_capacity(36);
         generate_cid(&data.encode_to_vec(), &mut cid)?;
@@ -159,7 +188,7 @@ impl<'a> Key<'a> {
         })
     }
 
-    pub(crate) fn new_system_data(id: String) -> Result<Self, cid::Error> {
+    pub(crate) fn new_system_data(id: String) -> Result<Self> {
         let data = proto::SystemDataKey { id };
         let mut cid = Vec::with_capacity(36);
         generate_cid(&data.encode_to_vec(), &mut cid)?;
@@ -174,7 +203,7 @@ impl<'a> Key<'a> {
         paths: &[&[impl AsRef<str>]],
         directions: &[Direction],
         values: Vec<Cow<'a, IndexValue>>,
-    ) -> Result<Self, cid::Error> {
+    ) -> Result<Self> {
         let data = proto::IndexKey {
             namespace,
             path: paths
@@ -204,9 +233,7 @@ impl<'a> Key<'a> {
         Key::Wildcard(Box::new(self))
     }
 
-    pub(crate) fn serialize(
-        &self,
-    ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub(crate) fn serialize(&self) -> Result<Vec<u8>> {
         match self {
             Key::Wildcard(key) => {
                 let mut key = key.serialize()?;
@@ -247,9 +274,7 @@ impl<'a> Key<'a> {
         }
     }
 
-    pub(crate) fn deserialize(
-        key: &'a [u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub(crate) fn deserialize(key: &'a [u8]) -> Result<Self> {
         let key_type = key[0];
         let cid = &key[1..37];
 
@@ -282,7 +307,7 @@ impl<'a> Key<'a> {
                     },
                 })
             }
-            _ => Err(format!("Invalid key type: {key_type}").into()),
+            _ => Err(KeysError::InvalidKeyType { n: key_type }),
         }
     }
 
@@ -310,13 +335,11 @@ impl<'a> Key<'a> {
         }
     }
 
-    pub(crate) fn immediate_successor_value_mut(
-        &mut self,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub(crate) fn immediate_successor_value_mut(&mut self) -> Result<()> {
         match self {
-            Key::Wildcard(_) => Err("Wildcard keys have no values".into()),
-            Key::Data { .. } => Err("Data keys have no values".into()),
-            Key::SystemData { .. } => Err("SystemData keys have no values".into()),
+            Key::Wildcard(_) => Err(KeysError::KeyDoesNotHaveImmediateSuccessor),
+            Key::Data { .. } => Err(KeysError::KeyDoesNotHaveImmediateSuccessor),
+            Key::SystemData { .. } => Err(KeysError::KeyDoesNotHaveImmediateSuccessor),
             Key::Index {
                 cid: _,
                 directions: _,
@@ -345,13 +368,13 @@ impl From<Direction> for u8 {
 }
 
 impl TryFrom<u8> for Direction {
-    type Error = String;
+    type Error = KeysError;
 
-    fn try_from(d: u8) -> Result<Self, Self::Error> {
+    fn try_from(d: u8) -> Result<Self> {
         match d {
             0x00 => Ok(Direction::Ascending),
             0x01 => Ok(Direction::Descending),
-            _ => Err(format!("invalid direction: {d}")),
+            _ => Err(KeysError::InvalidDirection { n: d }),
         }
     }
 }
@@ -361,12 +384,12 @@ pub(crate) fn index_record_key_with_record<'a, T>(
     paths: &[&[T]],
     directions: &[Direction],
     record: &'a RecordRoot,
-) -> Result<Key<'a>, Box<dyn std::error::Error + Send + Sync + 'static>>
+) -> Result<Key<'a>>
 where
     T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
 {
     if paths.len() != directions.len() {
-        return Err("path and directions must be the same length".into());
+        return Err(KeysError::PathAndDirectionsLengthMismatch);
     }
 
     let mut found_values = vec![];
@@ -382,16 +405,16 @@ where
             }
 
             Ok(())
-        })?;
+        })
+        .unwrap();
     }
 
     if found_values.len() != paths.len() {
         let missing_fields = paths
             .iter()
             .filter(|p| !found_values.iter().any(|(fp, _)| fp == p));
-        return Err(format!(
-            "record is missing fields: {}",
-            missing_fields
+        return Err(KeysError::RecordIsMissingFields {
+            fields: missing_fields
                 .map(|x| {
                     let mut s = String::new();
                     for p in x.iter() {
@@ -401,10 +424,8 @@ where
                     s.pop();
                     s
                 })
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-        .into());
+                .collect::<Vec<_>>(),
+        });
     }
 
     found_values.sort_by(|(p1, _), (p2, _)| {
@@ -431,9 +452,7 @@ mod test {
     use super::*;
 
     impl Key<'_> {
-        pub(crate) fn immediate_successor_value(
-            mut self,
-        ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+        pub(crate) fn immediate_successor_value(mut self) -> Result<Self> {
             self.immediate_successor_value_mut()?;
             Ok(self)
         }

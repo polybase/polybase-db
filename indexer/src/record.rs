@@ -1,11 +1,41 @@
 use std::{borrow::Cow, collections::HashMap, error::Error};
 
+use polylang::stableast::Record;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     keys::{self, BYTE_BOOLEAN, BYTE_BYTES, BYTE_NULL, BYTE_NUMBER, BYTE_STRING},
     publickey,
 };
+
+pub type Result<T> = std::result::Result<T, RecordError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum RecordError {
+    #[error("invalid boolean byte {b}")]
+    InvalidBooleanByte { b: u8 },
+
+    #[error("invalid type prefix {b}")]
+    InvalidTypePrefix { b: u8 },
+
+    #[error("value {value:?} is not of type {type_:?}")]
+    InvalidType {
+        value: RecordValue,
+        type_: polylang::stableast::Type,
+    },
+
+    #[error("try from int error")]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+
+    #[error("try from slice error")]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
+
+    #[error("from utf8 error")]
+    FromUtf8Error(#[from] std::string::FromUtf8Error),
+
+    #[error("IO error")]
+    IOError(#[from] std::io::Error),
+}
 
 pub type RecordRoot = HashMap<String, RecordValue>;
 
@@ -20,11 +50,9 @@ pub enum RecordValue {
 // TODO: use this to deserialize from a JSON provided by the user, to our RecordValue.
 // The database will store RecordValue. Conversion only has to happen once.
 impl TryFrom<(&polylang::stableast::Type<'_>, serde_json::Value)> for RecordValue {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Error = RecordError;
 
-    fn try_from(
-        (ty, value): (&polylang::stableast::Type, serde_json::Value),
-    ) -> Result<Self, Self::Error> {
+    fn try_from((ty, value): (&polylang::stableast::Type, serde_json::Value)) -> Result<Self> {
         match (ty, value) {
             (polylang::stableast::Type::Primitive(p), value) => match (&p.value, value) {
                 (polylang::stableast::PrimitiveType::String, serde_json::Value::String(s)) => {
@@ -61,8 +89,8 @@ impl RecordValue {
     pub fn walk<'a, E: Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,
-        f: &mut impl FnMut(&[Cow<str>], &'a IndexValue) -> Result<(), E>,
-    ) -> Result<(), E> {
+        f: &mut impl FnMut(&[Cow<str>], &'a IndexValue) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
         match self {
             RecordValue::IndexValue(v) => {
                 f(current_path, v)?;
@@ -89,8 +117,8 @@ impl RecordValue {
     pub fn walk_all<'a, E: Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,
-        f: &mut impl FnMut(&[Cow<str>], &'a RecordValue) -> Result<(), E>,
-    ) -> Result<(), E> {
+        f: &mut impl FnMut(&[Cow<str>], &'a RecordValue) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
         match self {
             RecordValue::IndexValue(_) => {
                 f(current_path, self)?;
@@ -121,8 +149,11 @@ impl RecordValue {
     pub fn walk_maps_mut<'rv, E>(
         &mut self,
         current_path: &mut Vec<Cow<'rv, str>>,
-        f: &mut impl FnMut(&[Cow<'rv, str>], &mut HashMap<String, RecordValue>) -> Result<(), E>,
-    ) -> Result<(), E> {
+        f: &mut impl FnMut(
+            &[Cow<'rv, str>],
+            &mut HashMap<String, RecordValue>,
+        ) -> std::result::Result<(), E>,
+    ) -> std::result::Result<(), E> {
         match self {
             RecordValue::IndexValue(_) => {}
             RecordValue::Map(m) => {
@@ -153,9 +184,9 @@ pub struct RecordReference {
 }
 
 impl TryFrom<&RecordValue> for RecordReference {
-    type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
+    type Error = RecordError;
 
-    fn try_from(value: &RecordValue) -> Result<Self, Self::Error> {
+    fn try_from(value: &RecordValue) -> Result<Self> {
         match value {
             RecordValue::Map(m) => {
                 let id = match m.get("id") {
@@ -309,10 +340,7 @@ impl IndexValue {
         }
     }
 
-    pub(crate) fn serialize(
-        &self,
-        mut w: impl std::io::Write,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub(crate) fn serialize(&self, mut w: impl std::io::Write) -> Result<()> {
         let number_bytes;
         let value: Cow<[u8]> = match self {
             IndexValue::String(s) => Cow::Borrowed(s.as_bytes()),
@@ -337,9 +365,7 @@ impl IndexValue {
         Ok(())
     }
 
-    pub(crate) fn deserialize(
-        bytes: &[u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    pub(crate) fn deserialize(bytes: &[u8]) -> Result<Self> {
         let type_prefix = bytes[0];
         let value = &bytes[1..];
         let value = match type_prefix {
@@ -348,11 +374,11 @@ impl IndexValue {
             BYTE_BOOLEAN => IndexValue::Boolean(match value[0] {
                 0x00 => false,
                 0x01 => true,
-                _ => return Err("invalid boolean value".into()),
+                b => return Err(RecordError::InvalidBooleanByte { b }),
             }),
             BYTE_BYTES => IndexValue::Bytes(value.to_vec()),
             BYTE_NULL => IndexValue::Null,
-            _ => return Err("invalid index value".into()),
+            b => return Err(RecordError::InvalidTypePrefix { b }),
         };
 
         Ok(value)
