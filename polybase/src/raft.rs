@@ -1,24 +1,40 @@
 use async_trait::async_trait;
 use bincode::{deserialize, serialize};
 use rand::Rng;
-use rmqtt_raft::{
-    Config as RaftConfig, Error as RaftError, Mailbox, Raft as RmqttRaft, Result as RaftResult,
-    Store as RaftStore,
-};
+use rmqtt_raft::{Config as RaftConfig, Mailbox, Raft as RmqttRaft, Store as RmqttRaftStore};
 use serde::{Deserialize, Serialize};
 use slog::{debug, info};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::db::{self, Db};
 
-pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync + 'static>>;
+#[derive(Debug, thiserror::Error)]
+pub enum RaftError {
+    #[error("raft error: {0}")]
+    Raft(#[source] rmqtt_raft::Error),
+
+    #[error("db error: {0}")]
+    Db(db::DbError),
+
+    #[error("serializer error: {0}")]
+    Serializer(#[source] bincode::Error),
+
+    #[error("sync receive error: {0}")]
+    SyncReceive(#[from] tokio::sync::watch::error::RecvError),
+
+    #[error("sync send error: {0}")]
+    SyncSend(#[from] tokio::sync::watch::error::SendError<usize>),
+}
+
+pub type Result<T> = std::result::Result<T, RaftError>;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub enum RaftMessage {
     // Basically just a proxy to the db.call() but using Raft ensures that all
-    // calls are processed in order
+    // calls are processed in the same order on all nodes
     Call {
         collection_id: String,
         function_name: String,
@@ -28,22 +44,19 @@ pub enum RaftMessage {
     },
     // Commit a set of txns
     Commit {
-        // This is the key of the last record change that should be included in
-        // the commit. This allows us to keep receiving changes while we are
-        // comitting.
-        key: [u8; 32],
         // commit_id ensures that we don't commit too often. As any node in the
         // cluster can send a commit message, it is possible that we receive
         // multiple commit messages for the same interval.
         commit_id: usize,
-        // We track last commit time so we can determine if a commit message
-        // sent to the cluster has been invalidated by an earlier commit (i.e.
-        // this prevents over committing due to race conditions)
-        // last_commit_id: u64,
     },
     Get {
         id: String,
     },
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct RaftCallResponse {
+    commit_id: usize,
 }
 
 // Main raft with public impl, we also watch this struct for
@@ -65,7 +78,7 @@ struct RaftShared {
 
 // Annoyingly, we cannot reuse RaftShared as we only get access to mailbox
 // after RmqttRaft::new returns, but RaftConnector still needs access to db/state
-// and we can't wrap in an Arc otherwise we cannot adhere to the RaftStore trait
+// and we can't wrap in an Arc otherwise it won't adhere to the RaftStore trait
 struct RaftConnector {
     db: Arc<Db>,
     logger: slog::Logger,
@@ -81,6 +94,7 @@ struct RaftState {
     commit_id: Option<usize>,
     timer: Instant,
     shutdown: bool,
+    watcher: (watch::Sender<usize>, watch::Receiver<usize>),
 }
 
 impl Drop for Raft {
@@ -109,6 +123,7 @@ impl Raft {
                 commit_id: None,
                 shutdown: false,
                 timer: Instant::now(),
+                watcher: watch::channel(0),
             }),
         });
 
@@ -137,8 +152,8 @@ impl Raft {
         (Self { shared }, handle)
     }
 
-    // Proxy call() to Raft so that all nodes apply .call()
-    // in the same order
+    // Proxy call() to Raft so that all nodes apply .call() in the same order. We need to await
+    // the commit before responding to the caller
     pub async fn call<'a>(
         &self,
         collection_id: String,
@@ -147,6 +162,11 @@ impl Raft {
         args: Vec<indexer::RecordValue>,
         auth: Option<&indexer::AuthUser>,
     ) -> Result<()> {
+        debug!(
+            self.shared.logger,
+            "received call: {collection_id}/{record_id}, {function_name}()"
+        );
+
         let message = RaftMessage::Call {
             collection_id,
             function_name: function_name.to_string(),
@@ -155,10 +175,13 @@ impl Raft {
             auth: auth.cloned(),
         };
 
-        debug!(self.shared.logger, "sending message");
-
         let message = serialize(&message).unwrap();
-        self.shared.mailbox.send(message).await?;
+        let resp = self.shared.mailbox.send(message).await?;
+        let resp: RaftCallResponse = deserialize(&resp)?;
+
+        // Wait for the commit to be applied
+        self.shared.shared.wait_for_commit(resp.commit_id).await;
+
         Ok(())
     }
 }
@@ -166,7 +189,7 @@ impl Raft {
 impl RaftShared {
     // Determine if we should send a commit message to the cluster. Any node
     // in the cluster can send a commit message to the cluster, and out of
-    // date commit messages will be ignored.
+    // date commit messages (commit_id <= highest seen) will be ignored.
     async fn send_commit(&self) {
         let current_commit_id = self.shared.commit_id();
 
@@ -180,22 +203,21 @@ impl RaftShared {
             }
         }
 
+        // Check if an external commit has been received during the sleep
         if current_commit_id != self.shared.commit_id() {
-            // An external commit has been received during the sleep
             return;
         }
 
         // Only send a commit if we've received a txn since the last commit
-        if let Some(last_key) = self.db.last_record_id() {
+        if self.db.last_record_id().is_some() {
             let message = RaftMessage::Commit {
-                key: last_key,
                 commit_id: current_commit_id + 1,
             };
             let message = serialize(&message).unwrap();
             match self.mailbox.send(message).await {
                 Ok(_) => {}
                 Err(e) => {
-                    error!(self.logger, "error sending commit message: {:?}", e);
+                    error!(self.logger, "error sending commit message: {e:?}");
                 }
             }
         }
@@ -203,7 +225,7 @@ impl RaftShared {
 }
 
 impl RaftSharedState {
-    fn receive_commit(&self, commit_id: usize) -> bool {
+    fn start_commit(&self, commit_id: usize) -> bool {
         let mut state = self.state.lock().unwrap();
 
         // Last commit exists and has been invalidated
@@ -213,7 +235,7 @@ impl RaftSharedState {
             }
         }
 
-        // Update the commit time
+        // Update the commit id now, to prevent other commits being accepted
         state.commit_id = Some(commit_id);
 
         // Reset timer, so we can calculate time since last commit to determine
@@ -221,6 +243,12 @@ impl RaftSharedState {
         state.timer = Instant::now();
 
         true
+    }
+
+    fn end_commit(&self) -> Result<()> {
+        let state = self.state.lock().unwrap();
+        let tx = &state.watcher.0;
+        Ok(tx.send(state.commit_id.unwrap_or(0))?)
     }
 
     fn get_next_interval(&self) -> Option<Duration> {
@@ -245,6 +273,33 @@ impl RaftSharedState {
         state.commit_id.unwrap_or(0)
     }
 
+    fn receiver(&self) -> watch::Receiver<usize> {
+        let state = self.state.lock().unwrap();
+        state.watcher.1.clone()
+    }
+
+    async fn wait_for_commit(&self, commit_id: usize) {
+        let state_commit_id = self.commit_id();
+
+        // Check if we already have completed the commit
+        // TODO: we may need to track received_commit_id and commit_id
+        // so we only release this wait when the commit has been applied.
+        if state_commit_id > commit_id {
+            return;
+        };
+
+        // Clone a new receiver
+        let mut rx = self.receiver();
+
+        // Wait for the commit to complete
+        while rx.changed().await.is_ok() {
+            let committed = rx.borrow();
+            if *committed > commit_id {
+                return;
+            }
+        }
+    }
+
     fn is_shutdown(&self) -> bool {
         let state = self.state.lock().unwrap();
         state.shutdown
@@ -252,11 +307,11 @@ impl RaftSharedState {
 }
 
 #[async_trait]
-impl RaftStore for RaftConnector {
+impl RmqttRaftStore for RaftConnector {
     // Apply the actual changes to the database, apply is guaranteed to
     // be called in order on all nodes. This is first called on the leader
     // node and if it succeeds, it is called on all other nodes.
-    async fn apply(&mut self, message: &[u8]) -> RaftResult<Vec<u8>> {
+    async fn apply(&mut self, message: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
         let db = self.db.clone();
         let message: RaftMessage = deserialize(message).unwrap();
         match message {
@@ -269,55 +324,67 @@ impl RaftStore for RaftConnector {
             } => {
                 let auth = auth.as_ref();
 
+                debug!(
+                    self.logger,
+                    "apply call: {collection_id}/{record_id}, {function_name}()"
+                );
+
                 db.call(collection_id, &function_name, record_id, args, auth)
                     .await?;
 
-                Ok(Vec::new())
+                let commit_id = self.shared.commit_id();
+                let resp = serialize(&RaftCallResponse { commit_id })?;
+
+                Ok(resp)
             }
-            RaftMessage::Commit { key, commit_id } => {
-                if !self.shared.receive_commit(commit_id) {
-                    debug!(self.logger, "Invalid commit: {}", &commit_id);
+            RaftMessage::Commit { commit_id } => {
+                let key = self.db.last_record_id();
+
+                // Check if we have any changes to commit
+                if key.is_none() {
+                    debug!(self.logger, "no changes to commit: {commit_id}");
                     return Ok(Vec::new());
                 }
 
-                info!(self.logger, "Committing: {}", &commit_id);
+                // Now safe to unwrap the key
+                let key = key.unwrap();
+
+                if !self.shared.start_commit(commit_id) {
+                    debug!(self.logger, "commit is out of date: {commit_id}");
+                    return Ok(Vec::new());
+                }
+
+                let timer = Instant::now();
+
+                info!(self.logger, "commit started: {commit_id}");
 
                 // Send commit to DB
                 self.db.commit(key).await?;
 
+                // Finalise the commit, and notify all call waiters
+                self.shared.end_commit()?;
+
+                info!(self.logger, "commit ended: {commit_id}"; "time" => timer.elapsed().as_millis());
+
+                // No resp needed for commit
                 Ok(Vec::new())
             }
             _ => Ok(Vec::new()),
         }
     }
 
-    async fn query(&self, query: &[u8]) -> RaftResult<Vec<u8>> {
-        // let query: RaftMessage = deserialize(query).unwrap();
-        // let data: Vec<u8> = match query {
-        //     RaftMessage::Get { key } => {
-        //         if let Some(val) = self.get(&key) {
-        //             serialize(&val).unwrap()
-        //         } else {
-        //             Vec::new()
-        //         }
-        //     }
-        //     _ => Vec::new(),
-        // };
-        // Ok(data)
+    // TODO
+    async fn query(&self, query: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
         Ok(Vec::new())
     }
 
     // TODO
-    async fn snapshot(&self) -> RaftResult<Vec<u8>> {
-        // Ok(serialize(&self.cache.read().unwrap().clone())?)
+    async fn snapshot(&self) -> rmqtt_raft::Result<Vec<u8>> {
         Ok(Vec::new())
     }
 
     // TODO
-    async fn restore(&mut self, snapshot: &[u8]) -> RaftResult<()> {
-        // let new: HashMap<String, String> = deserialize(snapshot).unwrap();
-        // let mut db = self.cache.write().unwrap();
-        // let _ = std::mem::replace(&mut *db, new);
+    async fn restore(&mut self, snapshot: &[u8]) -> rmqtt_raft::Result<()> {
         Ok(())
     }
 }
@@ -342,12 +409,39 @@ async fn raft_init_setup(raft: RmqttRaft<RaftConnector>, peers: Vec<String>, log
 async fn commit_interval(shared: Arc<RaftShared>) {
     while !shared.shared.is_shutdown() {
         shared.send_commit().await;
-        // tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
-impl From<db::DbError> for RaftError {
+impl From<db::DbError> for rmqtt_raft::Error {
     fn from(e: db::DbError) -> Self {
         Self::Other(Box::new(e))
+    }
+}
+
+impl From<RaftError> for rmqtt_raft::Error {
+    fn from(e: RaftError) -> Self {
+        Self::Other(Box::new(e))
+    }
+}
+
+impl From<bincode::Error> for RaftError {
+    fn from(e: bincode::Error) -> Self {
+        Self::Serializer(e)
+    }
+}
+
+impl From<rmqtt_raft::Error> for RaftError {
+    fn from(e: rmqtt_raft::Error) -> Self {
+        match e {
+            // Unwrap Other error, as it may contain a RaftError (because we are forced to wrap the
+            // error in RmqttRaftStore)
+            rmqtt_raft::Error::Other(e) => match e.downcast_ref::<RaftError>() {
+                Some(_) => *e.downcast::<RaftError>().unwrap(),
+                None => Self::Raft(rmqtt_raft::Error::Other(e)),
+            },
+
+            // Other rqmtt_raft::Error types can be passed through directly
+            _ => Self::Raft(e),
+        }
     }
 }
