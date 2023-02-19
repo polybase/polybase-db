@@ -2,7 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use gateway::{Change, Gateway};
-use indexer::{validate_schema_change, Indexer, RecordRoot, RecordValue};
+use indexer::{validate_schema_change, Indexer, RecordRoot};
 
 use crate::hash;
 use crate::pending::{PendingQueue, PendingQueueError};
@@ -101,12 +101,12 @@ impl Db {
         };
 
         // Update the indexer
-        // match collection.delete(record_id.clone()).await {
-        //     Ok(_) => {}
-        //     Err(e) => {
-        //         return Err(DbError::IndexerUpdateError(e));
-        //     }
-        // }
+        match collection.delete(record_id.clone()).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(DbError::IndexerUpdateError(e));
+            }
+        }
 
         // Remove from rollup
         match self.rollup.delete(key) {
@@ -180,7 +180,18 @@ impl Db {
             let k = get_key(collection_id, record_id);
 
             // Check if we are updating collection schema
-            if collection_id == "Collection" {}
+            if let Change::Update {
+                collection_id,
+                record_id,
+                record,
+                ..
+            } = &change
+            {
+                if collection_id == "Collection" {
+                    self.validate_schema_update(collection_id, record_id, record, auth)
+                        .await?;
+                }
+            }
 
             match self.pending.insert(k, change) {
                 Ok(_) => {}
