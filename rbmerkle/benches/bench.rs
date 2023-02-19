@@ -18,7 +18,7 @@ fn insert_with_hash() {
     let mut tree: RedBlackTree<i32, Rp64_256> = RedBlackTree::new();
     let hash = h(0);
     for i in 0..10000 {
-        tree.insert(i,hash);
+        tree.insert(i, hash);
     }
     tree.root_hash();
 }
