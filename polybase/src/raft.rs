@@ -68,7 +68,7 @@ struct RaftShared {
 // and we can't wrap in an Arc otherwise we cannot adhere to the RaftStore trait
 struct RaftConnector {
     db: Arc<Db>,
-    // logger: slog::Logger,
+    logger: slog::Logger,
     shared: Arc<RaftSharedState>,
 }
 
@@ -114,7 +114,7 @@ impl Raft {
 
         let connector = RaftConnector {
             db: db.clone(),
-            // logger: logger.clone(),
+            logger: logger.clone(),
             shared: Arc::clone(&shared),
         };
 
@@ -276,8 +276,11 @@ impl RaftStore for RaftConnector {
             }
             RaftMessage::Commit { key, commit_id } => {
                 if !self.shared.receive_commit(commit_id) {
+                    debug!(self.logger, "Invalid commit: {}", &commit_id);
                     return Ok(Vec::new());
                 }
+
+                info!(self.logger, "Committing: {}", &commit_id);
 
                 // Send commit to DB
                 self.db.commit(key).await?;

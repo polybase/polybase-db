@@ -6,7 +6,7 @@ use winter_crypto::{Digest, Hasher};
 use gateway::{Change, Gateway};
 use indexer::{Indexer, RecordRoot, RecordValue};
 
-use crate::pending::{self, PendingQueue, PendingQueueError};
+use crate::pending::{PendingQueue, PendingQueueError};
 use crate::rollup::Rollup;
 
 pub type Result<T> = std::result::Result<T, DbError>;
@@ -73,11 +73,9 @@ impl Db {
                     self.set(key, collection_id, record_id, record).await?;
                 }
                 Change::Delete {
-                    record_id: _,
-                    collection_id: _,
-                } => {
-                    // todo!()
-                }
+                    record_id,
+                    collection_id,
+                } => self.delete(key, collection_id, record_id).await?,
             }
 
             // Commit up until this point
@@ -87,6 +85,29 @@ impl Db {
         }
 
         Ok(())
+    }
+
+    async fn delete(&self, key: [u8; 32], collection_id: String, record_id: String) -> Result<()> {
+        let collection = match self.indexer.collection(collection_id.clone()).await {
+            Ok(collection) => collection,
+            Err(e) => {
+                return Err(DbError::IndexerUpdateError(e));
+            }
+        };
+
+        // Update the indexer
+        // match collection.delete(record_id.clone()).await {
+        //     Ok(_) => {}
+        //     Err(e) => {
+        //         return Err(DbError::IndexerUpdateError(e));
+        //     }
+        // }
+
+        // Remove from rollup
+        match self.rollup.delete(key) {
+            Ok(_) => Ok(()),
+            Err(_) => Err(DbError::RollupError),
+        }
     }
 
     async fn set(
