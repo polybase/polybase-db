@@ -25,8 +25,8 @@ pub type Result<T> = std::result::Result<T, CollectionError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CollectionError {
-    #[error("invalid key type")]
-    InvalidKeyType,
+    #[error("invalid index key")]
+    InvalidCursorKey,
 
     #[error("collection {name} not found")]
     CollectionNotFound { name: String },
@@ -94,6 +94,8 @@ pub enum CollectionError {
     #[error("prost decode error")]
     ProstDecodeError(#[from] prost::DecodeError),
 }
+
+pub enum CollectionUserError {}
 
 static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
     let mut hm = HashMap::new();
@@ -208,7 +210,7 @@ impl Cursor {
     fn new(key: keys::Key<'static>) -> Result<Self> {
         match key {
             keys::Key::Index { .. } => {}
-            _ => return Err(CollectionError::InvalidKeyType),
+            _ => return Err(CollectionError::InvalidCursorKey),
         }
 
         Ok(Self(key))

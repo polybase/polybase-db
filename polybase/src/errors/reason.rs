@@ -52,12 +52,6 @@ pub enum ReasonCode {
     #[display(fmt = "collection/invalid-schema")]
     CollectionInvalidSchema,
 
-    #[display(fmt = "keys/invalid-direction")]
-    KeyInvalidDirection,
-
-    #[display(fmt = "keys/key-path-directions-length")]
-    KeyPathAndDirectionsLengthMismatch,
-
     #[display(fmt = "indexer/query/paths-directions-length")]
     IndexerQueryPathsAndDirectionsLengthMismatch,
 
@@ -90,8 +84,6 @@ impl ReasonCode {
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,
             ReasonCode::CollectionMismatch => ErrorCode::InvalidArgument,
             ReasonCode::CollectionRecordIdNotFound => ErrorCode::NotFound,
-            ReasonCode::KeyInvalidDirection => ErrorCode::InvalidArgument,
-            ReasonCode::KeyPathAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
             ReasonCode::IndexerQueryInequalityNotLast => ErrorCode::InvalidArgument,
             ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
             ReasonCode::Unauthorized => ErrorCode::PermissionDenied,
@@ -130,17 +122,6 @@ impl ReasonCode {
             }
 
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
-        }
-    }
-
-    pub fn from_keys_error(err: &indexer::keys::KeysUserError) -> Self {
-        match err {
-            indexer::keys::KeysUserError::InvalidDirection { .. } => {
-                ReasonCode::KeyInvalidDirection
-            }
-            indexer::keys::KeysUserError::PathAndDirectionsLengthMismatch => {
-                ReasonCode::KeyPathAndDirectionsLengthMismatch
-            }
         }
     }
 
