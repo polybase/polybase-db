@@ -46,12 +46,6 @@ impl std::error::Error for HTTPError {
     }
 }
 
-// impl std::error::Error for actix_web::Error {
-//     fn source(&self) -> Option<&(dyn Error + 'static)> {
-//         self.source.as_ref().map(|e| e.as_ref())
-//     }
-// }
-
 impl actix_web::error::ResponseError for HTTPError {
     fn error_response(&self) -> HttpResponse {
         let error = ErrorOutput {
@@ -111,13 +105,21 @@ impl From<raft::RaftError> for HTTPError {
 impl From<indexer::IndexerError> for HTTPError {
     fn from(err: indexer::IndexerError) -> Self {
         match err {
+            // Keys
             indexer::IndexerError::Keys(e) => match e {
                 indexer::keys::KeysError::UserError(e) => {
                     HTTPError::new(ReasonCode::from_keys_error(&e), Some(Box::new(e)))
                 }
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
-            // TODO: Add indexer specific errors here
+            // WhereQuery
+            indexer::IndexerError::WhereQuery(e) => match e {
+                indexer::where_query::WhereQueryError::UserError(e) => {
+                    HTTPError::new(ReasonCode::from_where_query_error(&e), Some(Box::new(e)))
+                }
+                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            },
+            // Other errors are internal
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }

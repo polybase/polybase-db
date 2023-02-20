@@ -58,6 +58,12 @@ pub enum ReasonCode {
     #[display(fmt = "keys/key-path-directions-length")]
     KeyPathAndDirectionsLengthMismatch,
 
+    #[display(fmt = "indexer/query/paths-directions-length")]
+    IndexerQueryPathsAndDirectionsLengthMismatch,
+
+    #[display(fmt = "indexer/query/inequality-not-last")]
+    IndexerQueryInequalityNotLast,
+
     #[display(fmt = "unauthorized")]
     Unauthorized,
 
@@ -86,6 +92,8 @@ impl ReasonCode {
             ReasonCode::CollectionRecordIdNotFound => ErrorCode::NotFound,
             ReasonCode::KeyInvalidDirection => ErrorCode::InvalidArgument,
             ReasonCode::KeyPathAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
+            ReasonCode::IndexerQueryInequalityNotLast => ErrorCode::InvalidArgument,
+            ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
             ReasonCode::Unauthorized => ErrorCode::PermissionDenied,
             ReasonCode::Internal => ErrorCode::Internal,
         }
@@ -132,6 +140,17 @@ impl ReasonCode {
             }
             indexer::keys::KeysUserError::PathAndDirectionsLengthMismatch => {
                 ReasonCode::KeyPathAndDirectionsLengthMismatch
+            }
+        }
+    }
+
+    pub fn from_where_query_error(err: &indexer::where_query::WhereQueryUserError) -> Self {
+        match err {
+            indexer::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
+                ..
+            } => ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch,
+            indexer::where_query::WhereQueryUserError::InequalityNotLast => {
+                ReasonCode::IndexerQueryInequalityNotLast
             }
         }
     }

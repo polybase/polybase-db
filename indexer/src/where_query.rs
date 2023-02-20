@@ -9,14 +9,20 @@ pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WhereQueryError {
+    #[error(transparent)]
+    UserError(#[from] WhereQueryUserError),
+
+    #[error("keys error")]
+    KeysError(#[from] keys::KeysError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum WhereQueryUserError {
     #[error("paths and directions must have the same length")]
     PathsAndDirectionsLengthMismatch,
 
     #[error("inequality can only be the last condition")]
     InequalityNotLast,
-
-    #[error("keys error")]
-    KeysError(#[from] keys::KeysError),
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
@@ -115,7 +121,7 @@ impl WhereQuery {
         T: for<'other> PartialEq<String> + AsRef<str>,
     {
         if paths.len() != directions.len() {
-            return Err(WhereQueryError::PathsAndDirectionsLengthMismatch);
+            return Err(WhereQueryUserError::PathsAndDirectionsLengthMismatch)?;
         }
 
         let mut lower_values = Vec::<Cow<IndexValue>>::with_capacity(paths.len());
@@ -127,7 +133,7 @@ impl WhereQuery {
         for (path, direction) in paths.iter().zip(directions.iter()) {
             if let Some((_, node)) = self.0.iter().find(|(field_path, _)| *path == field_path.0) {
                 if ineq_found {
-                    return Err(WhereQueryError::InequalityNotLast);
+                    return Err(WhereQueryUserError::InequalityNotLast)?;
                 }
 
                 match node {

@@ -64,6 +64,8 @@ pub enum RecordError {
     SerdeJSONError(#[from] serde_json::Error),
 }
 
+pub enum RecordUserError {}
+
 pub type RecordRoot = HashMap<String, RecordValue>;
 
 pub fn json_to_record(
