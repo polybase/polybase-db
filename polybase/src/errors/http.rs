@@ -105,6 +105,13 @@ impl From<raft::RaftError> for HTTPError {
 impl From<indexer::IndexerError> for HTTPError {
     fn from(err: indexer::IndexerError) -> Self {
         match err {
+            // Collection
+            indexer::IndexerError::Collection(e) => match e {
+                indexer::collection::CollectionError::UserError(e) => {
+                    HTTPError::new(ReasonCode::from_collection_error(&e), Some(Box::new(e)))
+                }
+                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            },
             // WhereQuery
             indexer::IndexerError::WhereQuery(e) => match e {
                 indexer::where_query::WhereQueryError::UserError(e) => {

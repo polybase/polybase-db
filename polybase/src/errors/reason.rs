@@ -52,11 +52,20 @@ pub enum ReasonCode {
     #[display(fmt = "collection/invalid-schema")]
     CollectionInvalidSchema,
 
-    #[display(fmt = "indexer/query/paths-directions-length")]
+    #[display(fmt = "collection/alter-public-key")]
+    CollectionCannotChangeFieldTypeToPublicKey,
+
+    #[display(fmt = "indexer/missing-index")]
+    IndexerMissingIndex,
+
+    #[display(fmt = "indexer/query-paths-directions-length")]
     IndexerQueryPathsAndDirectionsLengthMismatch,
 
-    #[display(fmt = "indexer/query/inequality-not-last")]
+    #[display(fmt = "indexer/query-inequality-not-last")]
     IndexerQueryInequalityNotLast,
+
+    #[display(fmt = "indexer/invalid-cursor")]
+    IndexerInvalidCursorKey,
 
     #[display(fmt = "unauthorized")]
     Unauthorized,
@@ -82,10 +91,13 @@ impl ReasonCode {
             ReasonCode::CollectionIdExists => ErrorCode::AlreadyExists,
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,
+            ReasonCode::CollectionCannotChangeFieldTypeToPublicKey => ErrorCode::InvalidArgument,
+            ReasonCode::IndexerMissingIndex => ErrorCode::FailedPrecondition,
             ReasonCode::CollectionMismatch => ErrorCode::InvalidArgument,
             ReasonCode::CollectionRecordIdNotFound => ErrorCode::NotFound,
             ReasonCode::IndexerQueryInequalityNotLast => ErrorCode::InvalidArgument,
             ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
+            ReasonCode::IndexerInvalidCursorKey => ErrorCode::InvalidArgument,
             ReasonCode::Unauthorized => ErrorCode::PermissionDenied,
             ReasonCode::Internal => ErrorCode::Internal,
         }
@@ -132,6 +144,24 @@ impl ReasonCode {
             } => ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch,
             indexer::where_query::WhereQueryUserError::InequalityNotLast => {
                 ReasonCode::IndexerQueryInequalityNotLast
+            }
+        }
+    }
+
+    pub fn from_collection_error(err: &indexer::collection::CollectionUserError) -> Self {
+        match err {
+            indexer::collection::CollectionUserError::CollectionNotFound { .. } => {
+                ReasonCode::CollectionNotFound
+            }
+            indexer::collection::CollectionUserError::CannotChangeFieldTypeToPublicKey {
+                ..
+            } => ReasonCode::CollectionCannotChangeFieldTypeToPublicKey,
+            indexer::collection::CollectionUserError::NoIndexFoundMatchingTheQuery => {
+                ReasonCode::IndexerMissingIndex
+            }
+            indexer::collection::CollectionUserError::UnauthorizedRead => ReasonCode::Unauthorized,
+            indexer::collection::CollectionUserError::InvalidCursorKey => {
+                ReasonCode::IndexerInvalidCursorKey
             }
         }
     }
