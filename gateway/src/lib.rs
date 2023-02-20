@@ -7,32 +7,8 @@ pub type Result<T> = std::result::Result<T, GatewayError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
-    #[error("record {record_id:?} was not found in collection {collection_id:?}")]
-    RecordNotFound {
-        record_id: String,
-        collection_id: String,
-    },
-
-    #[error("collection {collection_id:?} was not found")]
-    CollectionNotFound { collection_id: String },
-
-    #[error("record does not have an ID field")]
-    RecordIdNotFound,
-
-    #[error("record ID field is not a string")]
-    RecordIdNotString,
-
-    #[error("record does not have a collectionId field")]
-    RecordCollectionIdNotFound,
-
-    #[error("record field is not an object")]
-    RecordFieldNotObject,
-
-    #[error("collection mismatch, expected record in collection {expected_collection_id:?}, got {actual_collection_id:?}")]
-    CollectionMismatch {
-        expected_collection_id: String,
-        actual_collection_id: String,
-    },
+    #[error("gateway user error")]
+    UserError(#[from] GatewayUserError),
 
     #[error("collection has no AST")]
     CollectionHasNoAST,
@@ -42,24 +18,6 @@ pub enum GatewayError {
 
     #[error("collection not found in AST")]
     CollectionNotFoundInAST,
-
-    #[error("method {method_name:?} not found in AST of collection {collection_id:?}")]
-    MethodNotFound {
-        method_name: String,
-        collection_id: String,
-    },
-
-    #[error("you do not have permission to call this function")]
-    UnauthorizedCall,
-
-    #[error("incorrect number of arguments, expected {expected:?}, got {actual:?}")]
-    IncorrectNumberOfArguments { expected: usize, actual: usize },
-
-    #[error("record ID was modified")]
-    RecordIDModified,
-
-    #[error("record already exists")]
-    RecordAlreadyExists,
 
     #[error("failed to create a v8 string")]
     FailedToCreateV8String,
@@ -72,6 +30,54 @@ pub enum GatewayError {
 
     #[error("serde_json error")]
     SerdeJsonError(#[from] serde_json::Error),
+}
+
+#[derive(Debug, thiserror::Error, Serialize)]
+pub enum GatewayUserError {
+    #[error("record {record_id:?} was not found in collection {collection_id:?}")]
+    RecordNotFound {
+        record_id: String,
+        collection_id: String,
+    },
+
+    #[error("record ID field is not a string")]
+    RecordIdNotString,
+
+    #[error("record does not have a collectionId field")]
+    RecordCollectionIdNotFound,
+
+    #[error("record field is not an object")]
+    RecordFieldNotObject,
+
+    #[error("record ID was modified")]
+    RecordIDModified,
+
+    #[error("collection {collection_id:?} was not found")]
+    CollectionNotFound { collection_id: String },
+
+    #[error("record id already exists in collection")]
+    CollectionIdExists,
+
+    #[error("record does not have an ID field")]
+    CollectionRecordIdNotFound,
+
+    #[error("collection mismatch, expected record in collection {expected_collection_id:?}, got {actual_collection_id:?}")]
+    CollectionMismatch {
+        expected_collection_id: String,
+        actual_collection_id: String,
+    },
+
+    #[error("method {method_name:?} not found in collection {collection_id:?}")]
+    FunctionNotFound {
+        method_name: String,
+        collection_id: String,
+    },
+
+    #[error("incorrect number of arguments, expected {expected:?}, got {actual:?}")]
+    FunctionIncorrectNumberOfArguments { expected: usize, actual: usize },
+
+    #[error("you do not have permission to call this function")]
+    UnauthorizedCall,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -125,7 +131,7 @@ async fn dereference_args(
             .get(record_id.clone(), auth)
             .await
             .map_err(IndexerError::from)?
-            .ok_or_else(|| GatewayError::RecordNotFound {
+            .ok_or_else(|| GatewayUserError::RecordNotFound {
                 record_id,
                 collection_id: collection.id().to_string(),
             })?;
@@ -169,21 +175,21 @@ async fn dereference_fields(
         };
 
         let Some(RecordValue::IndexValue(IndexValue::String(value))) = map.get("id") else {
-            return Err(GatewayError::RecordIdNotFound);
+            return Err(GatewayUserError::CollectionRecordIdNotFound)?;
         };
 
         let collection = if let polylang::stableast::Type::ForeignRecord(fr) = type_ {
             let Some(RecordValue::IndexValue(IndexValue::String(collection_id))) = map.get("collectionId") else { 
-                return Err(GatewayError::RecordCollectionIdNotFound);
+                return Err(GatewayUserError::RecordCollectionIdNotFound)?;
             };
 
             let foreign_collection_id = collection.namespace().to_string() + "/" + &fr.collection;
 
             if collection_id != &foreign_collection_id {
-                return Err(GatewayError::CollectionMismatch {
+                return Err(GatewayUserError::CollectionMismatch {
                     expected_collection_id: foreign_collection_id,
                     actual_collection_id: collection_id.to_string(),
-                });
+                })?;
             }
 
             Cow::Owned(
@@ -200,7 +206,7 @@ async fn dereference_fields(
             .get(value.to_string(), auth)
             .await
             .map_err(IndexerError::from)?
-            .ok_or(GatewayError::RecordNotFound {
+            .ok_or(GatewayUserError::RecordNotFound {
                 record_id: value.to_string(),
                 collection_id: collection.id().to_string(),
             })?;
@@ -229,27 +235,27 @@ fn reference_records(
             match type_ {
                 polylang::stableast::Type::Record(_) => {
                     let serde_json::Value::Object(o) = value else {
-                        return Err(GatewayError::RecordFieldNotObject);
+                        return Err(GatewayUserError::RecordFieldNotObject)?;
                     };
 
                     let id = o
                         .get("id")
-                        .ok_or(GatewayError::RecordIdNotFound)?
+                        .ok_or(GatewayUserError::CollectionRecordIdNotFound)?
                         .as_str()
-                        .ok_or(GatewayError::RecordIdNotString)?;
+                        .ok_or(GatewayUserError::RecordIdNotString)?;
 
                     return Ok(serde_json::json!({ "id": id }));
                 }
                 polylang::stableast::Type::ForeignRecord(fr) => {
                     let serde_json::Value::Object(o) = value else {
-                        return Err(GatewayError::RecordFieldNotObject);
+                        return Err(GatewayUserError::RecordFieldNotObject)?;
                     };
 
                     let id = o
                         .get("id")
-                        .ok_or(GatewayError::RecordIdNotFound)?
+                        .ok_or(GatewayUserError::CollectionRecordIdNotFound)?
                         .as_str()
-                        .ok_or(GatewayError::RecordIdNotString)?;
+                        .ok_or(GatewayUserError::RecordIdNotString)?;
 
                     let foreign_collection_id =
                         collection_namespace.to_string() + "/" + &fr.collection;
@@ -353,7 +359,7 @@ async fn has_permission_to_call(
                     .get(r.id.clone(), Some(auth))
                     .await
                     .map_err(IndexerError::from)?
-                    .ok_or_else(|| GatewayError::RecordNotFound {
+                    .ok_or_else(|| GatewayUserError::RecordNotFound {
                         record_id: r.id.clone(),
                         collection_id: collection.id().to_string(),
                     })?;
@@ -376,7 +382,7 @@ async fn has_permission_to_call(
                     .get(fr.id.clone(), Some(auth))
                     .await
                     .map_err(IndexerError::from)?
-                    .ok_or_else(|| GatewayError::RecordNotFound {
+                    .ok_or_else(|| GatewayUserError::RecordNotFound {
                         record_id: fr.id.clone(),
                         collection_id: collection.id().to_string(),
                     })?;
@@ -441,11 +447,11 @@ fn get_collection_ast<'a>(
     collection_meta_record: &'a indexer::RecordRoot,
 ) -> Result<polylang::stableast::Collection<'a>> {
     let Some(ast) = collection_meta_record.get("ast") else {
-        return Err(GatewayError::CollectionHasNoAST);
+        return Err(GatewayError::CollectionHasNoAST)?;
     };
 
     let RecordValue::IndexValue(IndexValue::String(ast_str)) = ast else {
-        return Err(GatewayError::CollectionASTNotString);
+        return Err(GatewayError::CollectionASTNotString)?;
     };
 
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast_str)?;
@@ -456,7 +462,7 @@ fn get_collection_ast<'a>(
             None
         }
     }) else {
-        return Err(GatewayError::CollectionNotFoundInAST);
+        return Err(GatewayError::CollectionNotFoundInAST)?;
     };
 
     Ok(collection_ast)
@@ -483,10 +489,10 @@ impl Gateway {
             .map_err(IndexerError::from)?;
 
         let Some(meta) = collection_collection.get(collection.id().to_string(), None).await.map_err(IndexerError::from)? else {
-            return Err(GatewayError::RecordNotFound {
+            return Err(GatewayUserError::RecordNotFound {
                 record_id: collection.id().to_string(),
                 collection_id: collection_collection.id().to_string()
-            });
+            })?;
         };
 
         let collection_ast = get_collection_ast(collection.name(), &meta)?;
@@ -500,10 +506,10 @@ impl Gateway {
                 None
             }
         }) else {
-            return Err(GatewayError::MethodNotFound {
+            return Err(GatewayUserError::FunctionNotFound {
                 method_name: function_name.to_owned(),
                 collection_id: collection.id().to_string()
-            });
+            })?;
         };
 
         let instance_record = if function_name == "constructor" {
@@ -513,7 +519,7 @@ impl Gateway {
                 .get(record_id.clone(), auth)
                 .await
                 .map_err(IndexerError::from)?
-                .ok_or_else(|| GatewayError::RecordNotFound {
+                .ok_or_else(|| GatewayUserError::RecordNotFound {
                     record_id,
                     collection_id: collection.id().to_string(),
                 })?
@@ -529,7 +535,7 @@ impl Gateway {
         )
         .await?
         {
-            return Err(GatewayError::UnauthorizedCall);
+            return Err(GatewayUserError::UnauthorizedCall)?;
         }
 
         let params = method
@@ -541,10 +547,10 @@ impl Gateway {
             })
             .collect::<Vec<_>>();
         if params.len() != args.len() {
-            return Err(GatewayError::IncorrectNumberOfArguments {
+            return Err(GatewayUserError::FunctionIncorrectNumberOfArguments {
                 expected: params.len(),
                 actual: args.len(),
-            });
+            })?;
         }
 
         let args = params
@@ -579,14 +585,14 @@ impl Gateway {
             .map_err(IndexerError::from)?;
 
         if function_name != "constructor" && instance.get("id") != instance_record.get("id") {
-            return Err(GatewayError::RecordIDModified);
+            return Err(GatewayUserError::RecordIDModified)?;
         }
 
         let Some(output_instance_id) = instance.get("id") else {
-            return Err(GatewayError::RecordIdNotFound);
+            return Err(GatewayUserError::CollectionRecordIdNotFound)?;
         };
         let RecordValue::IndexValue(IndexValue::String(output_instance_id)) = output_instance_id else {
-            return Err(GatewayError::RecordIdNotString);
+            return Err(GatewayUserError::RecordIdNotString)?;
         };
 
         let records_to_update = {
@@ -616,7 +622,7 @@ impl Gateway {
                         }
                     })
                     .nth(i) else {
-                    return Err(GatewayError::IncorrectNumberOfArguments {
+                    return Err(GatewayUserError::FunctionIncorrectNumberOfArguments {
                         expected: method
                             .attributes
                             .iter()
@@ -629,36 +635,36 @@ impl Gateway {
                             })
                             .count(),
                         actual: dereferenced_args_len,
-                    });
+                    })?;
                 };
 
                 let Some(record) = (match &parameter.type_ {
                     polylang::stableast::Type::Record(_) => {
                         let Some(output_id) = output_arg.get("id") else {
-                            return Err(GatewayError::RecordIdNotFound);
+                            return Err(GatewayUserError::CollectionRecordIdNotFound)?;
                         };
 
                         if Some(output_id) != input_arg.get("id") {
-                            return Err(GatewayError::RecordIDModified);
+                            return Err(GatewayUserError::RecordIDModified)?;
                         }
 
                         Some(indexer::json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?)
                     },
                     polylang::stableast::Type::ForeignRecord(fr) => {
                         let Some(output_id) = output_arg.get("id") else {
-                            return Err(GatewayError::RecordIdNotFound);
+                            return Err(GatewayUserError::CollectionRecordIdNotFound)?;
                         };
 
                         if Some(output_id) != input_arg.get("id") {
-                            return Err(GatewayError::RecordIDModified);
+                            return Err(GatewayUserError::RecordIDModified)?;
                         }
 
                         let collection_id = collection.namespace().to_string() + "/" + &fr.collection;
 
                         let Some(collection_meta) = collection_collection.get(collection_id.clone(), auth).await.map_err(IndexerError::from)? else {
-                            return Err(GatewayError::CollectionNotFound {
+                            return Err(GatewayUserError::CollectionNotFound {
                                 collection_id: collection_id.clone(),
-                            });
+                            })?;
                         };
 
                         let ast = get_collection_ast(fr.collection.as_ref(), &collection_meta)?;
@@ -683,7 +689,7 @@ impl Gateway {
                 .map_err(IndexerError::from)?
                 .is_some()
             {
-                return Err(GatewayError::RecordAlreadyExists);
+                return Err(GatewayUserError::CollectionIdExists)?;
             }
 
             changes.push(Change::Create {
@@ -701,11 +707,11 @@ impl Gateway {
 
         for record in records_to_update {
             let Some(id) = record.get("id") else {
-                return Err(GatewayError::RecordIdNotFound);
+                return Err(GatewayUserError::CollectionRecordIdNotFound)?;
             };
 
             let RecordValue::IndexValue(IndexValue::String(id)) = id else {
-                return Err(GatewayError::RecordIdNotString);
+                return Err(GatewayUserError::RecordIdNotString)?;
             };
 
             changes.push(Change::Update {

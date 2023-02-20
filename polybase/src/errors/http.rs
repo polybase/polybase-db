@@ -3,7 +3,6 @@ use actix_web::{
     HttpResponse,
 };
 use serde::Serialize;
-use std::backtrace::{self, Backtrace};
 use std::{error::Error, fmt::Display};
 
 use super::reason::ReasonCode;
@@ -12,7 +11,7 @@ use crate::raft::{self};
 
 #[derive(Debug)]
 pub struct HTTPError {
-    reason: ReasonCode,
+    pub reason: ReasonCode,
     source: Option<Box<dyn Error>>,
     // pub backtrace: Backtrace,
 }
@@ -75,23 +74,17 @@ impl actix_web::error::ResponseError for HTTPError {
 impl From<gateway::GatewayError> for HTTPError {
     fn from(err: gateway::GatewayError) -> Self {
         match err {
-            gateway::GatewayError::RecordNotFound {
-                record_id: _,
-                collection_id: _,
-            } => HTTPError::new(ReasonCode::RecordNotFound, Some(Box::new(err))),
-            gateway::GatewayError::CollectionNotFound { collection_id: _ } => {
-                HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
-            }
-            gateway::GatewayError::RecordAlreadyExists => {
-                HTTPError::new(ReasonCode::CollectionIdExists, Some(Box::new(err)))
-            }
-            // gateway::GatewayError::MethodNotFound => {
-            //     HTTPError::new(ReasonCode::MethodNotFound, Some(Box::new(err)))
-            // }
-            // TODO: once we have better errors populated by Indexer/Gateway, we can map
-            // those errors here
+            // We only need to match the user errors
+            gateway::GatewayError::UserError(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
+    }
+}
+
+impl From<gateway::GatewayUserError> for HTTPError {
+    fn from(err: gateway::GatewayUserError) -> Self {
+        let reason = ReasonCode::from_gateway_error(&err);
+        HTTPError::new(reason, Some(Box::new(err)))
     }
 }
 

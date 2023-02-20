@@ -1,4 +1,5 @@
 use super::http::HTTPError;
+use super::reason::ReasonCode;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
     Error,
@@ -76,9 +77,13 @@ where
                                 output = format!("{output}\n  Caused by: {source}");
                                 error = source;
                             }
-                            error!(logger, "Error: {output}");
+                            if err.reason == ReasonCode::Internal {
+                                crit!(logger, "Error: {output}");
+                            } else {
+                                error!(logger, "Error: {output}");
+                            }
                         } else {
-                            error!(logger, "Error: {err:?}");
+                            crit!(logger, "Error: {err:?}");
                         }
                     }
                     Ok(res)
