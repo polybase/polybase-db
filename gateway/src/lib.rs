@@ -697,6 +697,11 @@ impl Gateway {
                 record_id: output_instance_id.to_string(),
                 record: instance,
             });
+        } else if output.self_destruct {
+            changes.push(Change::Delete {
+                collection_id,
+                record_id: output_instance_id.to_string(),
+            });
         } else {
             changes.push(Change::Update {
                 collection_id,

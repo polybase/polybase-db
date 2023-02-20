@@ -10,7 +10,7 @@ use clap::{Parser, ValueEnum};
 #[command(propagate_version = true)]
 pub struct Config {
     /// Root directory where application data is stored
-    #[arg(short, long, env = "ROOT_DIR", default_value = "~/.polybase")]
+    #[arg(short, long, env = "ROOT_DIR", default_value_t = std::env::home_dir().unwrap().join(".polybase").to_str().unwrap().to_owned())]
     pub root_dir: String,
 
     /// Log level

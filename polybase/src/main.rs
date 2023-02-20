@@ -12,11 +12,7 @@ mod pending;
 mod raft;
 mod rollup;
 
-use actix_web::{
-    get,
-    http::StatusCode,
-    post, web, App, HttpResponse, HttpServer, Responder,
-};
+use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::Indexer;
@@ -52,11 +48,37 @@ async fn root() -> impl Responder {
         .body(r#"{ "server": "Polybase", "version": "0.1.0" }"#)
 }
 
+#[derive(Default)]
+struct PrefixedHex([u8; 32]);
+
+impl Serialize for PrefixedHex {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut hex = hex::encode(self.0);
+        hex.insert_str(0, "0x");
+
+        serializer.serialize_str(&hex)
+    }
+}
+
+#[derive(Default, Serialize)]
+struct Block {
+    hash: PrefixedHex,
+}
+
 #[derive(Deserialize)]
 struct GetRecordQuery {
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
     wait_for: Seconds,
+}
+
+#[derive(Serialize)]
+struct GetRecordResponse {
+    data: serde_json::Value,
+    block: Block,
 }
 
 #[get("/{collection}/records/{id}")]
@@ -116,10 +138,11 @@ async fn get_record(
     let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await;
 
     match record {
-        Ok(Some(record)) => Ok(HttpResponse::Ok()
-            .content_type("application/json")
-            .json(indexer::record_to_json(record).unwrap())),
-        Ok(None) => Ok(HttpResponse::NotFound().body("Record not found")),
+        Ok(Some(record)) => Ok(HttpResponse::Ok().json(GetRecordResponse {
+            data: indexer::record_to_json(record)?,
+            block: Default::default(),
+        })),
+        Ok(None) => Err(actix_web::error::ErrorNotFound("record not found").into()),
         Err(e) => Err(e.into()),
     }
 }
@@ -193,7 +216,7 @@ struct ListQuery {
 
 #[derive(Serialize)]
 struct ListResponse {
-    data: Vec<serde_json::Value>,
+    data: Vec<GetRecordResponse>,
     cursor_before: Option<indexer::Cursor>,
     cursor_after: Option<indexer::Cursor>,
 }
@@ -271,7 +294,10 @@ async fn get_records(
             cursor_after: records.last().map(|(c, _)| c.clone()),
             data: records
                 .into_iter()
-                .map(|(_, r)| indexer::record_to_json(r).unwrap())
+                .map(|(_, r)| GetRecordResponse {
+                    data: indexer::record_to_json(r).unwrap(),
+                    block: Default::default(),
+                })
                 .collect(),
         })
     }
@@ -292,7 +318,7 @@ struct FunctionCall {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FunctionResponse {
-    data: HashMap<String, indexer::RecordValue>,
+    data: serde_json::Value,
 }
 
 #[post("/{collection}/records")]
@@ -318,7 +344,9 @@ async fn post_record(
 
     let record = state.db.get(collection_id, record_id).await?.unwrap();
 
-    Ok(web::Json(FunctionResponse { data: record }))
+    Ok(web::Json(FunctionResponse {
+        data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
+    }))
 }
 
 #[post("/{collection}/records/{record}/call/{function}")]
@@ -326,22 +354,31 @@ async fn call_function(
     state: web::Data<RouteState>,
     path: web::Path<(String, String, String)>,
     body: auth::SignedJSON<FunctionCall>,
-) -> Result<impl Responder, Box<dyn std::error::Error>> {
+) -> Result<web::Json<FunctionResponse>, HTTPError> {
     let (collection, record, function) = path.into_inner();
     let auth = body.auth;
-    // let auth = auth.map(|a| a.into());
     let auth = auth.map(indexer::AuthUser::from);
 
     let raft = Arc::clone(&state.raft);
 
-    let res = raft
-        .call(collection, record, function, body.data.args, auth.as_ref())
-        .await;
+    let record_id = raft
+        .call(
+            collection.clone(),
+            function,
+            record,
+            body.data.args,
+            auth.as_ref(),
+        )
+        .await?;
 
-    match res {
-        Ok(_) => Ok(HttpResponse::Ok().body("Function called")),
-        Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
-    }
+    let record = state.db.get(collection, record_id).await?;
+
+    Ok(web::Json(FunctionResponse {
+        data: match record {
+            Some(record) => indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
+            None => serde_json::Value::Null,
+        },
+    }))
 }
 
 #[get("/v0/health")]
@@ -358,13 +395,7 @@ async fn main() -> std::io::Result<()> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let logger = slog::Logger::root(drain, slog_o!("version" => env!("CARGO_PKG_VERSION")));
 
-    let indexer = Arc::new(
-        Indexer::new(format!(
-            "{}/polybase-indexer-data",
-            std::env::temp_dir().to_str().unwrap()
-        ))
-        .unwrap(),
-    );
+    let indexer = Arc::new(Indexer::new(format!("{}/{}", config.root_dir, "indexer")).unwrap());
 
     let db = Arc::new(Db::new(Arc::clone(&indexer)));
 

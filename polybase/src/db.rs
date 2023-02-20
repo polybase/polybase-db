@@ -289,7 +289,7 @@ impl Db {
             serde_json::from_str(old_ast).unwrap(),
             serde_json::from_str(new_ast).unwrap(),
         )
-        .unwrap();
+        .map_err(indexer::IndexerError::from)?;
 
         Ok(())
     }
