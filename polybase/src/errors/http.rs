@@ -32,13 +32,6 @@ impl HTTPError {
     pub fn new(reason: ReasonCode, source: Option<Box<dyn std::error::Error>>) -> HTTPError {
         HTTPError { reason, source }
     }
-
-    pub fn record_not_found() -> HTTPError {
-        HTTPError {
-            reason: ReasonCode::RecordNotFound,
-            source: None,
-        }
-    }
 }
 
 impl Display for HTTPError {
