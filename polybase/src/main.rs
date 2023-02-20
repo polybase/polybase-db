@@ -15,7 +15,6 @@ mod rollup;
 use actix_web::{
     get,
     http::StatusCode,
-    middleware::{ErrorHandlerResponse, ErrorHandlers},
     post, web, App, HttpResponse, HttpServer, Responder,
 };
 use clap::Parser;
@@ -384,7 +383,6 @@ async fn main() -> std::io::Result<()> {
                 logger: logger.clone(),
             }))
             .wrap(SlogMiddleware::new(logger.clone()))
-            // .wrap(ErrorHandlers::new().default_handler(|res| actix_error_middleware(logger, res)))
             .service(root)
             .service(
                 web::scope("/v0/collections")

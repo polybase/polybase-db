@@ -22,6 +22,9 @@ pub enum ReasonCode {
     #[display(fmt = "function/invalid-call")]
     FunctionInvalidCall,
 
+    #[display(fmt = "collection/method-not-found")]
+    CollectionMethodNotFound,
+
     #[display(fmt = "collection/not-found")]
     CollectionNotFound,
 
@@ -48,6 +51,7 @@ impl ReasonCode {
             ReasonCode::FunctionInvalidArgs => ErrorCode::InvalidArgument,
             ReasonCode::FunctionInvalidCall => ErrorCode::InvalidArgument,
             ReasonCode::CollectionNotFound => ErrorCode::NotFound,
+            ReasonCode::CollectionMethodNotFound => ErrorCode::NotFound,
             ReasonCode::CollectionIdExists => ErrorCode::AlreadyExists,
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,

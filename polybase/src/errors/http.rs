@@ -2,8 +2,8 @@ use actix_web::{
     http::{header::ContentType, StatusCode},
     HttpResponse,
 };
-
 use serde::Serialize;
+use std::backtrace::{self, Backtrace};
 use std::{error::Error, fmt::Display};
 
 use super::reason::ReasonCode;
@@ -14,6 +14,7 @@ use crate::raft::{self};
 pub struct HTTPError {
     reason: ReasonCode,
     source: Option<Box<dyn Error>>,
+    // pub backtrace: Backtrace,
 }
 
 #[derive(Serialize)]
@@ -71,12 +72,37 @@ impl actix_web::error::ResponseError for HTTPError {
     }
 }
 
+impl From<gateway::GatewayError> for HTTPError {
+    fn from(err: gateway::GatewayError) -> Self {
+        match err {
+            gateway::GatewayError::RecordNotFound {
+                record_id: _,
+                collection_id: _,
+            } => HTTPError::new(ReasonCode::RecordNotFound, Some(Box::new(err))),
+            gateway::GatewayError::CollectionNotFound { collection_id: _ } => {
+                HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
+            }
+            gateway::GatewayError::RecordAlreadyExists => {
+                HTTPError::new(ReasonCode::CollectionIdExists, Some(Box::new(err)))
+            }
+            // gateway::GatewayError::MethodNotFound => {
+            //     HTTPError::new(ReasonCode::MethodNotFound, Some(Box::new(err)))
+            // }
+            // TODO: once we have better errors populated by Indexer/Gateway, we can map
+            // those errors here
+            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+        }
+    }
+}
+
 impl From<db::DbError> for HTTPError {
     fn from(err: db::DbError) -> Self {
         match err {
             db::DbError::CollectionNotFound => {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
+            // Fwd the gateway error
+            db::DbError::GatewayError(e) => e.into(),
             // TODO: once we have better errors populated by Indexer/Gateway, we can map
             // those errors here
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
