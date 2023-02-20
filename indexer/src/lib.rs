@@ -2,7 +2,7 @@ use std::path::Path;
 
 mod collection;
 mod index;
-mod keys;
+pub mod keys;
 mod proto;
 mod publickey;
 mod record;

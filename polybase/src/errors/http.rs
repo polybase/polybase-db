@@ -83,8 +83,7 @@ impl From<gateway::GatewayError> for HTTPError {
 
 impl From<gateway::GatewayUserError> for HTTPError {
     fn from(err: gateway::GatewayUserError) -> Self {
-        let reason = ReasonCode::from_gateway_error(&err);
-        HTTPError::new(reason, Some(Box::new(err)))
+        HTTPError::new(ReasonCode::from_gateway_error(&err), Some(Box::new(err)))
     }
 }
 
@@ -94,10 +93,7 @@ impl From<db::DbError> for HTTPError {
             db::DbError::CollectionNotFound => {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
-            // Fwd the gateway error
             db::DbError::GatewayError(e) => e.into(),
-            // TODO: once we have better errors populated by Indexer/Gateway, we can map
-            // those errors here
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
@@ -107,8 +103,21 @@ impl From<raft::RaftError> for HTTPError {
     fn from(err: raft::RaftError) -> Self {
         match err {
             raft::RaftError::Db(e) => e.into(),
-            // TODO: once we have better errors populated by Indexer/Gateway, we can map
-            // those errors here
+            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+        }
+    }
+}
+
+impl From<indexer::IndexerError> for HTTPError {
+    fn from(err: indexer::IndexerError) -> Self {
+        match err {
+            indexer::IndexerError::Keys(e) => match e {
+                indexer::keys::KeysError::UserError(e) => {
+                    HTTPError::new(ReasonCode::from_keys_error(&e), Some(Box::new(e)))
+                }
+                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            },
+            // TODO: Add indexer specific errors here
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }

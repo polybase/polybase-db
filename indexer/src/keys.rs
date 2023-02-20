@@ -12,14 +12,8 @@ pub type Result<T> = std::result::Result<T, KeysError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeysError {
-    #[error("invalid direction byte {n}")]
-    InvalidDirection { n: u8 },
-
-    #[error("path and directions must be the same length")]
-    PathAndDirectionsLengthMismatch,
-
-    #[error("record is missing fields: {fields:?}")]
-    RecordIsMissingFields { fields: Vec<String> },
+    #[error("user error")]
+    UserError(#[from] KeysUserError),
 
     #[error("invalid key type byte {n}")]
     InvalidKeyType { n: u8 },
@@ -35,6 +29,18 @@ pub enum KeysError {
 
     #[error("CID error")]
     CIDError(#[from] cid::Error),
+
+    #[error("record is missing fields: {fields:?}")]
+    RecordIsMissingFields { fields: Vec<String> },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum KeysUserError {
+    #[error("invalid direction byte {n}")]
+    InvalidDirection { n: u8 },
+
+    #[error("path and directions must be the same length")]
+    PathAndDirectionsLengthMismatch,
 }
 
 const MULTICODEC_PROTOBUF: u64 = 0x50;
@@ -373,7 +379,7 @@ impl TryFrom<u8> for Direction {
         match d {
             0x00 => Ok(Direction::Ascending),
             0x01 => Ok(Direction::Descending),
-            _ => Err(KeysError::InvalidDirection { n: d }),
+            _ => Err(KeysUserError::InvalidDirection { n: d })?,
         }
     }
 }
@@ -388,7 +394,7 @@ where
     T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
 {
     if paths.len() != directions.len() {
-        return Err(KeysError::PathAndDirectionsLengthMismatch);
+        return Err(KeysUserError::PathAndDirectionsLengthMismatch)?;
     }
 
     let mut found_values = vec![];
@@ -424,7 +430,7 @@ where
                     s
                 })
                 .collect::<Vec<_>>(),
-        });
+        })?;
     }
 
     found_values.sort_by(|(p1, _), (p2, _)| {

@@ -52,6 +52,12 @@ pub enum ReasonCode {
     #[display(fmt = "collection/invalid-schema")]
     CollectionInvalidSchema,
 
+    #[display(fmt = "keys/invalid-direction")]
+    KeyInvalidDirection,
+
+    #[display(fmt = "keys/key-path-directions-length")]
+    KeyPathAndDirectionsLengthMismatch,
+
     #[display(fmt = "unauthorized")]
     Unauthorized,
 
@@ -78,6 +84,8 @@ impl ReasonCode {
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,
             ReasonCode::CollectionMismatch => ErrorCode::InvalidArgument,
             ReasonCode::CollectionRecordIdNotFound => ErrorCode::NotFound,
+            ReasonCode::KeyInvalidDirection => ErrorCode::InvalidArgument,
+            ReasonCode::KeyPathAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
             ReasonCode::Unauthorized => ErrorCode::PermissionDenied,
             ReasonCode::Internal => ErrorCode::Internal,
         }
@@ -114,6 +122,17 @@ impl ReasonCode {
             }
 
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
+        }
+    }
+
+    pub fn from_keys_error(err: &indexer::keys::KeysUserError) -> Self {
+        match err {
+            indexer::keys::KeysUserError::InvalidDirection { .. } => {
+                ReasonCode::KeyInvalidDirection
+            }
+            indexer::keys::KeysUserError::PathAndDirectionsLengthMismatch => {
+                ReasonCode::KeyPathAndDirectionsLengthMismatch
+            }
         }
     }
 }
