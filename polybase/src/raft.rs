@@ -13,19 +13,19 @@ use crate::db::{self, Db};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RaftError {
-    #[error("raft error: {0}")]
+    #[error("rmqtt error")]
     Raft(#[source] rmqtt_raft::Error),
 
-    #[error("raft db error")]
+    #[error(transparent)]
     Db(#[from] db::DbError),
 
-    #[error("serializer error: {0}")]
-    Serializer(#[source] serde_json::Error),
+    #[error("serializer error")]
+    Serializer(#[from] serde_json::Error),
 
-    #[error("sync receive error: {0}")]
+    #[error("sync receive error")]
     SyncReceive(#[from] tokio::sync::watch::error::RecvError),
 
-    #[error("sync send error: {0}")]
+    #[error("sync send error")]
     SyncSend(#[from] tokio::sync::watch::error::SendError<usize>),
 }
 
@@ -166,6 +166,18 @@ impl Raft {
             "received call: {collection_id}/{record_id}, {function_name}()"
         );
 
+        // Call gateway
+        self.shared
+            .db
+            .validate_call(
+                collection_id.clone(),
+                function_name.as_str(),
+                record_id.clone(),
+                args.clone(),
+                auth,
+            )
+            .await?;
+
         let message = RaftMessage::Call {
             collection_id,
             function_name: function_name.to_string(),
@@ -174,7 +186,7 @@ impl Raft {
             auth: auth.cloned(),
         };
 
-        let message = serde_json::to_vec(&message).unwrap();
+        let message = serde_json::to_vec(&message)?;
         let resp = self.shared.mailbox.send(message).await?;
         let resp: RaftCallResponse = serde_json::from_slice(&resp)?;
 
@@ -425,12 +437,6 @@ impl From<db::DbError> for rmqtt_raft::Error {
 impl From<RaftError> for rmqtt_raft::Error {
     fn from(e: RaftError) -> Self {
         Self::Other(Box::new(e))
-    }
-}
-
-impl From<serde_json::Error> for RaftError {
-    fn from(e: serde_json::Error) -> Self {
-        Self::Serializer(e)
     }
 }
 

@@ -2,7 +2,6 @@ use actix_web::{
     http::{header::ContentType, StatusCode},
     HttpResponse,
 };
-
 use serde::Serialize;
 use std::{error::Error, fmt::Display};
 
@@ -12,8 +11,9 @@ use crate::raft::{self};
 
 #[derive(Debug)]
 pub struct HTTPError {
-    reason: ReasonCode,
+    pub reason: ReasonCode,
     source: Option<Box<dyn Error>>,
+    // pub backtrace: Backtrace,
 }
 
 #[derive(Serialize)]
@@ -46,12 +46,6 @@ impl std::error::Error for HTTPError {
     }
 }
 
-// impl std::error::Error for actix_web::Error {
-//     fn source(&self) -> Option<&(dyn Error + 'static)> {
-//         self.source.as_ref().map(|e| e.as_ref())
-//     }
-// }
-
 impl actix_web::error::ResponseError for HTTPError {
     fn error_response(&self) -> HttpResponse {
         let error = ErrorOutput {
@@ -71,14 +65,29 @@ impl actix_web::error::ResponseError for HTTPError {
     }
 }
 
+impl From<gateway::GatewayError> for HTTPError {
+    fn from(err: gateway::GatewayError) -> Self {
+        match err {
+            // We only need to match the user errors
+            gateway::GatewayError::UserError(e) => e.into(),
+            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+        }
+    }
+}
+
+impl From<gateway::GatewayUserError> for HTTPError {
+    fn from(err: gateway::GatewayUserError) -> Self {
+        HTTPError::new(ReasonCode::from_gateway_error(&err), Some(Box::new(err)))
+    }
+}
+
 impl From<db::DbError> for HTTPError {
     fn from(err: db::DbError) -> Self {
         match err {
             db::DbError::CollectionNotFound => {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
-            // TODO: once we have better errors populated by Indexer/Gateway, we can map
-            // those errors here
+            db::DbError::GatewayError(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
@@ -88,8 +97,49 @@ impl From<raft::RaftError> for HTTPError {
     fn from(err: raft::RaftError) -> Self {
         match err {
             raft::RaftError::Db(e) => e.into(),
-            // TODO: once we have better errors populated by Indexer/Gateway, we can map
-            // those errors here
+            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+        }
+    }
+}
+
+impl From<indexer::collection::CollectionError> for HTTPError {
+    fn from(err: indexer::collection::CollectionError) -> Self {
+        match err {
+            indexer::collection::CollectionError::UserError(e) => e.into(),
+            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+        }
+    }
+}
+
+impl From<indexer::collection::CollectionUserError> for HTTPError {
+    fn from(err: indexer::collection::CollectionUserError) -> Self {
+        HTTPError::new(ReasonCode::from_collection_error(&err), Some(Box::new(err)))
+    }
+}
+
+impl From<indexer::where_query::WhereQueryUserError> for HTTPError {
+    fn from(err: indexer::where_query::WhereQueryUserError) -> Self {
+        HTTPError::new(
+            ReasonCode::from_where_query_error(&err),
+            Some(Box::new(err)),
+        )
+    }
+}
+
+impl From<indexer::IndexerError> for HTTPError {
+    fn from(err: indexer::IndexerError) -> Self {
+        match err {
+            // Collection
+            indexer::IndexerError::Collection(e) => match e {
+                indexer::collection::CollectionError::UserError(e) => e.into(),
+                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            },
+            // WhereQuery
+            indexer::IndexerError::WhereQuery(e) => match e {
+                indexer::where_query::WhereQueryError::UserError(e) => e.into(),
+                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            },
+            // Other errors are internal
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }

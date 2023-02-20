@@ -25,17 +25,11 @@ pub type Result<T> = std::result::Result<T, CollectionError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CollectionError {
-    #[error("invalid key type")]
-    InvalidKeyType,
-
-    #[error("collection {name} not found")]
-    CollectionNotFound { name: String },
+    #[error(transparent)]
+    UserError(#[from] CollectionUserError),
 
     #[error("collection {name} not found in AST")]
     CollectionNotFoundInAST { name: String },
-
-    #[error("cannot change type of field {path:?} to PublicKey. First, delete the field and then add it back with the new type.")]
-    CannotChangeFieldTypeToPublicKey { path: Vec<String> },
 
     #[error("collection record ID is not a string")]
     CollectionRecordIDIsNotAString,
@@ -64,12 +58,6 @@ pub enum CollectionError {
     #[error("record is missing ID field")]
     RecordMissingID,
 
-    #[error("unauthorized read")]
-    UnauthorizedRead,
-
-    #[error("no index found matching the query")]
-    NoIndexFoundMatchingTheQuery,
-
     #[error("keys error")]
     KeysError(#[from] keys::KeysError),
 
@@ -93,6 +81,24 @@ pub enum CollectionError {
 
     #[error("prost decode error")]
     ProstDecodeError(#[from] prost::DecodeError),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum CollectionUserError {
+    #[error("collection {name} not found")]
+    CollectionNotFound { name: String },
+
+    #[error("cannot change type of field {path:?} to PublicKey. First, delete the field and then add it back with the new type.")]
+    CannotChangeFieldTypeToPublicKey { path: Vec<String> },
+
+    #[error("no index found matching the query")]
+    NoIndexFoundMatchingTheQuery,
+
+    #[error("unauthorized read")]
+    UnauthorizedRead,
+
+    #[error("invalid index key")]
+    InvalidCursorKey,
 }
 
 static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
@@ -208,7 +214,7 @@ impl Cursor {
     fn new(key: keys::Key<'static>) -> Result<Self> {
         match key {
             keys::Key::Index { .. } => {}
-            _ => return Err(CollectionError::InvalidKeyType),
+            _ => return Err(CollectionUserError::InvalidCursorKey)?,
         }
 
         Ok(Self(key))
@@ -295,9 +301,9 @@ pub fn validate_schema_change(
             continue;
         }
 
-        return Err(CollectionError::CannotChangeFieldTypeToPublicKey {
+        return Err(CollectionUserError::CannotChangeFieldTypeToPublicKey {
             path: path.iter().map(|s| (*s).to_owned()).collect(),
-        });
+        })?;
     }
 
     Ok(())
@@ -337,7 +343,7 @@ impl<'a> Collection<'a> {
         }
 
         let Some(record) = collection_collection.get(id.clone(), None).await? else {
-            return Err(CollectionError::CollectionNotFound { name: id });
+            return Err(CollectionUserError::CollectionNotFound { name: id })?;
         };
 
         let id = match record.get("id") {
@@ -717,7 +723,9 @@ impl<'a> Collection<'a> {
         let collection_before = if self.collection_id == "Collection" {
             match Collection::load(self.store, id.clone()).await {
                 Ok(c) => Some(c),
-                Err(CollectionError::CollectionNotFound { .. }) => None,
+                Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
+                    ..
+                })) => None,
                 Err(err) => return Err(err),
             }
         } else {
@@ -771,7 +779,7 @@ impl<'a> Collection<'a> {
         };
 
         if !self.user_can_read(&value, &user).await? {
-            return Err(CollectionError::UnauthorizedRead);
+            return Err(CollectionUserError::UnauthorizedRead)?;
         }
 
         Ok(Some(value))
@@ -814,7 +822,7 @@ impl<'a> Collection<'a> {
         user: &'a Option<&'a AuthUser>,
     ) -> Result<impl futures::Stream<Item = Result<(Cursor, RecordRoot)>> + '_> {
         let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
-            return Err(CollectionError::NoIndexFoundMatchingTheQuery);
+            return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
         };
 
         let where_query = where_query;
@@ -906,7 +914,7 @@ impl<'a> Collection<'a> {
             .get(self.id().to_string(), None)
             .await?;
         let Some(meta) = meta else {
-            return Err(CollectionError::CollectionNotFound { name: self.name().to_string() });
+            return Err(CollectionUserError::CollectionNotFound { name: self.name().to_string() })?;
         };
 
         let collection_ast = match meta.get("ast") {

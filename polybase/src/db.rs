@@ -11,7 +11,7 @@ pub type Result<T> = std::result::Result<T, DbError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
-    #[error("pending queue error")]
+    #[error("existing change for this record exists")]
     RecordChangeExists,
 
     #[error("collection not found")]
@@ -20,13 +20,13 @@ pub enum DbError {
     #[error("collection AST is invalid: {0}")]
     CollectionASTInvalid(String),
 
-    #[error("gateway error: {0}")]
-    GatewayError(gateway::GatewayError),
+    #[error(transparent)]
+    GatewayError(#[from] gateway::GatewayError),
 
     #[error("indexer error")]
-    IndexerError(indexer::IndexerError),
+    IndexerError(#[from] indexer::IndexerError),
 
-    #[error("serialize error: {0}")]
+    #[error("serialize error")]
     SerializerError(#[from] bincode::Error),
 
     #[error("rollup error")]
@@ -160,6 +160,31 @@ impl Db {
         }
     }
 
+    pub async fn validate_call(
+        &self,
+        collection_id: String,
+        function_name: &str,
+        record_id: String,
+        args: Vec<serde_json::Value>,
+        auth: Option<&indexer::AuthUser>,
+    ) -> Result<()> {
+        let indexer = Arc::clone(&self.indexer);
+
+        // Get changes
+        self.gateway
+            .call(
+                &indexer,
+                collection_id,
+                function_name,
+                record_id,
+                args,
+                auth,
+            )
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn call(
         &self,
         collection_id: String,
@@ -172,7 +197,7 @@ impl Db {
         let mut output_record_id = record_id.clone();
 
         // Get changes
-        let changes = match self
+        let changes = self
             .gateway
             .call(
                 &indexer,
@@ -182,13 +207,7 @@ impl Db {
                 args,
                 auth,
             )
-            .await
-        {
-            Ok(changes) => changes,
-            Err(e) => {
-                return Err(DbError::GatewayError(e));
-            }
-        };
+            .await?;
 
         // First we cache the result, as it will be committed later
         for change in changes {
@@ -199,7 +218,7 @@ impl Db {
             if let Change::Create {
                 collection_id: _,
                 record_id,
-                record,
+                record: _,
             } = &change
             {
                 output_record_id = record_id.clone();

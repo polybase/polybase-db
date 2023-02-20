@@ -12,12 +12,7 @@ mod pending;
 mod raft;
 mod rollup;
 
-use actix_web::{
-    get,
-    http::StatusCode,
-    middleware::{ErrorHandlerResponse, ErrorHandlers},
-    post, web, App, HttpResponse, HttpServer, Responder,
-};
+use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::Indexer;
@@ -37,13 +32,13 @@ use crate::config::Config;
 use crate::db::Db;
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
+use crate::errors::reason::ReasonCode;
 use crate::raft::Raft;
 
 struct RouteState {
     db: Arc<Db>,
     indexer: Arc<Indexer>,
     raft: Arc<Raft>,
-    logger: slog::Logger,
 }
 
 #[get("/")]
@@ -66,7 +61,7 @@ async fn get_record(
     path: web::Path<(String, String)>,
     query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
-) -> Result<impl Responder, Box<dyn std::error::Error>> {
+) -> Result<impl Responder, HTTPError> {
     let (collection, id) = path.into_inner();
     let auth = body.auth;
 
@@ -79,7 +74,7 @@ async fn get_record(
             NotModified,
         }
 
-        let was_updated = async {
+        let was_updated: Result<UpdateCheckResult, HTTPError> = async {
             let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
             let wait_until = SystemTime::now() + wait_for;
             let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
@@ -104,24 +99,22 @@ async fn get_record(
         }
         .await;
 
-        match was_updated {
-            Ok(UpdateCheckResult::Updated) => {}
-            Ok(UpdateCheckResult::NotModified) => {
+        match was_updated? {
+            UpdateCheckResult::Updated => {}
+            UpdateCheckResult::NotModified => {
                 return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish())
             }
-            Ok(UpdateCheckResult::NotFound) => return Ok(HttpResponse::NotFound().finish()),
-            Err(e) => return Err(e),
+            UpdateCheckResult::NotFound => return Ok(HttpResponse::NotFound().finish()),
         }
     }
 
-    let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await;
+    let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await?;
 
     match record {
-        Ok(Some(record)) => Ok(HttpResponse::Ok()
+        Some(record) => Ok(HttpResponse::Ok()
             .content_type("application/json")
             .json(indexer::record_to_json(record).unwrap())),
-        Ok(None) => Ok(HttpResponse::NotFound().body("Record not found")),
-        Err(e) => Err(e.into()),
+        None => Err(HTTPError::new(ReasonCode::RecordNotFound, None)),
     }
 }
 
@@ -205,7 +198,7 @@ async fn get_records(
     path: web::Path<String>,
     query: web::Query<ListQuery>,
     body: auth::SignedJSON<()>,
-) -> Result<impl Responder, Box<dyn std::error::Error>> {
+) -> Result<impl Responder, HTTPError> {
     let collection = path.into_inner();
     let auth = body.auth;
     let collection = state.indexer.collection(collection).await.unwrap();
@@ -240,7 +233,7 @@ async fn get_records(
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
 
-            Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(false)
+            Ok(false)
         }
         .await;
 
@@ -251,7 +244,7 @@ async fn get_records(
         }
     }
 
-    let list_response = async {
+    let list_response: Result<ListResponse, HTTPError> = async {
         let records = collection
             .list(
                 indexer::ListQuery {
@@ -267,7 +260,7 @@ async fn get_records(
             .try_collect::<Vec<_>>()
             .await?;
 
-        Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(ListResponse {
+        Ok(ListResponse {
             cursor_before: records.first().map(|(c, _)| c.clone()),
             cursor_after: records.last().map(|(c, _)| c.clone()),
             data: records
@@ -278,12 +271,9 @@ async fn get_records(
     }
     .await;
 
-    match list_response {
-        Ok(list_response) => Ok(HttpResponse::Ok()
-            .content_type("application/json")
-            .json(list_response)),
-        Err(e) => Err(e),
-    }
+    Ok(HttpResponse::Ok()
+        .content_type("application/json")
+        .json(list_response?))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,8 +293,8 @@ async fn post_record(
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
     let collection_id = path.into_inner();
-    let auth = body.auth.map(|a| a.into());
 
+    let auth = body.auth.map(|a| a.into());
     let raft = Arc::clone(&state.raft);
 
     let record_id = raft
@@ -327,22 +317,24 @@ async fn call_function(
     state: web::Data<RouteState>,
     path: web::Path<(String, String, String)>,
     body: auth::SignedJSON<FunctionCall>,
-) -> Result<impl Responder, Box<dyn std::error::Error>> {
-    let (collection, record, function) = path.into_inner();
-    let auth = body.auth;
-    // let auth = auth.map(|a| a.into());
-    let auth = auth.map(indexer::AuthUser::from);
+) -> Result<web::Json<FunctionResponse>, HTTPError> {
+    let (collection_id, record_id, function) = path.into_inner();
 
+    let auth = body.auth.map(indexer::AuthUser::from);
     let raft = Arc::clone(&state.raft);
 
-    let res = raft
-        .call(collection, record, function, body.data.args, auth.as_ref())
-        .await;
+    raft.call(
+        collection_id.clone(),
+        record_id.clone(),
+        function,
+        body.data.args,
+        auth.as_ref(),
+    )
+    .await?;
 
-    match res {
-        Ok(_) => Ok(HttpResponse::Ok().body("Function called")),
-        Err(e) => Ok(HttpResponse::InternalServerError().body(e.to_string())),
-    }
+    let record = state.db.get(collection_id, record_id).await?.unwrap();
+
+    Ok(web::Json(FunctionResponse { data: record }))
 }
 
 #[get("/v0/health")]
@@ -381,10 +373,8 @@ async fn main() -> std::io::Result<()> {
                 db: Arc::clone(&db),
                 indexer: Arc::clone(&indexer),
                 raft: Arc::clone(&raft),
-                logger: logger.clone(),
             }))
             .wrap(SlogMiddleware::new(logger.clone()))
-            // .wrap(ErrorHandlers::new().default_handler(|res| actix_error_middleware(logger, res)))
             .service(root)
             .service(
                 web::scope("/v0/collections")

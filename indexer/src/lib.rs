@@ -1,14 +1,14 @@
 use std::path::Path;
 
-mod collection;
+pub mod collection;
 mod index;
-mod keys;
+pub mod keys;
 mod proto;
 mod publickey;
 mod record;
 mod stableast_ext;
 mod store;
-mod where_query;
+pub mod where_query;
 
 pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
 pub use index::CollectionIndexField;
