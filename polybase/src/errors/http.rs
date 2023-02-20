@@ -6,8 +6,11 @@ use serde::Serialize;
 use std::{error::Error, fmt::Display};
 
 use super::reason::ReasonCode;
-use crate::db::{self};
 use crate::raft::{self};
+use crate::{
+    auth,
+    db::{self},
+};
 
 #[derive(Debug)]
 pub struct HTTPError {
@@ -142,5 +145,12 @@ impl From<indexer::IndexerError> for HTTPError {
             // Other errors are internal
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
+    }
+}
+
+impl From<auth::AuthError> for HTTPError {
+    fn from(err: auth::AuthError) -> Self {
+        // TODO: use a proper reason code. E2E tests expect a BadRequest
+        HTTPError::new(ReasonCode::RecordIdNotString, Some(Box::new(err)))
     }
 }

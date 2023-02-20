@@ -15,6 +15,12 @@ pub enum KeysError {
     #[error("invalid key type byte {n}")]
     InvalidKeyType { n: u8 },
 
+    #[error("key is missing key type")]
+    KeyMissingKeyType,
+
+    #[error("key is missing CID")]
+    KeyMissingCid,
+
     #[error("key does not have immediate successor")]
     KeyDoesNotHaveImmediateSuccessor,
 
@@ -274,8 +280,8 @@ impl<'a> Key<'a> {
     }
 
     pub(crate) fn deserialize(key: &'a [u8]) -> Result<Self> {
-        let key_type = key[0];
-        let cid = &key[1..37];
+        let key_type = *key.first().ok_or(KeysError::KeyMissingKeyType)?;
+        let cid = key.get(1..37).ok_or(KeysError::KeyMissingCid)?;
 
         match key_type {
             BYTE_DATA => Ok(Key::Data {
@@ -942,6 +948,25 @@ mod test {
         )
         .unwrap()
         .wildcard(),
+        Ordering::Greater
+    );
+
+    test_comparator!(
+        test_comparator_7,
+        Key::new_index(
+            "namespace".to_string(),
+            &[&["id"]],
+            &[Direction::Ascending],
+            vec![Cow::Borrowed(&IndexValue::String("3/last".to_string()))],
+        )
+        .unwrap(),
+        Key::new_index(
+            "namespace".to_string(),
+            &[&["id"]],
+            &[Direction::Ascending],
+            vec![Cow::Borrowed(&IndexValue::String("2".to_string())),],
+        )
+        .unwrap(),
         Ordering::Greater
     );
 }

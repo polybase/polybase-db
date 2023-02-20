@@ -22,9 +22,6 @@ pub enum GatewayError {
     #[error("failed to create a v8 string")]
     FailedToCreateV8String,
 
-    #[error("JavaScript exception error: {message:?}")]
-    JavaScriptException { message: String },
-
     #[error("indexer error")]
     IndexerError(#[from] indexer::IndexerError),
 
@@ -78,6 +75,12 @@ pub enum GatewayUserError {
 
     #[error("you do not have permission to call this function")]
     UnauthorizedCall,
+
+    #[error("JavaScript exception error: {message:?}")]
+    JavaScriptException { message: String },
+
+    #[error("collection function error: {message:?}")]
+    CollectionFunctionError { message: String },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -638,7 +641,7 @@ impl Gateway {
                     })?;
                 };
 
-                let Some(record) = (match &parameter.type_ {
+                let Some((collection_id, record)) = (match &parameter.type_ {
                     polylang::stableast::Type::Record(_) => {
                         let Some(output_id) = output_arg.get("id") else {
                             return Err(GatewayUserError::CollectionRecordIdNotFound)?;
@@ -648,7 +651,7 @@ impl Gateway {
                             return Err(GatewayUserError::RecordIDModified)?;
                         }
 
-                        Some(indexer::json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?)
+                        Some((collection.id().to_owned(), indexer::json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
                     },
                     polylang::stableast::Type::ForeignRecord(fr) => {
                         let Some(output_id) = output_arg.get("id") else {
@@ -669,14 +672,14 @@ impl Gateway {
 
                         let ast = get_collection_ast(fr.collection.as_ref(), &collection_meta)?;
 
-                        Some(indexer::json_to_record(&ast, output_arg, false).map_err(IndexerError::from)?)
+                        Some((collection_id, indexer::json_to_record(&ast, output_arg, false).map_err(IndexerError::from)?))
                     }
                     _ => None,
                 }) else {
                     continue;
                 };
 
-                records_to_update.push(record);
+                records_to_update.push((collection_id, record));
             }
 
             records_to_update
@@ -710,7 +713,7 @@ impl Gateway {
             });
         }
 
-        for record in records_to_update {
+        for (collection_id, record) in records_to_update {
             let Some(id) = record.get("id") else {
                 return Err(GatewayUserError::CollectionRecordIdNotFound)?;
             };
@@ -720,7 +723,7 @@ impl Gateway {
             };
 
             changes.push(Change::Update {
-                collection_id: todo!("get the collection id before dereferencing"),
+                collection_id,
                 record_id: id.to_string(),
                 record,
             });
@@ -892,7 +895,7 @@ impl Gateway {
             limitMethods($$__instance);
             internPublicKeys($$__instance);
             function error(str) {{
-                    throw new Error(str);
+                    throw new Error("$$__USER_ERROR:" + str);
             }}
             ctx = JSON.parse(authJSON);
             internPublicKeys(ctx);
@@ -936,9 +939,15 @@ impl Gateway {
                     .unwrap()
                     .to_rust_string_lossy(&mut try_catch);
 
-                Err(GatewayError::JavaScriptException {
-                    message: exception_string,
-                })
+                let s = exception_string.replace("$$__USER_ERROR:", "");
+                if exception_string == s {
+                    Err(GatewayUserError::JavaScriptException {
+                        message: exception_string,
+                    }
+                    .into())
+                } else {
+                    Err(GatewayUserError::CollectionFunctionError { message: s }.into())
+                }
             }
             (Some(result), _) => {
                 let result = result.to_rust_string_lossy(&mut try_catch);

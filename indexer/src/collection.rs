@@ -219,6 +219,11 @@ impl Cursor {
 
         Ok(Self(key))
     }
+
+    pub fn immediate_successor(mut self) -> Self {
+        self.0.immediate_successor_value_mut();
+        self
+    }
 }
 
 impl Serialize for Cursor {
@@ -227,7 +232,7 @@ impl Serialize for Cursor {
         S: serde::Serializer,
     {
         let buf = self.0.serialize().map_err(serde::ser::Error::custom)?;
-        serializer.serialize_str(&base64::engine::general_purpose::URL_SAFE.encode(buf))
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(buf))
     }
 }
 
@@ -237,7 +242,7 @@ impl<'de> Deserialize<'de> for Cursor {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let buf = base64::engine::general_purpose::URL_SAFE
+        let buf = base64::engine::general_purpose::STANDARD
             .decode(s.as_bytes())
             .map_err(serde::de::Error::custom)?;
         let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
@@ -405,6 +410,9 @@ impl<'a> Collection<'a> {
                 }
             }
         });
+
+        // Sort indexes by number of fields, so that we use the most specific index first
+        indexes.sort_by(|a, b| a.fields.len().cmp(&b.fields.len()));
 
         let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
 

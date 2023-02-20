@@ -34,6 +34,12 @@ pub enum ReasonCode {
     #[display(fmt = "function/invalid-call")]
     FunctionInvalidCall,
 
+    #[display(fmt = "function/javascript-exception")]
+    FunctionJavaScriptException,
+
+    #[display(fmt = "function/collection-error")]
+    FunctionCollectionError,
+
     #[display(fmt = "collection/invalid-call")]
     CollectionRecordIdNotFound,
 
@@ -87,6 +93,8 @@ impl ReasonCode {
             ReasonCode::FunctionNotFound => ErrorCode::NotFound,
             ReasonCode::FunctionInvalidArgs => ErrorCode::InvalidArgument,
             ReasonCode::FunctionInvalidCall => ErrorCode::InvalidArgument,
+            ReasonCode::FunctionJavaScriptException => ErrorCode::FailedPrecondition,
+            ReasonCode::FunctionCollectionError => ErrorCode::FailedPrecondition,
             ReasonCode::CollectionNotFound => ErrorCode::NotFound,
             ReasonCode::CollectionIdExists => ErrorCode::AlreadyExists,
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
@@ -134,6 +142,14 @@ impl ReasonCode {
             }
 
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
+
+            gateway::GatewayUserError::JavaScriptException { .. } => {
+                ReasonCode::FunctionJavaScriptException
+            }
+
+            gateway::GatewayUserError::CollectionFunctionError { .. } => {
+                ReasonCode::FunctionCollectionError
+            }
         }
     }
 

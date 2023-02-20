@@ -16,7 +16,7 @@ use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer,
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::Indexer;
-use serde::{Deserialize, Serialize};
+use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
 use std::{
@@ -163,7 +163,7 @@ impl From<Direction> for indexer::Direction {
 }
 
 /// Deserialized from "<number>s"
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct Seconds(u64);
 
 impl Seconds {
@@ -194,8 +194,28 @@ impl<'de> Deserialize<'de> for Seconds {
     }
 }
 
+#[derive(Debug)]
+struct OptionalCursor(Option<indexer::Cursor>);
+
+impl<'de> Deserialize<'de> for OptionalCursor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // if there's nothing or it's an empty string, return None
+        // if there's a string, delegate to Cursor::deserialize
+
+        let cursor = Option::<String>::deserialize(deserializer)?
+            .filter(|s| !s.is_empty())
+            .map(|s| indexer::Cursor::deserialize(s.into_deserializer()))
+            .transpose()?;
+
+        Ok(OptionalCursor(cursor))
+    }
+}
+
 #[serde_as]
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ListQuery {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
@@ -204,19 +224,24 @@ struct ListQuery {
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
-    before: Option<indexer::Cursor>,
-    after: Option<indexer::Cursor>,
+    before: OptionalCursor,
+    after: OptionalCursor,
     /// UNIX timestamp in seconds
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
     wait_for: Seconds,
 }
 
+#[derive(Debug, Serialize)]
+struct Cursors {
+    before: Option<indexer::Cursor>,
+    after: Option<indexer::Cursor>,
+}
+
 #[derive(Serialize)]
 struct ListResponse {
     data: Vec<GetRecordResponse>,
-    cursor_before: Option<indexer::Cursor>,
-    cursor_after: Option<indexer::Cursor>,
+    cursor: Cursors,
 }
 
 #[get("/{collection}/records")]
@@ -278,8 +303,8 @@ async fn get_records(
                     limit: Some(min(1000, query.limit.unwrap_or(1000))),
                     where_query: query.where_query.clone(),
                     order_by: &sort_indexes,
-                    cursor_after: query.after.clone(),
-                    cursor_before: query.before.clone(),
+                    cursor_after: query.after.0.clone(),
+                    cursor_before: query.before.0.clone(),
                 },
                 &auth.map(indexer::AuthUser::from).as_ref(),
             )
@@ -288,8 +313,22 @@ async fn get_records(
             .await?;
 
         Ok(ListResponse {
-            cursor_before: records.first().map(|(c, _)| c.clone()),
-            cursor_after: records.last().map(|(c, _)| c.clone()),
+            cursor: Cursors {
+                before: records
+                    .first()
+                    .map(|(c, _)| c.clone())
+                    .or_else(|| query.before.0.clone())
+                    // TODO: is this right?
+                    // The `after` cursor is the key of the last record the user received,
+                    // if they don't receive any records,
+                    // then querying again with the returned `before` should return the `after` record,
+                    // not just records before it.
+                    .or_else(|| query.after.0.clone().map(|a| a.immediate_successor())),
+                after: records
+                    .last()
+                    .map(|(c, _)| c.clone())
+                    .or_else(|| query.after.0.clone()),
+            },
             data: records
                 .into_iter()
                 .map(|(_, r)| GetRecordResponse {
