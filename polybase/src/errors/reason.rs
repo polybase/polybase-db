@@ -85,10 +85,7 @@ impl ReasonCode {
 
     pub fn from_gateway_error(err: &gateway::GatewayUserError) -> Self {
         match err {
-            gateway::GatewayUserError::RecordNotFound {
-                record_id: _,
-                collection_id: _,
-            } => ReasonCode::RecordNotFound,
+            gateway::GatewayUserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
 
             gateway::GatewayUserError::RecordIdNotString => ReasonCode::RecordIdNotString,
 
@@ -100,9 +97,7 @@ impl ReasonCode {
 
             gateway::GatewayUserError::RecordIDModified => ReasonCode::RecordIDModified,
 
-            gateway::GatewayUserError::CollectionNotFound { collection_id: _ } => {
-                ReasonCode::CollectionNotFound
-            }
+            gateway::GatewayUserError::CollectionNotFound { .. } => ReasonCode::CollectionNotFound,
 
             gateway::GatewayUserError::CollectionIdExists => ReasonCode::CollectionIdExists,
 
@@ -110,20 +105,13 @@ impl ReasonCode {
                 ReasonCode::CollectionRecordIdNotFound
             }
 
-            gateway::GatewayUserError::CollectionMismatch {
-                actual_collection_id: _,
-                expected_collection_id: _,
-            } => ReasonCode::CollectionMismatch,
+            gateway::GatewayUserError::CollectionMismatch { .. } => ReasonCode::CollectionMismatch,
 
-            gateway::GatewayUserError::FunctionNotFound {
-                method_name: _,
-                collection_id: _,
-            } => ReasonCode::FunctionNotFound,
+            gateway::GatewayUserError::FunctionNotFound { .. } => ReasonCode::FunctionNotFound,
 
-            gateway::GatewayUserError::FunctionIncorrectNumberOfArguments {
-                expected: _,
-                actual: _,
-            } => ReasonCode::FunctionInvalidArgs,
+            gateway::GatewayUserError::FunctionIncorrectNumberOfArguments { .. } => {
+                ReasonCode::FunctionInvalidArgs
+            }
 
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
         }
