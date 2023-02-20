@@ -1,6 +1,6 @@
 use std::path::Path;
 
-mod collection;
+pub mod collection;
 mod index;
 pub mod keys;
 mod proto;
