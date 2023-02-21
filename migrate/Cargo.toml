@@ -21,3 +21,6 @@ regex = "1.7.1"
 serde_with = "2.2.0"
 clap = { version = "4.1.4", features = ["env", "derive"] }
 dirs = "4.0.0"
+slog = "2"
+slog-term = "2"
+slog-async = "2"

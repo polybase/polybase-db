@@ -198,6 +198,7 @@ pub(crate) struct PrivateAuthorization {
 
 #[derive(Clone)]
 pub struct Collection<'a> {
+    logger: slog::Logger,
     store: &'a store::Store,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
@@ -456,12 +457,14 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
 
 impl<'a> Collection<'a> {
     fn new(
+        logger: slog::Logger,
         store: &'a store::Store,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
         authorization: Authorization,
     ) -> Self {
         Self {
+            logger: logger.new(slog::o!("collection" => collection_id.clone())),
             store,
             collection_id,
             indexes,
@@ -469,8 +472,13 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub(crate) async fn load(store: &'a store::Store, id: String) -> Result<Collection<'_>> {
+    pub(crate) async fn load(
+        logger: slog::Logger,
+        store: &'a store::Store,
+        id: String,
+    ) -> Result<Collection<'_>> {
         let collection_collection = Self::new(
+            logger.clone(),
             store,
             "Collection".to_string(),
             vec![
@@ -569,6 +577,7 @@ impl<'a> Collection<'a> {
         let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
 
         Ok(Self {
+            logger: logger.clone(),
             store,
             collection_id: id.to_string(),
             indexes,
@@ -696,8 +705,12 @@ impl<'a> Collection<'a> {
             }
 
             for foreign_record_reference in foreign_record_references {
-                let collection =
-                    Collection::load(self.store, foreign_record_reference.collection_id).await?;
+                let collection = Collection::load(
+                    self.logger.clone(),
+                    self.store,
+                    foreign_record_reference.collection_id,
+                )
+                .await?;
 
                 let Some(record) = collection
                     .get(foreign_record_reference.id, Some(user))
@@ -760,7 +773,9 @@ impl<'a> Collection<'a> {
                     }
                 }
                 RecordValue::ForeignRecordReference(fr) => {
-                    let collection = Collection::load(self.store, fr.collection_id.clone()).await?;
+                    let collection =
+                        Collection::load(self.logger.clone(), self.store, fr.collection_id.clone())
+                            .await?;
 
                     let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
                         continue;
@@ -888,7 +903,7 @@ impl<'a> Collection<'a> {
         }
 
         let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.store, id.clone()).await {
+            match Collection::load(self.logger.clone(), self.store, id.clone()).await {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -909,24 +924,36 @@ impl<'a> Collection<'a> {
         self.update_record_metadata(id.clone(), &SystemTime::now())
             .await?;
 
-        // TODO: ignore index failures
         let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: data_key.serialize()?,
         });
         for index in self.indexes.iter() {
-            let index_key = keys::index_record_key_with_record(
-                self.collection_id.clone(),
-                &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-                &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-                value,
-            )?;
+            if let Err(indexing_failure) = async {
+                let index_key = keys::index_record_key_with_record(
+                    self.collection_id.clone(),
+                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+                    value,
+                )?;
 
-            self.store.set(&index_key, &index_value).await?;
+                self.store.set(&index_key, &index_value).await?;
+
+                Ok::<_, CollectionError>(())
+            }
+            .await
+            {
+                slog::crit!(
+                    self.logger,
+                    "indexing failure: {indexing_failure}";
+                    "record" => &id,
+                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
+                );
+            }
         }
 
         if self.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {
-                let target_col = Collection::load(self.store, id).await?;
+                let target_col = Collection::load(self.logger.clone(), self.store, id).await?;
 
                 target_col.rebuild(collection_before, value).await?;
             }
@@ -973,6 +1000,8 @@ impl<'a> Collection<'a> {
         let now = SystemTime::now();
         self.update_metadata(&now).await?;
         self.update_record_metadata(id, &now).await?;
+
+        // TODO: go over each index and delete the index record for it
 
         Ok(())
     }
@@ -1076,7 +1105,8 @@ impl<'a> Collection<'a> {
         old_collection: Collection<'async_recursion>,
         old_collection_record: &RecordRoot,
     ) -> Result<()> {
-        let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
+        let collection_collection =
+            Collection::load(self.logger.clone(), self.store, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;
@@ -1137,15 +1167,22 @@ impl<'a> Collection<'a> {
 #[cfg(test)]
 mod tests {
     use futures::TryStreamExt;
+    use slog::Drain;
 
     use crate::store::tests::TestStore;
 
     use super::*;
 
+    fn logger() -> slog::Logger {
+        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        slog::Logger::root(drain, slog::o!())
+    }
+
     #[tokio::test]
     async fn test_collection_collection_load() {
         let store = TestStore::default();
-        let collection = Collection::load(&store, "Collection".to_string())
+        let collection = Collection::load(logger(), &store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1165,7 +1202,7 @@ mod tests {
         store: &'a TestStore,
         ast: stableast::Root<'_>,
     ) -> Vec<Collection<'a>> {
-        let collection_collection = Collection::load(store, "Collection".to_string())
+        let collection_collection = Collection::load(logger(), store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1195,7 +1232,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            collections.push(Collection::load(store, id).await.unwrap());
+            collections.push(Collection::load(logger(), store, id).await.unwrap());
         }
 
         collections
@@ -1286,7 +1323,13 @@ mod tests {
     #[tokio::test]
     async fn test_collection_set_get() {
         let store = TestStore::default();
-        let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
+        let collection = Collection::new(
+            logger(),
+            &store,
+            "test".to_string(),
+            vec![],
+            Authorization::Public,
+        );
 
         let value = HashMap::from([
             ("id".to_string(), RecordValue::String("1".into())),
@@ -1307,6 +1350,7 @@ mod tests {
     async fn test_collection_set_list() {
         let store = TestStore::default();
         let collection = Collection::new(
+            logger(),
             &store,
             "test".to_string(),
             vec![index::CollectionIndex {

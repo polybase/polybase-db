@@ -6,6 +6,7 @@ use indexer::publickey::PublicKey;
 use regex::Regex;
 use secp256k1::PublicKey as Secp256k1PublicKey;
 use serde::{Deserialize, Serialize};
+use slog::Drain;
 use std::path::PathBuf;
 use std::str::FromStr;
 use url::form_urlencoded::byte_serialize;
@@ -51,11 +52,16 @@ struct NewCollectionData {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let decorator = slog_term::TermDecorator::new().build();
+    let drain = slog_term::FullFormat::new(decorator).build().fuse();
+    let drain = slog_async::Async::new(drain).build().fuse();
+    let logger = slog::Logger::root(drain, slog::slog_o!("version" => env!("CARGO_PKG_VERSION")));
+
     let config = Config::parse();
 
     let indexer_dir = get_indexer_dir(&config.root_dir);
     println!("Indexer store path: {}", indexer_dir.display());
-    let indexer = indexer::Indexer::new(indexer_dir).unwrap();
+    let indexer = indexer::Indexer::new(logger, indexer_dir).unwrap();
     let collection_collection = indexer.collection("Collection".into()).await?;
 
     // Get list of all collections data

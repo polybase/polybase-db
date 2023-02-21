@@ -1049,7 +1049,15 @@ fn normalized_collection_name(collection_id: &str) -> String {
 mod tests {
     use std::ops::{Deref, DerefMut};
 
+    use slog::Drain;
+
     use super::*;
+
+    fn logger() -> slog::Logger {
+        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        slog::Logger::root(drain, slog::o!())
+    }
 
     pub(crate) struct TestIndexer(Option<Indexer>);
 
@@ -1061,7 +1069,7 @@ mod tests {
                 rand::random::<u32>()
             ));
 
-            Self(Some(Indexer::new(path).unwrap()))
+            Self(Some(Indexer::new(logger(), path).unwrap()))
         }
     }
 

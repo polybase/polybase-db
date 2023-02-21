@@ -46,13 +46,14 @@ pub enum IndexerError {
 }
 
 pub struct Indexer {
+    logger: slog::Logger,
     store: store::Store,
 }
 
 impl Indexer {
-    pub fn new(path: impl AsRef<Path>) -> store::Result<Self> {
+    pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> store::Result<Self> {
         let store = store::Store::open(path)?;
-        Ok(Self { store })
+        Ok(Self { logger, store })
     }
 
     pub fn destroy(self) -> store::Result<()> {
@@ -60,6 +61,6 @@ impl Indexer {
     }
 
     pub async fn collection(&self, id: String) -> collection::Result<Collection> {
-        Collection::load(&self.store, id).await
+        Collection::load(self.logger.clone(), &self.store, id).await
     }
 }
