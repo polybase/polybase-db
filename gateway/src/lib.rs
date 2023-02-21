@@ -414,7 +414,7 @@ async fn has_permission_to_call(
     Ok(false)
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Change {
     Create {
         collection_id: String,
@@ -820,6 +820,40 @@ impl Gateway {
         }
 
         global.set(
+            v8::String::new(&mut scope, "$$__publicKeyToHex")
+                .unwrap()
+                .into(),
+            v8::FunctionTemplate::new(
+                &mut scope,
+                |scope: &mut v8::HandleScope,
+                 args: v8::FunctionCallbackArguments,
+                 mut retval: v8::ReturnValue| {
+                    let public_key_json = args
+                        .get(0)
+                        .to_string(scope)
+                        .unwrap()
+                        .to_rust_string_lossy(scope);
+
+                    let public_key =
+                        serde_json::from_str::<indexer::PublicKey>(&public_key_json).unwrap();
+
+                    let hex = match public_key.to_hex() {
+                        Ok(hex) => hex,
+                        Err(e) => {
+                            let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
+                            let exception = v8::Exception::type_error(scope, error);
+                            scope.throw_exception(exception);
+                            return;
+                        }
+                    };
+
+                    retval.set(v8::String::new(scope, &hex).unwrap().into());
+                },
+            )
+            .into(),
+        );
+
+        global.set(
             v8::String::new(&mut scope, "instanceJSON").unwrap().into(),
             v8::String::new(&mut scope, &serde_json::to_string(instance).unwrap())
                 .unwrap()
@@ -1117,7 +1151,7 @@ mod tests {
             .unwrap();
 
         let gateway = initialize();
-        gateway
+        let changes = gateway
             .call(
                 &indexer,
                 "ns/User".to_string(),
@@ -1129,23 +1163,23 @@ mod tests {
             .await
             .unwrap();
 
-        let user = user_collection
-            .get("1".to_string(), None)
-            .await
-            .unwrap()
-            .unwrap();
+        assert_eq!(changes.len(), 1);
         assert_eq!(
-            user,
-            HashMap::from([
-                (
-                    "id".into(),
-                    indexer::RecordValue::IndexValue(indexer::IndexValue::String("1".into()))
-                ),
-                (
-                    "name".into(),
-                    indexer::RecordValue::IndexValue(indexer::IndexValue::String("Tim".into()))
-                )
-            ])
+            changes[0],
+            Change::Update {
+                collection_id: "ns/User".to_string(),
+                record_id: "1".to_string(),
+                record: HashMap::from([
+                    (
+                        "id".into(),
+                        indexer::RecordValue::IndexValue(indexer::IndexValue::String("1".into()))
+                    ),
+                    (
+                        "name".into(),
+                        indexer::RecordValue::IndexValue(indexer::IndexValue::String("Tim".into()))
+                    )
+                ])
+            }
         );
     }
 }

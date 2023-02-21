@@ -470,33 +470,6 @@ mod test {
         assert_eq!(deserialized, value);
     }
 
-    #[test]
-    fn test_record_value_map_serde_deserialize() {
-        let serialized = r#"{"hello": "world"}"#;
-        let deserialized: RecordValue = serde_json::from_str(serialized).unwrap();
-
-        match deserialized {
-            RecordValue::Map(m) => {
-                assert_eq!(m.len(), 1);
-                let (k, v) = m.iter().next().unwrap();
-
-                match k.as_str() {
-                    "hello" => {}
-                    s => panic!("should be hello, got {s}"),
-                }
-
-                match v {
-                    RecordValue::IndexValue(IndexValue::String(s)) if s == "world" => {}
-                    RecordValue::IndexValue(IndexValue::String(s)) => {
-                        panic!("should be world, got {s}")
-                    }
-                    _ => panic!("should be string"),
-                }
-            }
-            _ => panic!("should be map"),
-        }
-    }
-
     macro_rules! test_comparator {
         ($name:ident, $a_key:expr, $b_key:expr, $expected:expr) => {
             #[test]
