@@ -1,0 +1,24 @@
+env: testnet
+
+image:
+  registry: gcr.io
+  repository: polybase-testnet/polybase
+  tag: latest
+  digest: ""
+  pullPolicy: Always
+
+peerList: "1589efa8415ee699948e01e9e4576805130784f0@polybase-0.polybase-headless.polybase.svc.cluster.local:26656,6864d55753281fb8ea63349ced6e315bde8ef15d@polybase-1.polybase-headless.polybase.svc.cluster.local:26656,284b3dd76ae005615b3d36da69cc8d35505a481e@polybase-2.polybase-headless.polybase.svc.cluster.local:26656,01a3c0d71e0ac4b775d8587378a10efe67f108da@polybase-3.polybase-headless.polybase.svc.cluster.local:26656"
+
+fullNodeReplicaCount: 4
+
+resources:
+  limits:
+     cpu: 1
+     memory: 1Gi
+  requests:
+     cpu: 200m
+     memory: 300Mi
+
+additionalDomain: testnet.spacetime.xyz
+
+switchToFullNodes: true
