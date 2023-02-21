@@ -7,7 +7,6 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest-16-cores
-    needs: "test"
     steps:
       - name: Checkout
         uses: actions/checkout@v2
