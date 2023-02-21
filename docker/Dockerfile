@@ -1,7 +1,6 @@
 # Build binary
 FROM rust:1-bookworm AS builder
 
-# RUN apk add --no-cache gcc musl-dev pkgconf openssl-dev protobuf-dev && apk add --no-cache rust cargo
 RUN rustup component add rustfmt
 RUN apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 protobuf-compiler libprotobuf-dev
 
@@ -9,9 +8,6 @@ RUN apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 
 # links those located in that path dynamically but we want static linking, c.f.
 # https://github.com/rust-lang/pkg-config-rs/blob/54325785816695df031cef3b26b6a9a203bbc01b/src/lib.rs#L613
 ENV SYSROOT=/dummy
-# ENV V8_FROM_SOURC=1
-
-ARG RELEASE=1
 
 WORKDIR /build
 
@@ -30,7 +26,7 @@ RUN mkdir gateway/src && echo "fn lib() {}" > gateway/src/lib.rs
 RUN mkdir rbmerkle/src && echo "fn lib() {}" > rbmerkle/src/lib.rs
 RUN mkdir migrate/src && echo "fn main() {}" > migrate/src/lib.rs
 
-RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
+RUN cargo build
 
 RUN rm target -r
 
@@ -40,7 +36,7 @@ COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
 COPY migrate ./migrate/
 
-RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
+RUN cargo build --release
 
 # Run unit tests
 FROM builder as unit-tests
@@ -82,9 +78,6 @@ USER root
 RUN groupadd --system spaceman && \
     useradd --system --gid spaceman --home "$ROOT_DIR" spaceman && \
     chown -R spaceman:spaceman "$ROOT_DIR"
-
-# RUN addgroup -S spaceman && \
-#     adduser -S -G spaceman spaceman -h "$ROOT_DIR"
 
 RUN apt update && apt install -y curl nano
 
