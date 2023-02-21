@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: polybase
+  labels:
+    name: polybase
+spec:
+  namespaceSelector:
+    matchNames:
+      - polybase
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: polybase
+  podMetricsEndpoints:
+  - port: tender-metrics

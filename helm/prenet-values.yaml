@@ -1,0 +1,22 @@
+env: prenet
+
+image:
+  registry: gcr.io
+  repository: polybase-prenet/polybase
+  tag: latest
+  digest: ""
+  pullPolicy: Always
+
+peerList: "polybase-0.polybase-headless.polybase.svc.cluster.local:5001,polybase-1.polybase-headless.polybase.svc.cluster.local:5001,polybase-2.polybase-headless.polybase.svc.cluster.local:5001,polybase-3.polybase-headless.polybase.svc.cluster.local:5001"
+
+resources:
+  limits:
+     cpu: 1
+     memory: 1Gi
+  requests:
+     cpu: 200m
+     memory: 300Mi
+
+persistence:
+   storageClass: ""
+   size: 20Gi

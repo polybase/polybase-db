@@ -1,0 +1,14 @@
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: polybase
+spec:
+  timeoutSec: 120
+  healthCheck:
+    checkIntervalSec: 30
+    timeoutSec: 30
+    healthyThreshold: 1
+    unhealthyThreshold: 10
+    type: HTTP
+    requestPath: /v0/health
+    port: 8080

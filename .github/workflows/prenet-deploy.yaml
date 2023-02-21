@@ -80,7 +80,7 @@ jobs:
       - name: Check outputs
         run: echo ${{ steps.vars.outputs.sha_short }}
 
-  #     - name: Deploy
-  #       run: |-
-  #         cd ./helm/
-  #         helm upgrade --install --set image.tag=sha-${{ steps.vars.outputs.sha_short }} polybase . -f prenet-values.yaml -n polybase
+      - name: Deploy
+        run: |-
+          cd ./helm/
+          helm upgrade --install --set image.tag=sha-${{ steps.vars.outputs.sha_short }} polybase . -f prenet-values.yaml -n polybase
