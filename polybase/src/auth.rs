@@ -129,9 +129,11 @@ impl Signature {
                         return Err(AuthError::SignatureMustBe65Bytes);
                     }
 
+                    let rec_id = if hex[64] >= 27 { hex[64] - 27 } else { hex[64] };
+
                     let recoverable_signature = RecoverableSignature::from_compact(
                         &hex[0..64],
-                        RecoveryId::from_i32(hex[64] as i32)?,
+                        RecoveryId::from_i32(rec_id as i32)?,
                     )?;
 
                     signature = Some(recoverable_signature)
@@ -323,8 +325,7 @@ mod tests {
         let message_content_length = message_content.len().to_string();
 
         let message_parts = &[
-            &[19][..],
-            b"Ethereum Signed Message:\n",
+            "\u{19}Ethereum Signed Message:\n".as_bytes(),
             message_content_length.as_bytes(),
             message_content.as_bytes(),
         ];

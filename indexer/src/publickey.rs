@@ -19,6 +19,9 @@ pub enum PublicKeyError {
 
     #[error("base64 decode error")]
     Base64DecodeError(#[from] base64::DecodeError),
+
+    #[error("secp256k1 error")]
+    Secp256k1Error(#[from] secp256k1::Error),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,6 +108,16 @@ impl PublicKey {
         Self::es256k(x, y)
     }
 
+    pub fn to_secp256k1_key(&self) -> std::result::Result<secp256k1::PublicKey, secp256k1::Error> {
+        let mut pk = Vec::with_capacity(65);
+        let prefix = 4u8;
+        pk.push(prefix);
+        pk.extend_from_slice(&self.x);
+        pk.extend_from_slice(&self.y);
+
+        secp256k1::PublicKey::from_slice(&pk)
+    }
+
     pub(crate) fn to_indexable(&self) -> Vec<u8> {
         let mut v = Vec::new();
 
@@ -153,6 +166,18 @@ impl PublicKey {
             x: x.to_vec(),
             y: y.to_vec(),
         })
+    }
+
+    pub fn to_hex(&self) -> Result<String> {
+        let key = self.to_secp256k1_key()?;
+        let bytes = key.serialize_uncompressed();
+        // Remove the prefix 0x04
+        let bytes = &bytes[1..];
+
+        let mut s = hex::encode(bytes);
+        s.insert_str(0, "0x");
+
+        Ok(s)
     }
 }
 
