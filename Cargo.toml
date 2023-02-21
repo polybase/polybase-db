@@ -1,8 +1,3 @@
 [workspace]
 
-members = [
-    "polybase",
-    "indexer",
-    "gateway",
-    "rbmerkle",
-]
+members = ["polybase", "indexer", "gateway", "rbmerkle", "migrate"]

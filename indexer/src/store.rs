@@ -32,6 +32,7 @@ pub(crate) struct Store {
     db: Arc<rocksdb::DB>,
 }
 
+#[derive(Debug)]
 pub(crate) enum Value<'a> {
     DataValue(&'a RecordRoot),
     IndexValue(proto::IndexRecord),
