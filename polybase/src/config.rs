@@ -1,5 +1,3 @@
-// mod config;
-
 use clap::{Parser, ValueEnum};
 
 /// Polybase is a p2p decentralized database
