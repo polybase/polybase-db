@@ -135,6 +135,8 @@ async fn main() -> Result<()> {
     println!("Migrated {} collections", collections.len());
     println!("Migrated {} records", total_records);
 
+    indexer.destroy();
+
     Ok(())
 }
 
