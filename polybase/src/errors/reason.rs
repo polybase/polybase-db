@@ -219,6 +219,9 @@ impl ReasonCode {
             indexer::collection::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
+            indexer::collection::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
         }
     }
 }

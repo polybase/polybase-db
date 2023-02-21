@@ -129,6 +129,9 @@ pub enum CollectionUserError {
 
     #[error("cannot index field {field:?} of type object")]
     IndexFieldCannotBeAnObject { field: String },
+
+    #[error("cannot index field {field:?} of type bytes")]
+    IndexFieldCannotBeBytes { field: String },
 }
 
 static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
@@ -437,6 +440,14 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
                 }
                 stableast::Type::Object(_) => {
                     return Err(CollectionUserError::IndexFieldCannotBeAnObject {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                stableast::Type::Primitive(stableast::Primitive {
+                    value: stableast::PrimitiveType::Bytes,
+                }) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeBytes {
                         field: index_field.field_path.join("."),
                     }
                     .into());
