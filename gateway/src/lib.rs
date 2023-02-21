@@ -754,8 +754,6 @@ impl Gateway {
             });
         }
 
-        // TODO: We should call polylang's validate_set on all the records we're changing
-
         Ok(changes)
     }
 
