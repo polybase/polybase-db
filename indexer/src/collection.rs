@@ -473,13 +473,24 @@ impl<'a> Collection<'a> {
         let collection_collection = Self::new(
             store,
             "Collection".to_string(),
-            // TODO: add more indexes to this collection
-            vec![index::CollectionIndex::new(vec![
-                index::CollectionIndexField::new(
+            vec![
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
                     vec![Cow::Borrowed("id")],
                     keys::Direction::Ascending,
-                ),
-            ])],
+                )]),
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                    vec![Cow::Borrowed("name")],
+                    keys::Direction::Ascending,
+                )]),
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                    vec![Cow::Borrowed("lastRecordUpdated")],
+                    keys::Direction::Ascending,
+                )]),
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                    vec![Cow::Borrowed("publicKey")],
+                    keys::Direction::Ascending,
+                )]),
+            ],
             Authorization::Public,
         );
 
