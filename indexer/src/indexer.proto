@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package proto;
+
+import "google/protobuf/timestamp.proto";
+
+message Collection {
+  string id = 1;
+  string name = 2;
+  string schema = 3;
+
+  // google.protobuf.Timestamp updated = 4;
+}
+
+message DataRecord {
+  string id = 1;
+  bytes data = 2;
+  google.protobuf.Timestamp updated = 3;
+  bytes blockHash = 4;
+}
+
+message IndexRecord {
+  bytes id = 1;
+}
+
+message DataKey {
+  string namespace = 1;
+  string id = 2;
+}
+
+message IndexKey {
+  string namespace = 1;
+  repeated string path = 2;
+}
+
+message SystemDataKey {
+  string id = 1;
+}

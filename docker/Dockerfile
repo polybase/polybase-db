@@ -1,12 +1,15 @@
 # Build binary
-FROM rust:1-alpine3.17 AS builder
+FROM rust:1-bookworm AS builder
 
-RUN apk add --no-cache musl-dev pkgconf
+# RUN apk add --no-cache gcc musl-dev pkgconf openssl-dev protobuf-dev && apk add --no-cache rust cargo
+RUN rustup component add rustfmt
+RUN apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 protobuf-compiler libprotobuf-dev
 
 # Set `SYSROOT` to a dummy path (default is /usr) because pkg-config-rs *always*
 # links those located in that path dynamically but we want static linking, c.f.
 # https://github.com/rust-lang/pkg-config-rs/blob/54325785816695df031cef3b26b6a9a203bbc01b/src/lib.rs#L613
 ENV SYSROOT=/dummy
+# ENV V8_FROM_SOURC=1
 
 ARG RELEASE=1
 
@@ -16,9 +19,16 @@ COPY Cargo.lock ./
 COPY Cargo.toml ./
 COPY polybase/Cargo.toml ./polybase/
 COPY indexer/Cargo.toml ./indexer/
+COPY gateway/Cargo.toml ./gateway/
+COPY rbmerkle/Cargo.toml ./rbmerkle/
+COPY rbmerkle/benches ./rbmerkle/benches
+COPY migrate/Cargo.toml ./migrate/
 
 RUN mkdir polybase/src && echo "fn main() {}" > polybase/src/main.rs
-RUN mkdir indexer/src && echo "fn main() {}" > indexer/src/main.rs
+RUN mkdir indexer/src && echo "fn lib() {}" > indexer/src/lib.rs
+RUN mkdir gateway/src && echo "fn lib() {}" > gateway/src/lib.rs
+RUN mkdir rbmerkle/src && echo "fn lib() {}" > rbmerkle/src/lib.rs
+RUN mkdir migrate/src && echo "fn main() {}" > migrate/src/lib.rs
 
 RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
@@ -26,6 +36,9 @@ RUN rm target -r
 
 COPY polybase ./polybase/
 COPY indexer ./indexer/
+COPY gateway ./gateway/
+COPY rbmerkle ./rbmerkle/
+COPY migrate ./migrate/
 
 RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
@@ -52,21 +65,27 @@ RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
 
 # Main
-FROM alpine:3.15
+FROM debian:bookworm-slim
+# FROM alpine:3.15
 
 ENV ROOT_DIR /polybase
 WORKDIR $ROOT_DIR
 
 USER root
 
-RUN addgroup -S spaceman && \
-    adduser -S -G spaceman spaceman -h "$ROOT_DIR"
+RUN groupadd --system spaceman && \
+    useradd --system --gid spaceman --home "$ROOT_DIR" spaceman && \
+    chown -R spaceman:spaceman "$ROOT_DIR"
 
-RUN apk add --no-cache curl nano
+# RUN addgroup -S spaceman && \
+#     adduser -S -G spaceman spaceman -h "$ROOT_DIR"
+
+RUN apt update && apt install -y curl nano
 
 USER spaceman
 
 COPY --from=builder /build/target/release/polybase /usr/bin/polybase
+COPY --from=builder /build/target/release/migrate /usr/bin/polybase-migrate
 
 STOPSIGNAL SIGTERM
 

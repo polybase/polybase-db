@@ -8,3 +8,31 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 actix-web = "4"
+indexer = { path = "../indexer" }
+gateway = { path = "../gateway" }
+rbmerkle = { path = "../rbmerkle" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }
+serde_with = { version = "2.2", features = ["json"] }
+hex = "0.4.3"
+futures = "0.3.26"
+sha3 = "0.10.6"
+secp256k1 = { version = "0.26", features = ["recovery", "global-context"] }
+clap = { version = "4.1.4", features = ["env", "derive"] }
+rmqtt-raft = "0.2.3"
+async-trait = "0.1.64"
+bincode = "1.3.3"
+winter-crypto = "0.4.2"
+cid = "0.10"
+slog-async = "2"
+slog-term = "2"
+slog = "2"
+rand = "0.8.5"
+bytes = "1.4.0"
+derive_more = "0.99.17"
+thiserror = "1.0.38"
+futures-util = "0.3.26"
+dirs = "4.0.0"
+
+[dev-dependencies]
+tokio-test = "0.4.2"
