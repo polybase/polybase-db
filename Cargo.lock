@@ -1770,6 +1770,8 @@ name = "migrate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap 4.1.6",
+ "dirs",
  "hex",
  "indexer",
  "polylang",

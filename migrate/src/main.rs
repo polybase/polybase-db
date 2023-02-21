@@ -1,10 +1,16 @@
+mod config;
+
 use anyhow::Result;
+use clap::Parser;
 use indexer::publickey::PublicKey;
 use regex::Regex;
 use secp256k1::PublicKey as Secp256k1PublicKey;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::str::FromStr;
 use url::form_urlencoded::byte_serialize;
+
+use crate::config::Config;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ListResponse<T> {
@@ -45,12 +51,11 @@ struct NewCollectionData {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let path = format!(
-        "{}/polybase-indexer-data-3",
-        std::env::temp_dir().to_str().unwrap()
-    );
-    println!("Indexer store path: {path}");
-    let indexer = indexer::Indexer::new(path).unwrap();
+    let config = Config::parse();
+
+    let indexer_dir = get_indexer_dir(&config.root_dir);
+    println!("Indexer store path: {}", indexer_dir.display());
+    let indexer = indexer::Indexer::new(indexer_dir).unwrap();
     let collection_collection = indexer.collection("Collection".into()).await?;
 
     // Get list of all collections data
@@ -270,4 +275,16 @@ fn collection_ast() -> String {
     let mut program = None;
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
     serde_json::to_string(&stable_ast).unwrap()
+}
+
+fn get_indexer_dir(dir: &str) -> PathBuf {
+    let mut path_buf = PathBuf::new();
+    if dir.starts_with("~/") {
+        if let Some(home_dir) = dirs::home_dir() {
+            path_buf.push(home_dir);
+            path_buf.push(dir.strip_prefix("~/").unwrap());
+        }
+    }
+    path_buf.push("data/indexer.db");
+    path_buf
 }
