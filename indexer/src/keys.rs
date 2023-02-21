@@ -33,9 +33,6 @@ pub enum KeysError {
     #[error("CID error")]
     CIDError(#[from] cid::Error),
 
-    #[error("record is missing fields: {fields:?}")]
-    RecordIsMissingFields { fields: Vec<String> },
-
     #[error("invalid direction byte {n}")]
     InvalidDirection { n: u8 },
 
@@ -414,23 +411,13 @@ where
         .unwrap();
     }
 
-    if found_values.len() != paths.len() {
-        let missing_fields = paths
-            .iter()
-            .filter(|p| !found_values.iter().any(|(fp, _)| fp == p));
-        return Err(KeysError::RecordIsMissingFields {
-            fields: missing_fields
-                .map(|x| {
-                    let mut s = String::new();
-                    for p in x.iter() {
-                        s.push_str(p.as_ref());
-                        s.push('.');
-                    }
-                    s.pop();
-                    s
-                })
-                .collect::<Vec<_>>(),
-        })?;
+    let missing_fields = paths
+        .iter()
+        .filter(|p| !found_values.iter().any(|(fp, _)| fp == p))
+        .collect::<Vec<_>>();
+
+    for missing_field in &missing_fields {
+        found_values.push((missing_field, &IndexValue::Null));
     }
 
     found_values.sort_by(|(p1, _), (p2, _)| {
