@@ -414,7 +414,7 @@ mod test {
             &[&["name"], &["age"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("john".to_string())),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
                 Cow::Borrowed(&IndexValue::Number(30.0)),
             ]
         )
@@ -449,7 +449,7 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("john".to_string())),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
                 Cow::Borrowed(&IndexValue::String("rec1".to_string())),
             ]
         )
@@ -459,7 +459,7 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("john".to_string())),
+                Cow::Borrowed(&IndexValue::String("John".to_string())),
                 Cow::Borrowed(&IndexValue::String("rec1".to_string())),
             ]
         )

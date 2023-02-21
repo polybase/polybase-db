@@ -1283,8 +1283,16 @@ mod tests {
         let store = TestStore::default();
         let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
 
-        let value_json = r#"{"id": "1", "name": "test" }"#;
-        let value = serde_json::from_str::<RecordRoot>(value_json).unwrap();
+        let value = HashMap::from([
+            (
+                "id".to_string(),
+                RecordValue::IndexValue(IndexValue::String("1".into())),
+            ),
+            (
+                "name".to_string(),
+                RecordValue::IndexValue(IndexValue::String("test".into())),
+            ),
+        ]);
 
         collection.set("1".into(), &value).await.unwrap();
 
@@ -1320,12 +1328,28 @@ mod tests {
             Authorization::Public,
         );
 
-        let value_1_json = r#"{"id": "1", "name": "test" }"#;
-        let value_1 = serde_json::from_str::<RecordRoot>(value_1_json).unwrap();
+        let value_1 = HashMap::from([
+            (
+                "id".to_string(),
+                RecordValue::IndexValue(IndexValue::String("1".into())),
+            ),
+            (
+                "name".to_string(),
+                RecordValue::IndexValue(IndexValue::String("test".into())),
+            ),
+        ]);
         collection.set("1".into(), &value_1).await.unwrap();
 
-        let value_2_json = r#"{"id": "2", "name": "test" }"#;
-        let value_2 = serde_json::from_str::<RecordRoot>(value_2_json).unwrap();
+        let value_2 = HashMap::from([
+            (
+                "id".to_string(),
+                RecordValue::IndexValue(IndexValue::String("2".into())),
+            ),
+            (
+                "name".to_string(),
+                RecordValue::IndexValue(IndexValue::String("test".into())),
+            ),
+        ]);
         collection.set("2".into(), &value_2).await.unwrap();
 
         let mut results = collection

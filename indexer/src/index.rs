@@ -583,7 +583,7 @@ mod test {
                 direction: keys::Direction::Descending,
             },
         ],
-        "Can only sort by inequality if it's the same direction"
+        "can only sort by inequality if it's the same direction"
     );
 
     macro_rules! test_index_matching {

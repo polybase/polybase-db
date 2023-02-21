@@ -55,7 +55,11 @@ impl actix_web::error::ResponseError for HTTPError {
             error: ErrorDetail {
                 code: self.reason.code().to_string(),
                 reason: self.reason.to_string(),
-                message: self.source.as_ref().unwrap().to_string(),
+                message: self
+                    .source
+                    .as_ref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default(),
             },
         };
         HttpResponse::build(self.status_code())

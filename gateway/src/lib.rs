@@ -414,7 +414,7 @@ async fn has_permission_to_call(
     Ok(false)
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Change {
     Create {
         collection_id: String,
@@ -1117,7 +1117,7 @@ mod tests {
             .unwrap();
 
         let gateway = initialize();
-        gateway
+        let changes = gateway
             .call(
                 &indexer,
                 "ns/User".to_string(),
@@ -1129,23 +1129,23 @@ mod tests {
             .await
             .unwrap();
 
-        let user = user_collection
-            .get("1".to_string(), None)
-            .await
-            .unwrap()
-            .unwrap();
+        assert_eq!(changes.len(), 1);
         assert_eq!(
-            user,
-            HashMap::from([
-                (
-                    "id".into(),
-                    indexer::RecordValue::IndexValue(indexer::IndexValue::String("1".into()))
-                ),
-                (
-                    "name".into(),
-                    indexer::RecordValue::IndexValue(indexer::IndexValue::String("Tim".into()))
-                )
-            ])
+            changes[0],
+            Change::Update {
+                collection_id: "ns/User".to_string(),
+                record_id: "1".to_string(),
+                record: HashMap::from([
+                    (
+                        "id".into(),
+                        indexer::RecordValue::IndexValue(indexer::IndexValue::String("1".into()))
+                    ),
+                    (
+                        "name".into(),
+                        indexer::RecordValue::IndexValue(indexer::IndexValue::String("Tim".into()))
+                    )
+                ])
+            }
         );
     }
 }
