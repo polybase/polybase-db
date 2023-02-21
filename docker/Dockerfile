@@ -1,8 +1,8 @@
 # Build binary
 FROM rust:1-bookworm AS builder
 
-RUN rustup component add rustfmt
-RUN apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 protobuf-compiler libprotobuf-dev
+RUN rustup component add rustfmt && \
+    apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 protobuf-compiler libprotobuf-dev
 
 # Set `SYSROOT` to a dummy path (default is /usr) because pkg-config-rs *always*
 # links those located in that path dynamically but we want static linking, c.f.
@@ -22,15 +22,13 @@ COPY rbmerkle/Cargo.toml ./rbmerkle/
 COPY rbmerkle/benches ./rbmerkle/benches
 COPY migrate/Cargo.toml ./migrate/
 
-RUN mkdir polybase/src && echo "fn main() {}" > polybase/src/main.rs
-RUN mkdir indexer/src && echo "fn lib() {}" > indexer/src/lib.rs
-RUN mkdir gateway/src && echo "fn lib() {}" > gateway/src/lib.rs
-RUN mkdir rbmerkle/src && echo "fn lib() {}" > rbmerkle/src/lib.rs
-RUN mkdir migrate/src && echo "fn main() {}" > migrate/src/lib.rs
-
-RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
-
-RUN rm target -r
+RUN mkdir polybase/src && echo "fn main() {}" > polybase/src/main.rs && \
+    mkdir indexer/src && echo "fn lib() {}" > indexer/src/lib.rs && \
+    mkdir gateway/src && echo "fn lib() {}" > gateway/src/lib.rs && \
+    mkdir rbmerkle/src && echo "fn lib() {}" > rbmerkle/src/lib.rs && \
+    mkdir migrate/src && echo "fn main() {}" > migrate/src/lib.rs && \
+    cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi) && \
+    rm target -r
 
 COPY polybase ./polybase/
 COPY indexer ./indexer/
@@ -40,32 +38,30 @@ COPY migrate ./migrate/
 
 RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
+RUN cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/polybase /build/target && \
+    cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/migrate /build/target
+
 # Run unit tests
 FROM builder as unit-tests
 
 CMD cargo test
 
 
-## Client e2e tests (pdolybase/client)
-# FROM runtime as e2e-client-tests
+## polybase-ts e2e tests
+FROM builder as e2e-polybase-ts-tests
 
-# RUN apk add --update nodejs yarn git python3 build-base
+RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - && \
+    apt-get install -y nodejs git build-essential && npm install -g yarn
 
-# COPY --from=builder-e2e /build/client.test /usr/bin/
-# COPY --from=builder-tendermint /build/tendermint /usr/bin/
-# COPY --from=builder /build/polybase /usr/bin/
+COPY --from=builder /build/target/polybase /usr/bin/
 
-# WORKDIR /build
+WORKDIR /e2e
 
-# ADD "https://api.github.com/repos/polybase/polybase-ts/commits?per_page=1" /latest_commit
-# RUN git clone --depth=1 https://github.com/polybase/polybase-ts.git .
+ADD "https://api.github.com/repos/polybase/polybase-ts/commits?per_page=1" /latest_commit
+RUN git clone --depth=1 https://github.com/polybase/polybase-ts.git
+RUN cd polybase-ts && yarn install && yarn build
 
-# RUN yarn install
-# RUN yarn build
-
-# ENV POLYBASE_BINARY /usr/bin/polybase
-
-# CMD ["/usr/bin/client.test", "-test.v"]
+CMD ["bash", "-c", "polybase & p1=$! && cd polybase-ts/packages/client && yarn test:e2e && kill \"$p1\" && echo \"Tests passed\""]
 
 
 # Main
@@ -85,8 +81,8 @@ RUN apt update && apt install -y curl nano
 
 USER spaceman
 
-COPY --from=builder /build/target/release/polybase /usr/bin/polybase
-COPY --from=builder /build/target/release/migrate /usr/bin/polybase-migrate
+COPY --from=builder /build/target/polybase /usr/bin/polybase
+COPY --from=builder /build/target/migrate /usr/bin/polybase-migrate
 
 STOPSIGNAL SIGTERM
 
