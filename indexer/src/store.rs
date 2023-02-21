@@ -1,3 +1,5 @@
+use bincode::{deserialize, serialize};
+use serde::{Deserialize, Serialize};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
 use prost::Message;
@@ -21,8 +23,8 @@ pub enum StoreError {
     #[error("RocksDB error")]
     RocksDBError(#[from] rocksdb::Error),
 
-    #[error("serde_json error")]
-    SerdeJSONError(#[from] serde_json::Error),
+    #[error("bincode error")]
+    BincodeError(#[from] bincode::Error),
 
     #[error("tokio task join error")]
     TokioTaskJoinError(#[from] tokio::task::JoinError),
@@ -38,10 +40,19 @@ pub(crate) enum Value<'a> {
     IndexValue(proto::IndexRecord),
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Snapshot(Vec<SnapshotValue>);
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SnapshotValue {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
 impl<'a> Value<'a> {
     fn serialize(&self) -> Result<Vec<u8>> {
         match self {
-            Value::DataValue(value) => Ok(serde_json::to_vec(value)?),
+            Value::DataValue(value) => Ok(bincode::serialize(value)?),
             Value::IndexValue(value) => Ok(value.encode_to_vec()),
         }
     }
@@ -79,7 +90,7 @@ impl Store {
         let db = Arc::clone(&self.db);
 
         tokio::task::spawn_blocking(move || match db.get_pinned(key)? {
-            Some(slice) => Ok(Some(serde_json::from_slice(slice.as_ref())?)),
+            Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
             None => Ok(None),
         })
         .await?
@@ -125,6 +136,33 @@ impl Store {
         drop(self.db);
         rocksdb::DB::destroy(&rocksdb::Options::default(), path)?;
 
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> Result<Vec<u8>> {
+        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
+
+        let mut values: Vec<SnapshotValue> = Vec::new();
+
+        // Iterate through every key-value pair in the database
+        for entry in iter {
+            let (key, value) = entry?;
+            values.push(SnapshotValue {
+                key: key.to_vec(),
+                value: value.to_vec(),
+            });
+        }
+
+        Ok(serialize(&Snapshot(values))?)
+    }
+
+    pub fn restore(&self, data: Vec<u8>) -> Result<()> {
+        let mut batch = rocksdb::WriteBatch::default();
+        let snapshot: Snapshot = deserialize(&data)?;
+        for entry in snapshot.0 {
+            batch.put(entry.key, entry.value);
+        }
+        self.db.write(batch)?;
         Ok(())
     }
 }
@@ -184,7 +222,7 @@ pub(crate) mod tests {
             "ns".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Owned(IndexValue::String("John".to_string()))],
+            vec![Cow::Owned(IndexValue::String("John".to_string().into()))],
         )
         .unwrap();
 

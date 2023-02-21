@@ -377,6 +377,8 @@ impl RmqttRaftStore for RaftConnector {
                 // Send commit to DB
                 self.db.commit(key).await?;
 
+                debug!(self.shared.logger, "db updated: {commit_id}"; "time" => timer.elapsed().as_millis());
+
                 // Finalise the commit, and notify all call waiters
                 self.shared.end_commit()?;
 
@@ -394,14 +396,20 @@ impl RmqttRaftStore for RaftConnector {
         Ok(Vec::new())
     }
 
-    // TODO
     async fn snapshot(&self) -> rmqtt_raft::Result<Vec<u8>> {
-        Ok(Vec::new())
+        let indexer = &self.db.indexer;
+        match indexer.snapshot() {
+            Ok(snapshot) => Ok(snapshot),
+            Err(e) => Err(rmqtt_raft::Error::Other(Box::new(e))),
+        }
     }
 
-    // TODO
     async fn restore(&mut self, snapshot: &[u8]) -> rmqtt_raft::Result<()> {
-        Ok(())
+        let indexer = &self.db.indexer;
+        match indexer.restore(snapshot.to_vec()) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(rmqtt_raft::Error::Other(Box::new(e))),
+        }
     }
 }
 

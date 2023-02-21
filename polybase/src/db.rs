@@ -38,7 +38,7 @@ pub struct Db {
     pending: PendingQueue<[u8; 32], Change>,
     gateway: Gateway,
     rollup: Rollup,
-    indexer: Arc<Indexer>,
+    pub indexer: Arc<Indexer>,
 }
 
 impl Db {

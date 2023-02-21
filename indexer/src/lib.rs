@@ -59,6 +59,14 @@ impl Indexer {
         self.store.destroy()
     }
 
+    pub fn snapshot(&self) -> store::Result<Vec<u8>> {
+        self.store.snapshot()
+    }
+
+    pub fn restore(&self, data: Vec<u8>) -> store::Result<()> {
+        self.store.restore(data)
+    }
+
     pub async fn collection(&self, id: String) -> collection::Result<Collection> {
         Collection::load(&self.store, id).await
     }
