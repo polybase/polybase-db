@@ -41,7 +41,7 @@ pub enum StoreError {
         >,
     ),
 
-    #[error("rkyv deserialization error")]
+    #[error("rkyv deserialization error: {0}")]
     RkyvDeserializationError(
         // The rkyv deserialization error type doesn't implement Send, so we have to stringify it
         // Related? https://github.com/rkyv/rkyv/issues/174, https://github.com/rkyv/bytecheck/issues/25
@@ -62,11 +62,7 @@ pub(crate) enum Value<'a> {
 impl<'a> Value<'a> {
     fn serialize(&self) -> Result<Vec<u8>> {
         match self {
-            Value::DataValue(value) => {
-                let mut serializer = AllocSerializer::<4096>::default();
-                serializer.serialize_value(*value)?;
-                Ok(serializer.into_serializer().into_inner().to_vec())
-            }
+            Value::DataValue(value) => Ok(rkyv::to_bytes::<_, 4096>(*value)?.to_vec()),
             Value::IndexValue(value) => Ok(value.encode_to_vec()),
         }
     }

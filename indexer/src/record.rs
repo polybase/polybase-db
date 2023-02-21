@@ -594,7 +594,13 @@ impl RecordValue {
 #[derive(
     Debug, PartialEq, Clone, Serialize, Default, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
 )]
-#[archive_attr(derive(CheckBytes))]
+#[archive(bound(serialize = "__S: rkyv::ser::ScratchSpace + rkyv::ser::Serializer"))]
+#[archive_attr(
+    derive(CheckBytes),
+    check_bytes(
+        bound = "__C: rkyv::validation::ArchiveContext, <__C as rkyv::Fallible>::Error: std::error::Error"
+    )
+)]
 pub struct RecordReference {
     pub id: String,
 }
@@ -644,7 +650,13 @@ impl From<RecordReference> for serde_json::Value {
 #[derive(
     Debug, PartialEq, Clone, Default, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive, Serialize,
 )]
-#[archive_attr(derive(CheckBytes))]
+#[archive(bound(serialize = "__S: rkyv::ser::ScratchSpace + rkyv::ser::Serializer"))]
+#[archive_attr(
+    derive(CheckBytes),
+    check_bytes(
+        bound = "__C: rkyv::validation::ArchiveContext, <__C as rkyv::Fallible>::Error: std::error::Error"
+    )
+)]
 pub struct ForeignRecordReference {
     pub id: String,
     pub collection_id: String,
@@ -825,7 +837,13 @@ impl PathFinder for RecordValue {
 }
 
 #[derive(Debug, PartialEq, Serialize, Clone, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive)]
-#[archive_attr(derive(CheckBytes))]
+#[archive(bound(serialize = "__S: rkyv::ser::ScratchSpace + rkyv::ser::Serializer"))]
+#[archive_attr(
+    derive(CheckBytes),
+    check_bytes(
+        bound = "__C: rkyv::validation::ArchiveContext, <__C as rkyv::Fallible>::Error: std::error::Error"
+    )
+)]
 pub enum IndexValue {
     Number(f64),
     Boolean(bool),

@@ -35,7 +35,13 @@ pub enum PublicKeyError {
     rkyv::Deserialize,
     rkyv::Archive,
 )]
-#[archive_attr(derive(CheckBytes))]
+#[archive(bound(serialize = "__S: rkyv::ser::ScratchSpace + rkyv::ser::Serializer"))]
+#[archive_attr(
+    derive(CheckBytes),
+    check_bytes(
+        bound = "__C: rkyv::validation::ArchiveContext, <__C as rkyv::Fallible>::Error: std::error::Error"
+    )
+)]
 pub struct PublicKey {
     /// Key type. Always `EC` for now.
     kty: String,
