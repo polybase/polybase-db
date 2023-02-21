@@ -4,7 +4,7 @@ pub mod collection;
 mod index;
 pub mod keys;
 mod proto;
-mod publickey;
+pub mod publickey;
 mod record;
 mod stableast_ext;
 mod store;
@@ -35,7 +35,7 @@ pub enum IndexerError {
     #[error("keys error")]
     Keys(#[from] keys::KeysError),
 
-    #[error("public key error")]
+    #[error(transparent)]
     PublicKey(#[from] publickey::PublicKeyError),
 
     #[error("record error")]

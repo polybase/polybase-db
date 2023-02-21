@@ -45,7 +45,7 @@ pub enum RecordError {
     #[error("unknown type")]
     UnknownType,
 
-    #[error("public key error")]
+    #[error(transparent)]
     PublicKeyError(#[from] publickey::PublicKeyError),
 
     #[error("try from int error")]

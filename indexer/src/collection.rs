@@ -259,7 +259,7 @@ fn collection_ast_from_root<'a>(
     })
 }
 
-fn collection_ast_from_json<'a>(
+pub fn collection_ast_from_json<'a>(
     ast_json: &'a str,
     collection_name: &str,
 ) -> Result<stableast::Collection<'a>> {
@@ -353,6 +353,7 @@ impl<'a> Collection<'a> {
         };
 
         let short_collection_name = id.split('/').last().unwrap();
+
         let collection_ast: stableast::Collection = match record.get("ast") {
             Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
                 collection_ast_from_json(ast, short_collection_name)?
