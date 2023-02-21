@@ -914,6 +914,8 @@ impl<'a> Collection<'a> {
             None
         };
 
+        let old_value = self.get_without_auth_check(id.clone()).await?;
+
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
         self.store
@@ -924,32 +926,12 @@ impl<'a> Collection<'a> {
         self.update_record_metadata(id.clone(), &SystemTime::now())
             .await?;
 
-        let index_value = store::Value::IndexValue(proto::IndexRecord {
-            id: data_key.serialize()?,
-        });
-        for index in self.indexes.iter() {
-            if let Err(indexing_failure) = async {
-                let index_key = keys::index_record_key_with_record(
-                    self.collection_id.clone(),
-                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-                    value,
-                )?;
-
-                self.store.set(&index_key, &index_value).await?;
-
-                Ok::<_, CollectionError>(())
-            }
-            .await
-            {
-                slog::crit!(
-                    self.logger,
-                    "indexing failure: {indexing_failure}";
-                    "record" => &id,
-                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
-                );
-            }
+        if let Some(old_value) = old_value {
+            // delete the indexes for the old values
+            self.delete_indexes(&id, &old_value).await;
         }
+
+        self.add_indexes(&id, &data_key, value).await;
 
         if self.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {
@@ -992,16 +974,82 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
+    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
+        let index_value = store::Value::IndexValue(proto::IndexRecord {
+            id: match data_key.serialize() {
+                Ok(data) => data,
+                Err(e) => {
+                    slog::crit!(self.logger, "failed to serialize data key: {e}");
+                    return;
+                }
+            },
+        });
+
+        for index in self.indexes.iter() {
+            if let Err(indexing_failure) = async {
+                let index_key = keys::index_record_key_with_record(
+                    self.collection_id.clone(),
+                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+                    record,
+                )?;
+
+                self.store.set(&index_key, &index_value).await?;
+
+                Ok::<_, CollectionError>(())
+            }
+            .await
+            {
+                slog::crit!(
+                    self.logger,
+                    "indexing failure: {indexing_failure}";
+                    "record" => record_id,
+                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
+                );
+            }
+        }
+    }
+
+    async fn delete_indexes(&self, record_id: &str, record: &RecordRoot) {
+        for index in self.indexes.iter() {
+            if let Err(deindexing_failure) = async {
+                let index_key = keys::index_record_key_with_record(
+                    self.collection_id.clone(),
+                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+                    record,
+                )?;
+
+                self.store.delete(&index_key).await?;
+
+                Ok::<_, CollectionError>(())
+            }
+            .await
+            {
+                slog::crit!(
+                    self.logger,
+                    "failed to delete index: {deindexing_failure}";
+                    "record" => record_id,
+                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
+                );
+            }
+        }
+    }
+
     pub async fn delete(&self, id: String) -> Result<()> {
+        let Some(record) = self.get_without_auth_check(id.clone()).await? else {
+            return Ok(());
+        };
+
         let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
         self.store.delete(&key).await?;
 
         let now = SystemTime::now();
         self.update_metadata(&now).await?;
-        self.update_record_metadata(id, &now).await?;
+        self.update_record_metadata(id.clone(), &now).await?;
 
-        // TODO: go over each index and delete the index record for it
+        self.delete_indexes(&id, &record).await;
 
         Ok(())
     }
