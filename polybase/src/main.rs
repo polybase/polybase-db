@@ -23,6 +23,7 @@ use std::{
     borrow::Cow,
     cmp::min,
     collections::HashMap,
+    path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -351,13 +352,8 @@ async fn main() -> std::io::Result<()> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let logger = slog::Logger::root(drain, slog_o!("version" => env!("CARGO_PKG_VERSION")));
 
-    let indexer = Arc::new(
-        Indexer::new(format!(
-            "{}/polybase-indexer-data",
-            std::env::temp_dir().to_str().unwrap()
-        ))
-        .unwrap(),
-    );
+    let indexer_dir = get_indexer_dir(&config.root_dir);
+    let indexer = Arc::new(Indexer::new(indexer_dir).unwrap());
 
     let db = Arc::new(Db::new(Arc::clone(&indexer)));
 
@@ -394,4 +390,16 @@ async fn main() -> std::io::Result<()> {
     );
 
     Ok(())
+}
+
+fn get_indexer_dir(dir: &str) -> PathBuf {
+    let mut path_buf = PathBuf::new();
+    if dir.starts_with("~/") {
+        if let Some(home_dir) = dirs::home_dir() {
+            path_buf.push(home_dir);
+            path_buf.push(dir.strip_prefix("~/").unwrap());
+        }
+    }
+    path_buf.push("data/indexer.db");
+    path_buf
 }
