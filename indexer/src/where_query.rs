@@ -82,10 +82,10 @@ pub(crate) enum WhereValue {
     Boolean(bool),
 }
 
-impl From<WhereValue> for IndexValue {
+impl From<WhereValue> for IndexValue<'_> {
     fn from(value: WhereValue) -> Self {
         match value {
-            WhereValue::String(s) => IndexValue::String(s),
+            WhereValue::String(s) => IndexValue::String(Cow::Owned(s)),
             WhereValue::Number(n) => IndexValue::Number(n),
             WhereValue::Boolean(b) => IndexValue::Boolean(b),
         }
@@ -238,14 +238,14 @@ mod test {
             "namespace".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("john".to_string()))]
+            vec![Cow::Owned(IndexValue::String("john".to_string().into()))]
         )
         .unwrap(),
         keys::Key::new_index(
             "namespace".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("john".to_string()))]
+            vec![Cow::Owned(IndexValue::String("john".to_string().into()))]
         )
         .unwrap()
         .wildcard()
@@ -414,7 +414,7 @@ mod test {
             &[&["name"], &["age"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("John".to_string())),
+                Cow::Owned(IndexValue::String("John".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(30.0)),
             ]
         )
@@ -424,7 +424,7 @@ mod test {
             "namespace".to_string(),
             &[&["name"], &["age"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("John".into())),]
+            vec![Cow::Owned(IndexValue::String("John".into())),]
         )
         .unwrap()
         .wildcard()
@@ -449,8 +449,8 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("John".to_string())),
-                Cow::Borrowed(&IndexValue::String("rec1".to_string())),
+                Cow::Owned(IndexValue::String("John".to_string().into())),
+                Cow::Owned(IndexValue::String("rec1".to_string().into())),
             ]
         )
         .unwrap(),
@@ -459,8 +459,8 @@ mod test {
             &[&["name"], &["id"]],
             &[keys::Direction::Ascending, keys::Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("John".to_string())),
-                Cow::Borrowed(&IndexValue::String("rec1".to_string())),
+                Cow::Owned(IndexValue::String("John".to_string().into())),
+                Cow::Owned(IndexValue::String("rec1".to_string().into())),
             ]
         )
         .unwrap()

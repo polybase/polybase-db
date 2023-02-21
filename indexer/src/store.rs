@@ -184,7 +184,7 @@ pub(crate) mod tests {
             "ns".to_string(),
             &[&["name"]],
             &[keys::Direction::Ascending],
-            vec![Cow::Owned(IndexValue::String("John".to_string()))],
+            vec![Cow::Owned(IndexValue::String("John".to_string().into()))],
         )
         .unwrap();
 

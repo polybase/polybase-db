@@ -114,7 +114,11 @@ pub fn record_to_json(value: RecordRoot) -> Result<serde_json::Value> {
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum RecordValue {
-    IndexValue(IndexValue),
+    Number(f64),
+    Boolean(bool),
+    Null,
+    String(String),
+    PublicKey(publickey::PublicKey),
     Bytes(Vec<u8>),
     Map(HashMap<String, RecordValue>),
     Array(Vec<RecordValue>),
@@ -137,29 +141,27 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
         match ty {
             Type::Primitive(p) => match (&p.value, value) {
                 (PrimitiveType::String, value) => match value {
-                    serde_json::Value::String(s) => {
-                        Ok(RecordValue::IndexValue(IndexValue::String(s)))
-                    }
+                    serde_json::Value::String(s) => Ok(RecordValue::String(s)),
                     serde_json::Value::Null if always_cast => {
-                        Ok(RecordValue::IndexValue(IndexValue::String("".to_string())))
+                        Ok(RecordValue::String("".to_string()))
                     }
                     // cast user-provided boolean to string
                     serde_json::Value::Bool(b) if always_cast => {
-                        Ok(RecordValue::IndexValue(IndexValue::String(b.to_string())))
+                        Ok(RecordValue::String(b.to_string()))
                     }
                     // cast user-provided number to string
                     serde_json::Value::Number(n) if always_cast => {
-                        Ok(RecordValue::IndexValue(IndexValue::String(n.to_string())))
+                        Ok(RecordValue::String(n.to_string()))
                     }
-                    serde_json::Value::Array(a) if always_cast => Ok(RecordValue::IndexValue(
-                        IndexValue::String(serde_json::to_string(&a)?),
-                    )),
-                    serde_json::Value::Object(o) if always_cast => Ok(RecordValue::IndexValue(
-                        IndexValue::String(serde_json::to_string(&o)?),
-                    )),
+                    serde_json::Value::Array(a) if always_cast => {
+                        Ok(RecordValue::String(serde_json::to_string(&a)?))
+                    }
+                    serde_json::Value::Object(o) if always_cast => {
+                        Ok(RecordValue::String(serde_json::to_string(&o)?))
+                    }
                     x => {
                         if always_cast {
-                            Ok(RecordValue::IndexValue(IndexValue::String("".to_string())))
+                            Ok(RecordValue::String("".to_string()))
                         } else {
                             Err(RecordError::InvalidSerdeJSONType {
                                 value: x,
@@ -219,32 +221,24 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
                 },
                 (PrimitiveType::Number, value) => match value {
-                    serde_json::Value::Number(n) => {
-                        Ok(RecordValue::IndexValue(IndexValue::Number({
-                            let mut r = n.as_f64().ok_or(RecordError::FailedToConvertNumberToF64);
-                            if r.is_err() && always_cast {
-                                r = Ok(0.0);
-                            }
+                    serde_json::Value::Number(n) => Ok(RecordValue::Number({
+                        let mut r = n.as_f64().ok_or(RecordError::FailedToConvertNumberToF64);
+                        if r.is_err() && always_cast {
+                            r = Ok(0.0);
+                        }
 
-                            r?
-                        })))
-                    }
-                    serde_json::Value::Null if always_cast => {
-                        Ok(RecordValue::IndexValue(IndexValue::Number(0.0)))
-                    }
+                        r?
+                    })),
+                    serde_json::Value::Null if always_cast => Ok(RecordValue::Number(0.0)),
                     serde_json::Value::Bool(b) if always_cast => {
-                        Ok(RecordValue::IndexValue(IndexValue::Number(if b {
-                            1.0
-                        } else {
-                            0.0
-                        })))
+                        Ok(RecordValue::Number(if b { 1.0 } else { 0.0 }))
                     }
-                    serde_json::Value::String(s) if always_cast => Ok(RecordValue::IndexValue(
-                        IndexValue::Number(s.parse::<f64>().unwrap_or(0.0)),
-                    )),
+                    serde_json::Value::String(s) if always_cast => {
+                        Ok(RecordValue::Number(s.parse::<f64>().unwrap_or(0.0)))
+                    }
                     x => {
                         if always_cast {
-                            Ok(RecordValue::IndexValue(IndexValue::Number(0.0)))
+                            Ok(RecordValue::Number(0.0))
                         } else {
                             Err(RecordError::InvalidSerdeJSONType {
                                 value: x,
@@ -254,21 +248,17 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
                 },
                 (PrimitiveType::Boolean, value) => match value {
-                    serde_json::Value::Bool(b) => {
-                        Ok(RecordValue::IndexValue(IndexValue::Boolean(b)))
+                    serde_json::Value::Bool(b) => Ok(RecordValue::Boolean(b)),
+                    serde_json::Value::Null if always_cast => Ok(RecordValue::Boolean(false)),
+                    serde_json::Value::Number(n) if always_cast => {
+                        Ok(RecordValue::Boolean(n.as_f64().unwrap_or(0.0) != 0.0))
                     }
-                    serde_json::Value::Null if always_cast => {
-                        Ok(RecordValue::IndexValue(IndexValue::Boolean(false)))
-                    }
-                    serde_json::Value::Number(n) if always_cast => Ok(RecordValue::IndexValue(
-                        IndexValue::Boolean(n.as_f64().unwrap_or(0.0) != 0.0),
-                    )),
                     serde_json::Value::String(s) if always_cast => {
-                        Ok(RecordValue::IndexValue(IndexValue::Boolean(s == "true")))
+                        Ok(RecordValue::Boolean(s == "true"))
                     }
                     x => {
                         if always_cast {
-                            Ok(RecordValue::IndexValue(IndexValue::Boolean(false)))
+                            Ok(RecordValue::Boolean(false))
                         } else {
                             Err(RecordError::InvalidSerdeJSONType {
                                 value: x,
@@ -381,9 +371,9 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
                 }
             },
-            Type::PublicKey(_) => Ok(RecordValue::IndexValue(IndexValue::PublicKey(
-                publickey::PublicKey::try_from(value)?,
-            ))),
+            Type::PublicKey(_) => Ok(RecordValue::PublicKey(publickey::PublicKey::try_from(
+                value,
+            )?)),
             Type::Record(_) => Ok(RecordValue::RecordReference({
                 let mut r = RecordReference::try_from(value);
                 if r.is_err() && always_cast {
@@ -425,7 +415,14 @@ impl TryFrom<RecordValue> for serde_json::Value {
 
     fn try_from(value: RecordValue) -> Result<Self> {
         match value {
-            RecordValue::IndexValue(v) => Ok(serde_json::Value::try_from(v)?),
+            RecordValue::String(s) => Ok(serde_json::Value::String(s)),
+            RecordValue::Number(n) => Ok(serde_json::Value::Number(
+                serde_json::Number::from_f64(n)
+                    .ok_or(RecordError::FailedToConvertF64ToSerdeNumber { f: n })?,
+            )),
+            RecordValue::Boolean(b) => Ok(serde_json::Value::Bool(b)),
+            RecordValue::PublicKey(p) => Ok(serde_json::Value::from(p)),
+            RecordValue::Null => Ok(serde_json::Value::Null),
             RecordValue::Bytes(b) => Ok(serde_json::Value::String(
                 base64::engine::general_purpose::STANDARD.encode(b),
             )),
@@ -449,18 +446,18 @@ impl TryFrom<RecordValue> for serde_json::Value {
     }
 }
 
-impl TryFrom<IndexValue> for serde_json::Value {
+impl TryFrom<IndexValue<'_>> for serde_json::Value {
     type Error = RecordError;
 
     fn try_from(value: IndexValue) -> Result<Self> {
         Ok(match value {
-            IndexValue::String(s) => serde_json::Value::String(s),
+            IndexValue::String(s) => serde_json::Value::String(s.into_owned()),
             IndexValue::Number(n) => serde_json::Value::Number(
                 serde_json::Number::from_f64(n)
                     .ok_or(RecordError::FailedToConvertF64ToSerdeNumber { f: n })?,
             ),
             IndexValue::Boolean(b) => serde_json::Value::Bool(b),
-            IndexValue::PublicKey(p) => serde_json::Value::from(p),
+            IndexValue::PublicKey(p) => serde_json::Value::from(p.into_owned()),
             IndexValue::Null => serde_json::Value::Null,
         })
     }
@@ -470,11 +467,23 @@ impl RecordValue {
     pub fn walk<'a, E: Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,
-        f: &mut impl FnMut(&[Cow<str>], &'a IndexValue) -> std::result::Result<(), E>,
+        f: &mut impl FnMut(&[Cow<str>], IndexValue<'a>) -> std::result::Result<(), E>,
     ) -> std::result::Result<(), E> {
         match self {
-            RecordValue::IndexValue(v) => {
-                f(current_path, v)?;
+            RecordValue::Number(n) => {
+                f(current_path, IndexValue::Number(*n))?;
+            }
+            RecordValue::Boolean(b) => {
+                f(current_path, IndexValue::Boolean(*b))?;
+            }
+            RecordValue::Null => {
+                f(current_path, IndexValue::Null)?;
+            }
+            RecordValue::String(s) => {
+                f(current_path, IndexValue::String(Cow::Borrowed(s)))?;
+            }
+            RecordValue::PublicKey(p) => {
+                f(current_path, IndexValue::PublicKey(Cow::Borrowed(p)))?;
             }
             RecordValue::Bytes(_) => {}
             RecordValue::Map(m) => {
@@ -504,7 +513,19 @@ impl RecordValue {
         f: &mut impl FnMut(&[Cow<str>], &'a RecordValue) -> std::result::Result<(), E>,
     ) -> std::result::Result<(), E> {
         match self {
-            RecordValue::IndexValue(_) => {
+            RecordValue::String(_) => {
+                f(current_path, self)?;
+            }
+            RecordValue::Number(_) => {
+                f(current_path, self)?;
+            }
+            RecordValue::Boolean(_) => {
+                f(current_path, self)?;
+            }
+            RecordValue::PublicKey(_) => {
+                f(current_path, self)?;
+            }
+            RecordValue::Null => {
                 f(current_path, self)?;
             }
             RecordValue::Bytes(_) => {
@@ -548,7 +569,11 @@ impl RecordValue {
         ) -> std::result::Result<(), E>,
     ) -> std::result::Result<(), E> {
         match self {
-            RecordValue::IndexValue(_) => {}
+            RecordValue::String(_) => {}
+            RecordValue::Number(_) => {}
+            RecordValue::Boolean(_) => {}
+            RecordValue::PublicKey(_) => {}
+            RecordValue::Null => {}
             RecordValue::Bytes(_) => {}
             RecordValue::Map(m) => {
                 f(current_path, m)?;
@@ -745,7 +770,11 @@ impl PathFinder for RecordValue {
         };
 
         match self {
-            RecordValue::IndexValue(_) => None,
+            RecordValue::Null => None,
+            RecordValue::Boolean(_) => None,
+            RecordValue::Number(_) => None,
+            RecordValue::String(_) => None,
+            RecordValue::PublicKey(_) => None,
             RecordValue::Bytes(_) => None,
             RecordValue::RecordReference(_) => None,
             RecordValue::ForeignRecordReference(_) => None,
@@ -777,7 +806,11 @@ impl PathFinder for RecordValue {
         };
 
         match self {
-            RecordValue::IndexValue(_) => None,
+            RecordValue::Null => None,
+            RecordValue::Boolean(_) => None,
+            RecordValue::Number(_) => None,
+            RecordValue::String(_) => None,
+            RecordValue::PublicKey(_) => None,
             RecordValue::Bytes(_) => None,
             RecordValue::RecordReference(_) => None,
             RecordValue::ForeignRecordReference(_) => None,
@@ -802,15 +835,15 @@ impl PathFinder for RecordValue {
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub enum IndexValue {
+pub enum IndexValue<'a> {
     Number(f64),
     Boolean(bool),
     Null,
-    String(String),
-    PublicKey(publickey::PublicKey),
+    String(Cow<'a, str>),
+    PublicKey(Cow<'a, publickey::PublicKey>),
 }
 
-impl IndexValue {
+impl IndexValue<'_> {
     pub(crate) fn byte_prefix(&self) -> u8 {
         match self {
             IndexValue::Null => keys::BYTE_NULL,
@@ -849,7 +882,7 @@ impl IndexValue {
         let type_prefix = bytes[0];
         let value = &bytes[1..];
         let value = match type_prefix {
-            keys::BYTE_STRING => IndexValue::String(String::from_utf8(value.to_vec())?),
+            keys::BYTE_STRING => IndexValue::String(Cow::Owned(String::from_utf8(value.to_vec())?)),
             keys::BYTE_NUMBER => IndexValue::Number(f64::from_be_bytes(value.try_into()?)),
             keys::BYTE_BOOLEAN => IndexValue::Boolean(match value[0] {
                 0x00 => false,
@@ -858,11 +891,21 @@ impl IndexValue {
             }),
             keys::BYTE_NULL => IndexValue::Null,
             keys::BYTE_PUBLIC_KEY => {
-                IndexValue::PublicKey(publickey::PublicKey::from_indexable(value)?)
+                IndexValue::PublicKey(Cow::Owned(publickey::PublicKey::from_indexable(value)?))
             }
             b => return Err(RecordError::InvalidTypePrefix { b }),
         };
 
         Ok(value)
+    }
+
+    pub(crate) fn with_static(self) -> IndexValue<'static> {
+        match self {
+            IndexValue::String(s) => IndexValue::String(Cow::Owned(s.into_owned())),
+            IndexValue::PublicKey(p) => IndexValue::PublicKey(Cow::Owned(p.into_owned())),
+            IndexValue::Number(n) => IndexValue::Number(n),
+            IndexValue::Boolean(b) => IndexValue::Boolean(b),
+            IndexValue::Null => IndexValue::Null,
+        }
     }
 }

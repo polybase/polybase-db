@@ -7,7 +7,7 @@ use std::{
 use crate::{
     index, json_to_record, keys, proto,
     publickey::PublicKey,
-    record::{self, IndexValue, PathFinder, RecordRoot, RecordValue},
+    record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
     stableast_ext::FieldWalker,
     store::{self},
@@ -139,7 +139,7 @@ static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
 
     hm.insert(
         "id".to_string(),
-        RecordValue::IndexValue(IndexValue::String("collections".to_string())),
+        RecordValue::String("collections".to_string()),
     );
 
     let code = r#"
@@ -172,18 +172,13 @@ collection Collection {
 }
 "#;
 
-    hm.insert(
-        "code".to_string(),
-        RecordValue::IndexValue(IndexValue::String(code.to_string())),
-    );
+    hm.insert("code".to_string(), RecordValue::String(code.to_string()));
 
     let mut program = None;
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
     hm.insert(
         "ast".to_string(),
-        RecordValue::IndexValue(IndexValue::String(
-            serde_json::to_string(&stable_ast).unwrap(),
-        )),
+        RecordValue::String(serde_json::to_string(&stable_ast).unwrap()),
     );
 
     hm
@@ -348,16 +343,15 @@ pub fn validate_schema_change(
 }
 
 pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
-    let (namespace, name) =
-        if let Some(RecordValue::IndexValue(IndexValue::String(id))) = record.get("id") {
-            let Some((namespace, name)) = id.rsplit_once('/') else {
+    let (namespace, name) = if let Some(RecordValue::String(id)) = record.get("id") {
+        let Some((namespace, name)) = id.rsplit_once('/') else {
                 return Err(CollectionUserError::CollectionIdMissingNamespace)?;
             };
 
-            (namespace, name)
-        } else {
-            unreachable!()
-        };
+        (namespace, name)
+    } else {
+        unreachable!()
+    };
 
     if namespace.is_empty() {
         return Err(CollectionUserError::CollectionIdMissingNamespace.into());
@@ -372,7 +366,7 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
     };
 
     let ast = match ast {
-        RecordValue::IndexValue(IndexValue::String(ast)) => ast,
+        RecordValue::String(ast) => ast,
         _ => return Err(CollectionError::CollectionRecordASTIsNotAString),
     };
 
@@ -498,7 +492,7 @@ impl<'a> Collection<'a> {
         };
 
         let id = match record.get("id") {
-            Some(RecordValue::IndexValue(IndexValue::String(id))) => id,
+            Some(RecordValue::String(id)) => id,
             Some(_) => return Err(CollectionError::CollectionRecordIDIsNotAString),
             None => return Err(CollectionError::CollectionRecordMissingID),
         };
@@ -506,7 +500,7 @@ impl<'a> Collection<'a> {
         let short_collection_name = Collection::normalize_name(id.as_str());
 
         let collection_ast: stableast::Collection = match record.get("ast") {
-            Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
+            Some(RecordValue::String(ast)) => {
                 collection_ast_from_json(ast, short_collection_name.as_str())?
             }
             Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
@@ -659,9 +653,7 @@ impl<'a> Collection<'a> {
                         }
 
                         match value {
-                            RecordValue::IndexValue(IndexValue::PublicKey(record_pk))
-                                if record_pk == &user.public_key =>
-                            {
+                            RecordValue::PublicKey(record_pk) if record_pk == &user.public_key => {
                                 authorized = true;
                             }
                             RecordValue::ForeignRecordReference(fr) => {
@@ -740,7 +732,7 @@ impl<'a> Collection<'a> {
             };
 
             match delegate_value {
-                RecordValue::IndexValue(IndexValue::PublicKey(pk)) if pk == &user.public_key => {
+                RecordValue::PublicKey(pk) if pk == &user.public_key => {
                     return Ok(true);
                 }
                 RecordValue::RecordReference(r) => {
@@ -788,11 +780,11 @@ impl<'a> Collection<'a> {
                 &store::Value::DataValue(
                     &[(
                         "lastRecordUpdatedAt".into(),
-                        RecordValue::IndexValue(IndexValue::String(
+                        RecordValue::String(
                             time.duration_since(SystemTime::UNIX_EPOCH)?
                                 .as_millis()
                                 .to_string(),
-                        )),
+                        ),
                     )]
                     .into(),
                 ),
@@ -810,7 +802,7 @@ impl<'a> Collection<'a> {
         };
 
         let last_record_updated_at = match record.find_path(&["lastRecordUpdatedAt"]) {
-            Some(RecordValue::IndexValue(IndexValue::String(s))) => {
+            Some(RecordValue::String(s)) => {
                 SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
             }
             _ => return Err(CollectionError::MetadataMissingLastRecordUpdatedAt),
@@ -837,12 +829,12 @@ impl<'a> Collection<'a> {
                 &store::Value::DataValue(
                     &[(
                         "updatedAt".into(),
-                        RecordValue::IndexValue(IndexValue::String(
+                        RecordValue::String(
                             updated_at
                                 .duration_since(SystemTime::UNIX_EPOCH)?
                                 .as_millis()
                                 .to_string(),
-                        )),
+                        ),
                     )]
                     .into(),
                 ),
@@ -862,7 +854,7 @@ impl<'a> Collection<'a> {
         };
 
         let updated_at = match record.find_path(&["updatedAt"]) {
-            Some(RecordValue::IndexValue(IndexValue::String(s))) => {
+            Some(RecordValue::String(s)) => {
                 SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
             }
             _ => return Err(CollectionError::MetadataMissingUpdatedAt),
@@ -874,7 +866,7 @@ impl<'a> Collection<'a> {
     pub async fn set(&self, id: String, value: &RecordRoot) -> Result<()> {
         match value.get("id") {
             Some(rv) => match rv {
-                RecordValue::IndexValue(IndexValue::String(record_id)) => {
+                RecordValue::String(record_id) => {
                     if &id != record_id {
                         return Err(CollectionError::RecordIDArgDoesNotMatchRecordDataID);
                     }
@@ -1078,13 +1070,11 @@ impl<'a> Collection<'a> {
             .get(self.id().to_string(), None)
             .await?;
         let Some(meta) = meta else {
-            return Err(CollectionUserError::CollectionNotFound { name: self.name().to_string() })?;
+            return Err(CollectionUserError::CollectionNotFound { name: self.name() })?;
         };
 
         let collection_ast = match meta.get("ast") {
-            Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
-                collection_ast_from_json(ast, self.name().as_str())?
-            }
+            Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
             _ => return Err(CollectionError::CollectionRecordMissingAST),
         };
 
@@ -1106,7 +1096,7 @@ impl<'a> Collection<'a> {
             let Some(data) = data else {
                 continue;
             };
-            let Some(RecordValue::IndexValue(IndexValue::String(id))) = data.get("id") else {
+            let Some(RecordValue::String(id)) = data.get("id") else {
                 return Err(CollectionError::RecordMissingID);
             };
             let id = id.clone();
@@ -1176,14 +1166,8 @@ mod tests {
                 .set(id.clone(), &{
                     let mut map = HashMap::new();
 
-                    map.insert(
-                        "id".to_string(),
-                        RecordValue::IndexValue(IndexValue::String(id.clone())),
-                    );
-                    map.insert(
-                        "ast".to_string(),
-                        RecordValue::IndexValue(IndexValue::String(ast_json.clone())),
-                    );
+                    map.insert("id".to_string(), RecordValue::String(id.clone()));
+                    map.insert("ast".to_string(), RecordValue::String(ast_json.clone()));
 
                     map
                 })
@@ -1284,26 +1268,17 @@ mod tests {
         let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
 
         let value = HashMap::from([
-            (
-                "id".to_string(),
-                RecordValue::IndexValue(IndexValue::String("1".into())),
-            ),
-            (
-                "name".to_string(),
-                RecordValue::IndexValue(IndexValue::String("test".into())),
-            ),
+            ("id".to_string(), RecordValue::String("1".into())),
+            ("name".to_string(), RecordValue::String("test".into())),
         ]);
 
         collection.set("1".into(), &value).await.unwrap();
 
         let record = collection.get("1".into(), None).await.unwrap().unwrap();
-        assert_eq!(
-            record.get("id").unwrap(),
-            &RecordValue::IndexValue(IndexValue::String("1".into()))
-        );
+        assert_eq!(record.get("id").unwrap(), &RecordValue::String("1".into()));
         assert_eq!(
             record.get("name").unwrap(),
-            &RecordValue::IndexValue(IndexValue::String("test".into()))
+            &RecordValue::String("test".into())
         );
     }
 
@@ -1329,26 +1304,14 @@ mod tests {
         );
 
         let value_1 = HashMap::from([
-            (
-                "id".to_string(),
-                RecordValue::IndexValue(IndexValue::String("1".into())),
-            ),
-            (
-                "name".to_string(),
-                RecordValue::IndexValue(IndexValue::String("test".into())),
-            ),
+            ("id".to_string(), RecordValue::String("1".into())),
+            ("name".to_string(), RecordValue::String("test".into())),
         ]);
         collection.set("1".into(), &value_1).await.unwrap();
 
         let value_2 = HashMap::from([
-            (
-                "id".to_string(),
-                RecordValue::IndexValue(IndexValue::String("2".into())),
-            ),
-            (
-                "name".to_string(),
-                RecordValue::IndexValue(IndexValue::String("test".into())),
-            ),
+            ("id".to_string(), RecordValue::String("2".into())),
+            ("name".to_string(), RecordValue::String("test".into())),
         ]);
         collection.set("2".into(), &value_2).await.unwrap();
 
