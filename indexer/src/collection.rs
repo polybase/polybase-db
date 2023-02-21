@@ -1078,7 +1078,7 @@ impl<'a> Collection<'a> {
             .get(self.id().to_string(), None)
             .await?;
         let Some(meta) = meta else {
-            return Err(CollectionUserError::CollectionNotFound { name: self.name().to_string() })?;
+            return Err(CollectionUserError::CollectionNotFound { name: self.name() })?;
         };
 
         let collection_ast = match meta.get("ast") {

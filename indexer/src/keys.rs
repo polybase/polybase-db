@@ -57,6 +57,7 @@ pub(crate) const BYTE_NULL: u8 = 0x00;
 pub(crate) const BYTE_STRING: u8 = 0x04;
 pub(crate) const BYTE_NUMBER: u8 = 0x05;
 pub(crate) const BYTE_BOOLEAN: u8 = 0x06;
+#[allow(dead_code)]
 pub(crate) const BYTE_BYTES: u8 = 0x07;
 pub(crate) const BYTE_PUBLIC_KEY: u8 = 0x08;
 
@@ -439,8 +440,6 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::record::RecordValue;
-
     use super::*;
 
     impl Key<'_> {

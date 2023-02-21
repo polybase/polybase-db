@@ -1,7 +1,8 @@
 use std::{borrow::Cow, collections::HashMap, error::Error};
 
 use base64::Engine;
-use serde::{Deserialize, Serialize};
+use bytecheck::CheckBytes;
+use serde::Serialize;
 
 use crate::{keys, publickey};
 
@@ -112,12 +113,28 @@ pub fn record_to_json(value: RecordRoot) -> Result<serde_json::Value> {
     Ok(serde_json::Value::Object(map))
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Clone, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive, Serialize)]
+// For information about these attributes you can read https://github.com/rkyv/rkyv/blob/70214dd4ab0b513b8f5fb5d8ca049902c424fc4a/examples/json/src/main.rs#L9
+#[archive(bound(serialize = "__S: rkyv::ser::ScratchSpace + rkyv::ser::Serializer"))]
+#[archive_attr(
+    derive(CheckBytes),
+    check_bytes(
+        bound = "__C: rkyv::validation::ArchiveContext, <__C as rkyv::Fallible>::Error: std::error::Error"
+    )
+)]
 pub enum RecordValue {
     IndexValue(IndexValue),
     Bytes(Vec<u8>),
-    Map(HashMap<String, RecordValue>),
-    Array(Vec<RecordValue>),
+    Map(
+        #[omit_bounds]
+        #[archive_attr(omit_bounds)]
+        HashMap<String, RecordValue>,
+    ),
+    Array(
+        #[omit_bounds]
+        #[archive_attr(omit_bounds)]
+        Vec<RecordValue>,
+    ),
     RecordReference(RecordReference),
     ForeignRecordReference(ForeignRecordReference),
 }
@@ -574,7 +591,10 @@ impl RecordValue {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, PartialEq, Clone, Serialize, Default, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive,
+)]
+#[archive_attr(derive(CheckBytes))]
 pub struct RecordReference {
     pub id: String,
 }
@@ -621,7 +641,10 @@ impl From<RecordReference> for serde_json::Value {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
+#[derive(
+    Debug, PartialEq, Clone, Default, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive, Serialize,
+)]
+#[archive_attr(derive(CheckBytes))]
 pub struct ForeignRecordReference {
     pub id: String,
     pub collection_id: String,
@@ -801,7 +824,8 @@ impl PathFinder for RecordValue {
     }
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Serialize, Clone, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive)]
+#[archive_attr(derive(CheckBytes))]
 pub enum IndexValue {
     Number(f64),
     Boolean(bool),

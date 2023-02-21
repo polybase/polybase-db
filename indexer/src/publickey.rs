@@ -1,4 +1,5 @@
 use base64::Engine;
+use bytecheck::CheckBytes;
 use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, PublicKeyError>;
@@ -24,7 +25,17 @@ pub enum PublicKeyError {
     Secp256k1Error(#[from] secp256k1::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+    rkyv::Archive,
+)]
+#[archive_attr(derive(CheckBytes))]
 pub struct PublicKey {
     /// Key type. Always `EC` for now.
     kty: String,

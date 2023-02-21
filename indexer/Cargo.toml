@@ -25,6 +25,8 @@ async-recursion = "1.0.2"
 futures = "0.3"
 thiserror = "1.0"
 hex = "0.4"
+rkyv = { version = "0.7.40", features = ["validation"] }
+bytecheck = "*"
 
 [build-dependencies]
 prost-build = "0.11"

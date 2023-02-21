@@ -1,6 +1,10 @@
 use std::{convert::AsRef, path::Path, sync::Arc};
 
 use prost::Message;
+use rkyv::ser::{
+    serializers::{AllocScratchError, AllocSerializer, SharedSerializeMapError},
+    Serializer,
+};
 
 use crate::{
     keys::{self, Key},
@@ -26,6 +30,23 @@ pub enum StoreError {
 
     #[error("tokio task join error")]
     TokioTaskJoinError(#[from] tokio::task::JoinError),
+
+    #[error("rkyv composite serializer error")]
+    RkyvCompositeSerializerError(
+        #[from]
+        rkyv::ser::serializers::CompositeSerializerError<
+            std::convert::Infallible,
+            AllocScratchError,
+            SharedSerializeMapError,
+        >,
+    ),
+
+    #[error("rkyv deserialization error")]
+    RkyvDeserializationError(
+        // The rkyv deserialization error type doesn't implement Send, so we have to stringify it
+        // Related? https://github.com/rkyv/rkyv/issues/174, https://github.com/rkyv/bytecheck/issues/25
+        String,
+    ),
 }
 
 pub(crate) struct Store {
@@ -41,7 +62,11 @@ pub(crate) enum Value<'a> {
 impl<'a> Value<'a> {
     fn serialize(&self) -> Result<Vec<u8>> {
         match self {
-            Value::DataValue(value) => Ok(serde_json::to_vec(value)?),
+            Value::DataValue(value) => {
+                let mut serializer = AllocSerializer::<4096>::default();
+                serializer.serialize_value(*value)?;
+                Ok(serializer.into_serializer().into_inner().to_vec())
+            }
             Value::IndexValue(value) => Ok(value.encode_to_vec()),
         }
     }
@@ -79,7 +104,10 @@ impl Store {
         let db = Arc::clone(&self.db);
 
         tokio::task::spawn_blocking(move || match db.get_pinned(key)? {
-            Some(slice) => Ok(Some(serde_json::from_slice(slice.as_ref())?)),
+            Some(slice) => Ok(Some(
+                rkyv::from_bytes::<RecordRoot>(slice.as_ref())
+                    .map_err(|e| StoreError::RkyvDeserializationError(e.to_string()))?,
+            )),
             None => Ok(None),
         })
         .await?
