@@ -1481,6 +1481,7 @@ dependencies = [
  "base64 0.21.0",
  "cid",
  "futures",
+ "hex",
  "once_cell",
  "polylang",
  "prost 0.11.6",
