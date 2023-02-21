@@ -1236,7 +1236,7 @@ mod tests {
 
         assert_eq!(collection.collection_id, "Collection");
         assert_eq!(collection.authorization, Authorization::Public);
-        assert_eq!(collection.indexes.len(), 1);
+        assert_eq!(collection.indexes.len(), 4);
         assert_eq!(
             collection.indexes[0],
             index::CollectionIndex::new(vec![index::CollectionIndexField::new(
