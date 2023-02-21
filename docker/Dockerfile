@@ -9,6 +9,8 @@ RUN apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 
 # https://github.com/rust-lang/pkg-config-rs/blob/54325785816695df031cef3b26b6a9a203bbc01b/src/lib.rs#L613
 ENV SYSROOT=/dummy
 
+ARG RELEASE=1
+
 WORKDIR /build
 
 COPY Cargo.lock ./
@@ -26,7 +28,7 @@ RUN mkdir gateway/src && echo "fn lib() {}" > gateway/src/lib.rs
 RUN mkdir rbmerkle/src && echo "fn lib() {}" > rbmerkle/src/lib.rs
 RUN mkdir migrate/src && echo "fn main() {}" > migrate/src/lib.rs
 
-RUN cargo build
+RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
 RUN rm target -r
 
@@ -36,7 +38,7 @@ COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
 COPY migrate ./migrate/
 
-RUN cargo build --release
+RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
 # Run unit tests
 FROM builder as unit-tests
