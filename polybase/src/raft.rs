@@ -92,6 +92,7 @@ struct RaftSharedState {
 
 struct RaftState {
     commit_id: Option<usize>,
+    next_commit_id: Option<usize>,
     timer: Instant,
     shutdown: bool,
     watcher: (watch::Sender<usize>, watch::Receiver<usize>),
@@ -122,6 +123,7 @@ impl Raft {
             logger: logger.clone(),
             state: Mutex::new(RaftState {
                 commit_id: None,
+                next_commit_id: None,
                 shutdown: false,
                 timer: Instant::now(),
                 watcher: watch::channel(0),
@@ -240,15 +242,16 @@ impl RaftSharedState {
         let mut state = self.state.lock().unwrap();
 
         // Last commit exists and has been invalidated
-        if let Some(state_commit_id) = state.commit_id {
-            if state_commit_id >= commit_id {
-                debug!(self.logger, "commit is out of date"; "local" => state_commit_id, "remote" => commit_id);
+        if let Some(state_next_commit_id) = state.next_commit_id {
+            if state_next_commit_id >= commit_id {
+                debug!(self.logger, "commit is out of date"; "local" => state_next_commit_id, "remote" => commit_id);
                 return false;
             }
         }
 
-        // Update the commit id now, to prevent other commits being accepted
-        state.commit_id = Some(commit_id);
+        // Update the next commit id now, to prevent other commits being accepted
+        // but we won't update state.commit_id until everything has been updated in the db
+        state.next_commit_id = Some(commit_id);
 
         // Reset timer, so we can calculate time since last commit to determine
         // if we should send a commit message to the cluster
@@ -258,9 +261,12 @@ impl RaftSharedState {
     }
 
     fn end_commit(&self) -> Result<()> {
-        let state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        // Finalise the commit_id with the pending one
+        state.commit_id = state.next_commit_id;
         let tx = &state.watcher.0;
-        Ok(tx.send(state.commit_id.unwrap_or(0))?)
+        let commit_id = state.commit_id.unwrap_or(0);
+        Ok(tx.send(commit_id)?)
     }
 
     fn get_next_interval(&self) -> Option<Duration> {
@@ -294,8 +300,6 @@ impl RaftSharedState {
         let state_commit_id = self.commit_id();
 
         // Check if we already have completed the commit
-        // TODO: we may need to track received_commit_id and commit_id
-        // so we only release this wait when the commit has been applied.
         if state_commit_id > commit_id {
             return;
         };
