@@ -21,8 +21,8 @@ pub enum StoreError {
     #[error("RocksDB error")]
     RocksDBError(#[from] rocksdb::Error),
 
-    #[error("serde_json error")]
-    SerdeJSONError(#[from] serde_json::Error),
+    #[error("bincode error")]
+    BincodeError(#[from] bincode::Error),
 
     #[error("tokio task join error")]
     TokioTaskJoinError(#[from] tokio::task::JoinError),
@@ -41,7 +41,7 @@ pub(crate) enum Value<'a> {
 impl<'a> Value<'a> {
     fn serialize(&self) -> Result<Vec<u8>> {
         match self {
-            Value::DataValue(value) => Ok(serde_json::to_vec(value)?),
+            Value::DataValue(value) => Ok(bincode::serialize(value)?),
             Value::IndexValue(value) => Ok(value.encode_to_vec()),
         }
     }
@@ -79,7 +79,7 @@ impl Store {
         let db = Arc::clone(&self.db);
 
         tokio::task::spawn_blocking(move || match db.get_pinned(key)? {
-            Some(slice) => Ok(Some(serde_json::from_slice(slice.as_ref())?)),
+            Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
             None => Ok(None),
         })
         .await?
