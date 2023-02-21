@@ -16,7 +16,7 @@ use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer,
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::Indexer;
-use serde::{Deserialize, Serialize};
+use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
 use std::{
@@ -49,11 +49,37 @@ async fn root() -> impl Responder {
         .body(r#"{ "server": "Polybase", "version": "0.1.0" }"#)
 }
 
+#[derive(Default)]
+struct PrefixedHex([u8; 32]);
+
+impl Serialize for PrefixedHex {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut hex = hex::encode(self.0);
+        hex.insert_str(0, "0x");
+
+        serializer.serialize_str(&hex)
+    }
+}
+
+#[derive(Default, Serialize)]
+struct Block {
+    hash: PrefixedHex,
+}
+
 #[derive(Deserialize)]
 struct GetRecordQuery {
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
     wait_for: Seconds,
+}
+
+#[derive(Serialize)]
+struct GetRecordResponse {
+    data: serde_json::Value,
+    block: Block,
 }
 
 #[get("/{collection}/records/{id}")]
@@ -112,9 +138,10 @@ async fn get_record(
     let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await?;
 
     match record {
-        Some(record) => Ok(HttpResponse::Ok()
-            .content_type("application/json")
-            .json(indexer::record_to_json(record).unwrap())),
+        Some(record) => Ok(HttpResponse::Ok().json(GetRecordResponse {
+            data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
+            block: Default::default(),
+        })),
         None => Err(HTTPError::new(ReasonCode::RecordNotFound, None)),
     }
 }
@@ -137,7 +164,7 @@ impl From<Direction> for indexer::Direction {
 }
 
 /// Deserialized from "<number>s"
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 struct Seconds(u64);
 
 impl Seconds {
@@ -168,8 +195,28 @@ impl<'de> Deserialize<'de> for Seconds {
     }
 }
 
+#[derive(Debug)]
+struct OptionalCursor(Option<indexer::Cursor>);
+
+impl<'de> Deserialize<'de> for OptionalCursor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // if there's nothing or it's an empty string, return None
+        // if there's a string, delegate to Cursor::deserialize
+
+        let cursor = Option::<String>::deserialize(deserializer)?
+            .filter(|s| !s.is_empty())
+            .map(|s| indexer::Cursor::deserialize(s.into_deserializer()))
+            .transpose()?;
+
+        Ok(OptionalCursor(cursor))
+    }
+}
+
 #[serde_as]
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct ListQuery {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
@@ -178,19 +225,24 @@ struct ListQuery {
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
-    before: Option<indexer::Cursor>,
-    after: Option<indexer::Cursor>,
+    before: OptionalCursor,
+    after: OptionalCursor,
     /// UNIX timestamp in seconds
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
     wait_for: Seconds,
 }
 
+#[derive(Debug, Serialize)]
+struct Cursors {
+    before: Option<indexer::Cursor>,
+    after: Option<indexer::Cursor>,
+}
+
 #[derive(Serialize)]
 struct ListResponse {
-    data: Vec<serde_json::Value>,
-    cursor_before: Option<indexer::Cursor>,
-    cursor_after: Option<indexer::Cursor>,
+    data: Vec<GetRecordResponse>,
+    cursor: Cursors,
 }
 
 #[get("/{collection}/records")]
@@ -252,8 +304,8 @@ async fn get_records(
                     limit: Some(min(1000, query.limit.unwrap_or(1000))),
                     where_query: query.where_query.clone(),
                     order_by: &sort_indexes,
-                    cursor_after: query.after.clone(),
-                    cursor_before: query.before.clone(),
+                    cursor_after: query.after.0.clone(),
+                    cursor_before: query.before.0.clone(),
                 },
                 &auth.map(indexer::AuthUser::from).as_ref(),
             )
@@ -262,11 +314,34 @@ async fn get_records(
             .await?;
 
         Ok(ListResponse {
-            cursor_before: records.first().map(|(c, _)| c.clone()),
-            cursor_after: records.last().map(|(c, _)| c.clone()),
+            cursor: Cursors {
+                before: records
+                    .first()
+                    .map(|(c, _)| c.clone())
+                    .or_else(|| query.before.0.clone())
+                    // TODO: is this right?
+                    // The `after` cursor is the key of the last record the user received,
+                    // if they don't receive any records,
+                    // then querying again with the returned `before` should return the `after` record,
+                    // not just records before it.
+                    .or_else(|| {
+                        query
+                            .after
+                            .0
+                            .clone()
+                            .map(|a| a.immediate_successor().unwrap())
+                    }),
+                after: records
+                    .last()
+                    .map(|(c, _)| c.clone())
+                    .or_else(|| query.after.0.clone()),
+            },
             data: records
                 .into_iter()
-                .map(|(_, r)| indexer::record_to_json(r).unwrap())
+                .map(|(_, r)| GetRecordResponse {
+                    data: indexer::record_to_json(r).unwrap(),
+                    block: Default::default(),
+                })
                 .collect(),
         })
     }
@@ -284,7 +359,7 @@ struct FunctionCall {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FunctionResponse {
-    data: HashMap<String, indexer::RecordValue>,
+    data: serde_json::Value,
 }
 
 #[post("/{collection}/records")]
@@ -310,7 +385,9 @@ async fn post_record(
 
     let record = state.db.get(collection_id, record_id).await?.unwrap();
 
-    Ok(web::Json(FunctionResponse { data: record }))
+    Ok(web::Json(FunctionResponse {
+        data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
+    }))
 }
 
 #[post("/{collection}/records/{record}/call/{function}")]
@@ -324,18 +401,24 @@ async fn call_function(
     let auth = body.auth.map(indexer::AuthUser::from);
     let raft = Arc::clone(&state.raft);
 
-    raft.call(
-        collection_id.clone(),
-        record_id.clone(),
-        function,
-        body.data.args,
-        auth.as_ref(),
-    )
-    .await?;
+    let record_id = raft
+        .call(
+            collection_id.clone(),
+            function,
+            record_id,
+            body.data.args,
+            auth.as_ref(),
+        )
+        .await?;
 
-    let record = state.db.get(collection_id, record_id).await?.unwrap();
+    let record = state.db.get(collection_id, record_id).await?;
 
-    Ok(web::Json(FunctionResponse { data: record }))
+    Ok(web::Json(FunctionResponse {
+        data: match record {
+            Some(record) => indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
+            None => serde_json::Value::Null,
+        },
+    }))
 }
 
 #[get("/v0/health")]

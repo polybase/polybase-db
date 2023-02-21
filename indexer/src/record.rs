@@ -3,10 +3,7 @@ use std::{borrow::Cow, collections::HashMap, error::Error};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    keys::{self, BYTE_BOOLEAN, BYTE_BYTES, BYTE_NULL, BYTE_NUMBER, BYTE_STRING},
-    publickey,
-};
+use crate::{keys, publickey};
 
 pub type Result<T> = std::result::Result<T, RecordError>;
 
@@ -59,6 +56,9 @@ pub enum RecordError {
 
     #[error("IO error")]
     IOError(#[from] std::io::Error),
+
+    #[error("base64 decode error")]
+    Base64DecodeError(#[from] base64::DecodeError),
 
     #[error("serde_json error")]
     SerdeJSONError(#[from] serde_json::Error),
@@ -115,6 +115,7 @@ pub fn record_to_json(value: RecordRoot) -> Result<serde_json::Value> {
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum RecordValue {
     IndexValue(IndexValue),
+    Bytes(Vec<u8>),
     Map(HashMap<String, RecordValue>),
     Array(Vec<RecordValue>),
     RecordReference(RecordReference),
@@ -159,6 +160,56 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     x => {
                         if always_cast {
                             Ok(RecordValue::IndexValue(IndexValue::String("".to_string())))
+                        } else {
+                            Err(RecordError::InvalidSerdeJSONType {
+                                value: x,
+                                field: None,
+                            })
+                        }
+                    }
+                },
+                (PrimitiveType::Bytes, value) => match value {
+                    serde_json::Value::String(s) => Ok(RecordValue::Bytes({
+                        let mut r = base64::engine::general_purpose::STANDARD.decode(s.as_bytes());
+
+                        if r.is_err() && always_cast {
+                            r = Ok(vec![]);
+                        }
+
+                        r?
+                    })),
+                    serde_json::Value::Null if always_cast => Ok(RecordValue::Bytes(vec![])),
+                    serde_json::Value::Bool(b) if always_cast => {
+                        Ok(RecordValue::Bytes(vec![b as u8]))
+                    }
+                    serde_json::Value::Number(n) if always_cast => {
+                        let mut r = n.as_f64().ok_or(RecordError::FailedToConvertNumberToF64);
+                        if r.is_err() && always_cast {
+                            r = Ok(0.0);
+                        }
+
+                        let r = r?;
+
+                        Ok(RecordValue::Bytes({
+                            let mut r =
+                                base64::engine::general_purpose::STANDARD.decode(r.to_le_bytes());
+
+                            if r.is_err() && always_cast {
+                                r = Ok(vec![]);
+                            }
+
+                            r?
+                        }))
+                    }
+                    serde_json::Value::Array(a) if always_cast => {
+                        Ok(RecordValue::Bytes(serde_json::to_vec(&a)?))
+                    }
+                    serde_json::Value::Object(o) if always_cast => {
+                        Ok(RecordValue::Bytes(serde_json::to_vec(&o)?))
+                    }
+                    x => {
+                        if always_cast {
+                            Ok(RecordValue::Bytes(vec![]))
                         } else {
                             Err(RecordError::InvalidSerdeJSONType {
                                 value: x,
@@ -344,7 +395,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
             Type::ForeignRecord(fr) => {
                 let convert = || {
                     let reference = ForeignRecordReference::try_from(value)?;
-                    let short_collection_name = fr.collection.split('/').last().unwrap();
+                    let short_collection_name = reference.collection_id.split('/').last().unwrap();
 
                     if short_collection_name != fr.collection {
                         return Err::<_, RecordError>(
@@ -375,6 +426,9 @@ impl TryFrom<RecordValue> for serde_json::Value {
     fn try_from(value: RecordValue) -> Result<Self> {
         match value {
             RecordValue::IndexValue(v) => Ok(serde_json::Value::try_from(v)?),
+            RecordValue::Bytes(b) => Ok(serde_json::Value::String(
+                base64::engine::general_purpose::STANDARD.encode(b),
+            )),
             RecordValue::Map(m) => {
                 let mut map = serde_json::Map::with_capacity(m.len());
                 for (k, v) in m {
@@ -407,9 +461,6 @@ impl TryFrom<IndexValue> for serde_json::Value {
             ),
             IndexValue::Boolean(b) => serde_json::Value::Bool(b),
             IndexValue::PublicKey(p) => serde_json::Value::from(p),
-            IndexValue::Bytes(b) => {
-                serde_json::Value::String(base64::engine::general_purpose::URL_SAFE.encode(b))
-            }
             IndexValue::Null => serde_json::Value::Null,
         })
     }
@@ -425,6 +476,7 @@ impl RecordValue {
             RecordValue::IndexValue(v) => {
                 f(current_path, v)?;
             }
+            RecordValue::Bytes(_) => {}
             RecordValue::Map(m) => {
                 for (k, v) in m.iter() {
                     current_path.push(Cow::Borrowed(k));
@@ -453,6 +505,9 @@ impl RecordValue {
     ) -> std::result::Result<(), E> {
         match self {
             RecordValue::IndexValue(_) => {
+                f(current_path, self)?;
+            }
+            RecordValue::Bytes(_) => {
                 f(current_path, self)?;
             }
             RecordValue::Map(m) => {
@@ -494,6 +549,7 @@ impl RecordValue {
     ) -> std::result::Result<(), E> {
         match self {
             RecordValue::IndexValue(_) => {}
+            RecordValue::Bytes(_) => {}
             RecordValue::Map(m) => {
                 f(current_path, m)?;
                 let keys = m.keys().cloned().collect::<Vec<_>>();
@@ -690,6 +746,7 @@ impl PathFinder for RecordValue {
 
         match self {
             RecordValue::IndexValue(_) => None,
+            RecordValue::Bytes(_) => None,
             RecordValue::RecordReference(_) => None,
             RecordValue::ForeignRecordReference(_) => None,
             RecordValue::Map(m) => m.find_path(path),
@@ -721,6 +778,7 @@ impl PathFinder for RecordValue {
 
         match self {
             RecordValue::IndexValue(_) => None,
+            RecordValue::Bytes(_) => None,
             RecordValue::RecordReference(_) => None,
             RecordValue::ForeignRecordReference(_) => None,
             RecordValue::Map(m) => m.find_path_mut(path),
@@ -749,7 +807,6 @@ pub enum IndexValue {
     Boolean(bool),
     Null,
     String(String),
-    Bytes(Vec<u8>),
     PublicKey(publickey::PublicKey),
 }
 
@@ -760,7 +817,6 @@ impl IndexValue {
             IndexValue::String(_) => keys::BYTE_STRING,
             IndexValue::Number(_) => keys::BYTE_NUMBER,
             IndexValue::Boolean(_) => keys::BYTE_BOOLEAN,
-            IndexValue::Bytes(_) => keys::BYTE_BYTES,
             IndexValue::PublicKey(_) => keys::BYTE_PUBLIC_KEY,
         }
     }
@@ -777,7 +833,6 @@ impl IndexValue {
                 false => Cow::Borrowed(&[0x00]),
                 true => Cow::Borrowed(&[0x01]),
             },
-            IndexValue::Bytes(b) => Cow::Borrowed(b),
             IndexValue::Null => Cow::Borrowed(&[0x00]),
             IndexValue::PublicKey(jwk) => Cow::Owned(jwk.to_indexable()),
         };
@@ -794,15 +849,17 @@ impl IndexValue {
         let type_prefix = bytes[0];
         let value = &bytes[1..];
         let value = match type_prefix {
-            BYTE_STRING => IndexValue::String(String::from_utf8(value.to_vec())?),
-            BYTE_NUMBER => IndexValue::Number(f64::from_be_bytes(value.try_into()?)),
-            BYTE_BOOLEAN => IndexValue::Boolean(match value[0] {
+            keys::BYTE_STRING => IndexValue::String(String::from_utf8(value.to_vec())?),
+            keys::BYTE_NUMBER => IndexValue::Number(f64::from_be_bytes(value.try_into()?)),
+            keys::BYTE_BOOLEAN => IndexValue::Boolean(match value[0] {
                 0x00 => false,
                 0x01 => true,
                 b => return Err(RecordError::InvalidBooleanByte { b }),
             }),
-            BYTE_BYTES => IndexValue::Bytes(value.to_vec()),
-            BYTE_NULL => IndexValue::Null,
+            keys::BYTE_NULL => IndexValue::Null,
+            keys::BYTE_PUBLIC_KEY => {
+                IndexValue::PublicKey(publickey::PublicKey::from_indexable(value)?)
+            }
             b => return Err(RecordError::InvalidTypePrefix { b }),
         };
 

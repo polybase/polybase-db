@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 
-use indexer::{Converter, FieldWalker, IndexValue, Indexer, IndexerError, PathFinder, RecordValue};
+use indexer::{
+    collection::validate_collection_record, Converter, FieldWalker, IndexValue, Indexer,
+    IndexerError, PathFinder, RecordValue,
+};
 
 pub type Result<T> = std::result::Result<T, GatewayError>;
 
@@ -21,9 +24,6 @@ pub enum GatewayError {
 
     #[error("failed to create a v8 string")]
     FailedToCreateV8String,
-
-    #[error("JavaScript exception error: {message:?}")]
-    JavaScriptException { message: String },
 
     #[error("indexer error")]
     IndexerError(#[from] indexer::IndexerError),
@@ -76,8 +76,20 @@ pub enum GatewayUserError {
     #[error("incorrect number of arguments, expected {expected:?}, got {actual:?}")]
     FunctionIncorrectNumberOfArguments { expected: usize, actual: usize },
 
+    #[error("invalid argument type for parameter {parameter_name:?}")]
+    FunctionInvalidArgumentType { parameter_name: String },
+
     #[error("you do not have permission to call this function")]
     UnauthorizedCall,
+
+    #[error("JavaScript exception error: {message}")]
+    JavaScriptException { message: String },
+
+    #[error("collection function error: {message}")]
+    CollectionFunctionError { message: String },
+
+    #[error("constructor must assign id")]
+    ConstructorMustAssignId,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -558,10 +570,13 @@ impl Gateway {
             .zip(args.into_iter())
             .map(|(param, arg)| {
                 // TODO: consider what to do with optional arguments
-                Converter::convert((&param.type_, arg), false)
+                Converter::convert((&param.type_, arg), false).map_err(|_| {
+                    GatewayUserError::FunctionInvalidArgumentType {
+                        parameter_name: param.name.to_string(),
+                    }
+                })
             })
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(IndexerError::from)?;
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let dereferenced_args = dereference_args(indexer, &collection, args, auth).await?;
         let instance_record =
@@ -581,8 +596,16 @@ impl Gateway {
             auth,
         )?;
         output.instance = reference_records(&collection, &collection_ast, output.instance)?;
-        let instance = indexer::json_to_record(&collection_ast, output.instance, false)
-            .map_err(IndexerError::from)?;
+        let instance = indexer::json_to_record(&collection_ast, output.instance, false).map_err(
+            |e| match e {
+                indexer::RecordError::MissingField { field }
+                    if field == "id" && function_name == "constructor" =>
+                {
+                    GatewayError::UserError(GatewayUserError::ConstructorMustAssignId)
+                }
+                e => GatewayError::IndexerError(IndexerError::from(e)),
+            },
+        )?;
 
         if function_name != "constructor" && instance.get("id") != instance_record.get("id") {
             return Err(GatewayUserError::RecordIDModified)?;
@@ -638,7 +661,7 @@ impl Gateway {
                     })?;
                 };
 
-                let Some(record) = (match &parameter.type_ {
+                let Some((collection_id, record)) = (match &parameter.type_ {
                     polylang::stableast::Type::Record(_) => {
                         let Some(output_id) = output_arg.get("id") else {
                             return Err(GatewayUserError::CollectionRecordIdNotFound)?;
@@ -648,7 +671,7 @@ impl Gateway {
                             return Err(GatewayUserError::RecordIDModified)?;
                         }
 
-                        Some(indexer::json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?)
+                        Some((collection.id().to_owned(), indexer::json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
                     },
                     polylang::stableast::Type::ForeignRecord(fr) => {
                         let Some(output_id) = output_arg.get("id") else {
@@ -669,14 +692,14 @@ impl Gateway {
 
                         let ast = get_collection_ast(fr.collection.as_ref(), &collection_meta)?;
 
-                        Some(indexer::json_to_record(&ast, output_arg, false).map_err(IndexerError::from)?)
+                        Some((collection_id, indexer::json_to_record(&ast, output_arg, false).map_err(IndexerError::from)?))
                     }
                     _ => None,
                 }) else {
                     continue;
                 };
 
-                records_to_update.push(record);
+                records_to_update.push((collection_id, record));
             }
 
             records_to_update
@@ -692,10 +715,19 @@ impl Gateway {
                 return Err(GatewayUserError::CollectionIdExists)?;
             }
 
+            if collection_id == "Collection" {
+                validate_collection_record(&instance).map_err(IndexerError::from)?;
+            }
+
             changes.push(Change::Create {
                 collection_id,
                 record_id: output_instance_id.to_string(),
                 record: instance,
+            });
+        } else if output.self_destruct {
+            changes.push(Change::Delete {
+                collection_id,
+                record_id: output_instance_id.to_string(),
             });
         } else {
             changes.push(Change::Update {
@@ -705,7 +737,7 @@ impl Gateway {
             });
         }
 
-        for record in records_to_update {
+        for (collection_id, record) in records_to_update {
             let Some(id) = record.get("id") else {
                 return Err(GatewayUserError::CollectionRecordIdNotFound)?;
             };
@@ -715,11 +747,13 @@ impl Gateway {
             };
 
             changes.push(Change::Update {
-                collection_id: todo!("get the collection id before dereferencing"),
+                collection_id,
                 record_id: id.to_string(),
                 record,
             });
         }
+
+        // TODO: We should call polylang's validate_set on all the records we're changing
 
         Ok(changes)
     }
@@ -887,7 +921,7 @@ impl Gateway {
             limitMethods($$__instance);
             internPublicKeys($$__instance);
             function error(str) {{
-                    throw new Error(str);
+                    throw new Error("$$__USER_ERROR:" + str);
             }}
             ctx = JSON.parse(authJSON);
             internPublicKeys(ctx);
@@ -926,14 +960,39 @@ impl Gateway {
 
         match (result, try_catch.exception()) {
             (_, Some(exception)) => {
-                let exception_string = exception
-                    .to_string(&mut try_catch)
-                    .unwrap()
-                    .to_rust_string_lossy(&mut try_catch);
+                // TODO: this doesn't work, we still get Error { message: ... }
+                let exception_string = if let Some(object) = exception.to_object(&mut try_catch) {
+                    let message_str = v8::String::new(&mut try_catch, "message").unwrap();
 
-                Err(GatewayError::JavaScriptException {
-                    message: exception_string,
-                })
+                    if let Some(message) = object.get(&mut try_catch, message_str.into()) {
+                        message
+                            .to_string(&mut try_catch)
+                            .map(|message| message.to_rust_string_lossy(&mut try_catch))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let exception_string = if let Some(s) = exception_string {
+                    s
+                } else {
+                    exception
+                        .to_string(&mut try_catch)
+                        .unwrap()
+                        .to_rust_string_lossy(&mut try_catch)
+                };
+
+                let s = exception_string.replace("$$__USER_ERROR:", "");
+                if exception_string == s {
+                    Err(GatewayUserError::JavaScriptException {
+                        message: exception_string,
+                    }
+                    .into())
+                } else {
+                    Err(GatewayUserError::CollectionFunctionError { message: s }.into())
+                }
             }
             (Some(result), _) => {
                 let result = result.to_rust_string_lossy(&mut try_catch);

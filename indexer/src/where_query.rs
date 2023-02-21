@@ -64,17 +64,17 @@ impl Serialize for FieldPath {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct WhereQuery(pub(crate) HashMap<FieldPath, WhereNode>);
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub(crate) enum WhereNode {
     Equality(WhereValue),
     Inequality(WhereInequality),
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub(crate) enum WhereValue {
     String(String),
@@ -92,7 +92,7 @@ impl From<WhereValue> for IndexValue {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub(crate) struct WhereInequality {
     #[serde(rename = "$gt")]
     pub(crate) gt: Option<WhereValue>,

@@ -99,6 +99,39 @@ pub enum CollectionUserError {
 
     #[error("invalid index key")]
     InvalidCursorKey,
+
+    #[error("collection id is missing namespace")]
+    CollectionIdMissingNamespace,
+
+    #[error("collection name cannot start with '$'")]
+    CollectionNameCannotStartWithDollarSign,
+
+    #[error("collection must have an 'id' field")]
+    CollectionMissingIdField,
+
+    #[error("collection 'id' field must be a string")]
+    CollectionIdFieldMustBeString,
+
+    #[error("collection 'id' field cannot be optional")]
+    CollectionIdFieldCannotBeOptional,
+
+    #[error("code is missing definition for collection {name}")]
+    MissingDefinitionForCollection { name: String },
+
+    #[error("index field {field:?} not found in schema")]
+    IndexFieldNotFoundInSchema { field: String },
+
+    #[error("cannot index field {field:?} of type array")]
+    IndexFieldCannotBeAnArray { field: String },
+
+    #[error("cannot index field {field:?} of type map")]
+    IndexFieldCannotBeAMap { field: String },
+
+    #[error("cannot index field {field:?} of type object")]
+    IndexFieldCannotBeAnObject { field: String },
+
+    #[error("cannot index field {field:?} of type bytes")]
+    IndexFieldCannotBeBytes { field: String },
 }
 
 static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
@@ -219,6 +252,11 @@ impl Cursor {
 
         Ok(Self(key))
     }
+
+    pub fn immediate_successor(mut self) -> Result<Self> {
+        self.0.immediate_successor_value_mut()?;
+        Ok(self)
+    }
 }
 
 impl Serialize for Cursor {
@@ -227,7 +265,7 @@ impl Serialize for Cursor {
         S: serde::Serializer,
     {
         let buf = self.0.serialize().map_err(serde::ser::Error::custom)?;
-        serializer.serialize_str(&base64::engine::general_purpose::URL_SAFE.encode(buf))
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(buf))
     }
 }
 
@@ -237,7 +275,7 @@ impl<'de> Deserialize<'de> for Cursor {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        let buf = base64::engine::general_purpose::URL_SAFE
+        let buf = base64::engine::general_purpose::STANDARD
             .decode(s.as_bytes())
             .map_err(serde::de::Error::custom)?;
         let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
@@ -304,6 +342,119 @@ pub fn validate_schema_change(
         return Err(CollectionUserError::CannotChangeFieldTypeToPublicKey {
             path: path.iter().map(|s| (*s).to_owned()).collect(),
         })?;
+    }
+
+    Ok(())
+}
+
+pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
+    let (namespace, name) =
+        if let Some(RecordValue::IndexValue(IndexValue::String(id))) = record.get("id") {
+            let Some((namespace, name)) = id.rsplit_once('/') else {
+                return Err(CollectionUserError::CollectionIdMissingNamespace)?;
+            };
+
+            (namespace, name)
+        } else {
+            unreachable!()
+        };
+
+    if namespace.is_empty() {
+        return Err(CollectionUserError::CollectionIdMissingNamespace.into());
+    }
+
+    if name.starts_with('$') {
+        return Err(CollectionUserError::CollectionNameCannotStartWithDollarSign.into());
+    }
+
+    let Some(ast) = record.get("ast") else {
+        return Err(CollectionError::CollectionRecordMissingAST);
+    };
+
+    let ast = match ast {
+        RecordValue::IndexValue(IndexValue::String(ast)) => ast,
+        _ => return Err(CollectionError::CollectionRecordASTIsNotAString),
+    };
+
+    let ast = serde_json::from_str::<polylang::stableast::Root>(ast)?;
+
+    let Some(collection) = collection_ast_from_root(ast, name) else {
+        return Err(CollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
+    };
+
+    let properties = collection
+        .attributes
+        .iter()
+        .filter_map(|a| match a {
+            stableast::CollectionAttribute::Property(p) => Some(p),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let Some(id_property) = properties.iter().find(|p| p.name == "id") else {
+        return Err(CollectionUserError::CollectionMissingIdField.into());
+    };
+
+    if id_property.type_
+        != stableast::Type::Primitive(stableast::Primitive {
+            value: stableast::PrimitiveType::String,
+        })
+    {
+        return Err(CollectionUserError::CollectionIdFieldMustBeString.into());
+    }
+
+    if !id_property.required {
+        return Err(CollectionUserError::CollectionIdFieldCannotBeOptional.into());
+    }
+
+    let indexes = collection
+        .attributes
+        .iter()
+        .filter_map(|a| match a {
+            stableast::CollectionAttribute::Index(i) => Some(i),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    for index in indexes {
+        for index_field in &index.fields {
+            let Some(field) = collection.find_field(&index_field.field_path) else {
+                return Err(CollectionUserError::IndexFieldNotFoundInSchema {
+                    field: index_field.field_path.join("."),
+                }
+                .into());
+            };
+
+            match field.type_() {
+                stableast::Type::Array(_) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeAnArray {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                stableast::Type::Map(_) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeAMap {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                stableast::Type::Object(_) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeAnObject {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                stableast::Type::Primitive(stableast::Primitive {
+                    value: stableast::PrimitiveType::Bytes,
+                }) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeBytes {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                _ => {}
+            }
+        }
     }
 
     Ok(())
@@ -406,6 +557,9 @@ impl<'a> Collection<'a> {
                 }
             }
         });
+
+        // Sort indexes by number of fields, so that we use the most specific index first
+        indexes.sort_by(|a, b| a.fields.len().cmp(&b.fields.len()));
 
         let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
 
