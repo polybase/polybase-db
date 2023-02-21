@@ -567,7 +567,10 @@ impl Gateway {
             .iter()
             .zip(args.into_iter())
             .map(|(param, arg)| {
-                // TODO: consider what to do with optional arguments
+                if !param.required & arg.is_null() {
+                    return Ok(RecordValue::Null);
+                }
+
                 Converter::convert((&param.type_, arg), false).map_err(|_| {
                     GatewayUserError::FunctionInvalidArgumentType {
                         parameter_name: param.name.to_string(),
@@ -960,7 +963,7 @@ impl Gateway {
             $auth = ctx;
             args = JSON.parse(argsJSON);
             for (const i in args) {
-                if (typeof args[i] === "object" && args[i].$$__type === "record") {
+                if (args[i] && typeof args[i] === "object" && args[i].$$__type === "record") {
                     args[i] = eval(args[i].$$__fn)(args[i].$$__data);
                     limitMethods(args[i]);
                     args[i][dereferencedRecordSymbol] = true;
