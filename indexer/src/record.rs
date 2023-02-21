@@ -344,7 +344,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
             Type::ForeignRecord(fr) => {
                 let convert = || {
                     let reference = ForeignRecordReference::try_from(value)?;
-                    let short_collection_name = fr.collection.split('/').last().unwrap();
+                    let short_collection_name = reference.collection_id.split('/').last().unwrap();
 
                     if short_collection_name != fr.collection {
                         return Err::<_, RecordError>(

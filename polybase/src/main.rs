@@ -323,7 +323,13 @@ async fn get_records(
                     // if they don't receive any records,
                     // then querying again with the returned `before` should return the `after` record,
                     // not just records before it.
-                    .or_else(|| query.after.0.clone().map(|a| a.immediate_successor())),
+                    .or_else(|| {
+                        query
+                            .after
+                            .0
+                            .clone()
+                            .map(|a| a.immediate_successor().unwrap())
+                    }),
                 after: records
                     .last()
                     .map(|(c, _)| c.clone())

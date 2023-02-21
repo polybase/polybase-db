@@ -73,6 +73,7 @@ impl From<gateway::GatewayError> for HTTPError {
         match err {
             // We only need to match the user errors
             gateway::GatewayError::UserError(e) => e.into(),
+            gateway::GatewayError::IndexerError(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
