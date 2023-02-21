@@ -10,6 +10,64 @@ use futures::{future::LocalBoxFuture, StreamExt};
 use indexer::PublicKey;
 use serde::de::DeserializeOwned;
 
+use crate::errors::http::HTTPError;
+
+pub type Result<T> = std::result::Result<T, AuthError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum AuthError {
+    #[error("missing = in key=value pair")]
+    MissingEquals,
+
+    #[error("public key must start with 0x")]
+    PublicKeyMustStartWith0x,
+
+    #[error("signature must start with 0x")]
+    SignatureMustStartWith0x,
+
+    #[error("signature must be 65 bytes")]
+    SignatureMustBe65Bytes,
+
+    #[error("missing signature")]
+    MissingSignature,
+
+    #[error("missing timestamp")]
+    MissingTimestamp,
+
+    #[error("missing version")]
+    MissingVersion,
+
+    #[error("missing hash")]
+    MissingHash,
+
+    #[error("unknown key {key:?}")]
+    UnknownKey { key: String },
+
+    #[error("invalid signature for public key")]
+    InvalidSignatureForPublicKey,
+
+    #[error("signature expired")]
+    SignatureExpired,
+
+    #[error("from hex error")]
+    FromHexError(#[from] hex::FromHexError),
+
+    #[error("parse int error")]
+    ParseIntError(#[from] std::num::ParseIntError),
+
+    #[error("actix web http header to str error")]
+    ToStrError(#[from] actix_web::http::header::ToStrError),
+
+    #[error("actix web payload error")]
+    PayloadError(#[from] actix_web::error::PayloadError),
+
+    #[error("secp256k1 error")]
+    Secp256k1Error(#[from] secp256k1::Error),
+
+    #[error("serde_json error")]
+    SerdeJsonError(#[from] serde_json::Error),
+}
+
 const TIME_TOLERANCE: u64 = 5 * 60; // 5 minutes
 
 pub(crate) struct Auth {
@@ -33,7 +91,7 @@ struct Signature {
 
 impl Signature {
     // Deserialize parses the signature in the k=v,k2=v2,... format.
-    fn deserialize(header_value: &str) -> Result<Self, String> {
+    fn deserialize(header_value: &str) -> Result<Self> {
         let mut public_key = None;
         let mut signature = None;
         let mut timestamp = None;
@@ -41,27 +99,21 @@ impl Signature {
         let mut hash = None;
 
         for kv in header_value.split(',') {
-            let mut kv = kv.split('=');
-            let k = kv.next().ok_or("missing key")?;
-            let v = kv.next().ok_or("missing value")?;
-            if kv.next().is_some() {
-                return Err("too many values".to_string());
-            }
+            let Some((k, v)) = kv.split_once('=') else {
+                return Err(AuthError::MissingEquals);
+            };
 
             match k {
                 "pk" => {
                     let original_v = v;
                     let v = v.trim_start_matches("0x");
                     if v == original_v {
-                        return Err("public key must start with 0x".to_string());
+                        return Err(AuthError::PublicKeyMustStartWith0x);
                     }
 
-                    let hex =
-                        hex::decode(v).map_err(|e| format!("invalid public key hex: {e:?}"))?;
-                    let pk = secp256k1::PublicKey::from_slice(&hex)
-                        .map_err(|e| format!("invalid public key: {e:?}"))?;
-                    let pk = PublicKey::from_secp256k1_key(&pk)
-                        .map_err(|e| format!("failed to parse public key: {e:?}"))?;
+                    let hex = hex::decode(v)?;
+                    let pk = secp256k1::PublicKey::from_slice(&hex)?;
+                    let pk = PublicKey::from_secp256k1_key(&pk)?;
 
                     public_key = Some(pk)
                 }
@@ -69,38 +121,36 @@ impl Signature {
                     let original_v = v;
                     let v = v.trim_start_matches("0x");
                     if v == original_v {
-                        return Err("signature must start with 0x".to_string());
+                        return Err(AuthError::SignatureMustStartWith0x);
                     }
 
-                    let hex = hex::decode(v).map_err(|_| "invalid signature hex")?;
+                    let hex = hex::decode(v)?;
                     if hex.len() != 65 {
-                        return Err("invalid signature length".to_string());
+                        return Err(AuthError::SignatureMustBe65Bytes);
                     }
 
                     let recoverable_signature = RecoverableSignature::from_compact(
                         &hex[0..64],
-                        RecoveryId::from_i32(hex[64] as i32)
-                            .map_err(|e| format!("invalid signature recovery id: {e:?}"))?,
-                    )
-                    .map_err(|e| format!("invalid compact signature: {e:?}"))?;
+                        RecoveryId::from_i32(hex[64] as i32)?,
+                    )?;
 
                     signature = Some(recoverable_signature)
                 }
                 "t" => {
                     // TODO: is v in seconds or milliseconds? check explorer signing message
-                    let v: u64 = v.parse().map_err(|e| format!("invalid timestamp: {e:?}"))?;
+                    let v: u64 = v.parse()?;
                     timestamp = Some(v)
                 }
                 "v" => version = Some(v.to_string()),
                 "h" => hash = Some(v.to_string()),
-                _ => return Err("invalid key".to_string()),
+                x => return Err(AuthError::UnknownKey { key: x.to_string() }),
             }
         }
 
-        let signature = signature.ok_or("missing signature")?;
-        let timestamp = timestamp.ok_or("missing timestamp")?;
-        let version = version.ok_or("missing version")?;
-        let hash = hash.ok_or("missing hash")?;
+        let signature = signature.ok_or(AuthError::MissingSignature)?;
+        let timestamp = timestamp.ok_or(AuthError::MissingTimestamp)?;
+        let version = version.ok_or(AuthError::MissingVersion)?;
+        let hash = hash.ok_or(AuthError::MissingHash)?;
 
         Ok(Self {
             public_key,
@@ -111,15 +161,11 @@ impl Signature {
         })
     }
 
-    fn verify(
-        &self,
-        body: &[u8],
-    ) -> Result<PublicKey, Box<dyn std::error::Error + Send + Sync + 'static>> {
+    fn verify(&self, body: &[u8]) -> Result<PublicKey> {
         let timestamp = self.timestamp.to_string();
         let timestamp_body_len = (timestamp.len() + 1 + body.len()).to_string();
         let message_parts = &[
-            &[19][..],
-            b"Ethereum Signed Message:\n",
+            "\u{19}Ethereum Signed Message:\n".as_bytes(),
             timestamp_body_len.as_bytes(),
             timestamp.as_bytes(),
             b".",
@@ -139,23 +185,20 @@ impl Signature {
         let sig_pk = PublicKey::from_secp256k1_key(&sig_pk)?;
 
         if self.public_key.as_ref().map_or(false, |pk| *pk != sig_pk) {
-            return Err("invalid signature".into());
+            return Err(AuthError::InvalidSignatureForPublicKey);
         }
 
         Ok(sig_pk)
     }
 
-    fn from_req(req: &actix_web::HttpRequest) -> Result<Option<Self>, actix_web::Error> {
+    fn from_req(req: &actix_web::HttpRequest) -> Result<Option<Self>> {
         let Some(signature) = req
             .headers()
             .get("X-Polybase-Signature") else { return Ok(None); };
 
-        let signature = signature
-            .to_str()
-            .map_err(|_| actix_web::error::ErrorBadRequest("invalid signature"))?;
+        let signature = signature.to_str()?;
 
-        let signature = Signature::deserialize(signature)
-            .map_err(|s| actix_web::error::ErrorBadRequest(format!("invalid signature: {s}")))?;
+        let signature = Signature::deserialize(signature)?;
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -163,7 +206,7 @@ impl Signature {
             .as_secs();
 
         if signature.timestamp + TIME_TOLERANCE < now {
-            return Err(actix_web::error::ErrorBadRequest("signature expired"));
+            return Err(AuthError::SignatureExpired);
         }
 
         Ok(Some(signature))
@@ -176,8 +219,8 @@ pub(crate) struct SignedJSON<T: DeserializeOwned> {
 }
 
 impl<T: DeserializeOwned + 'static> FromRequest for SignedJSON<T> {
-    type Error = actix_web::Error;
-    type Future = LocalBoxFuture<'static, Result<Self, Self::Error>>;
+    type Error = HTTPError;
+    type Future = LocalBoxFuture<'static, std::result::Result<Self, HTTPError>>;
 
     fn from_request(
         req: &actix_web::HttpRequest,
@@ -185,7 +228,7 @@ impl<T: DeserializeOwned + 'static> FromRequest for SignedJSON<T> {
     ) -> Self::Future {
         let sig = match Signature::from_req(req) {
             Ok(sig) => sig,
-            Err(e) => return Box::pin(ready(Err(e))),
+            Err(e) => return Box::pin(ready(Err(e.into()))),
         };
 
         let length = req
@@ -198,11 +241,12 @@ impl<T: DeserializeOwned + 'static> FromRequest for SignedJSON<T> {
         Box::pin(async move {
             let mut body = Vec::with_capacity(length.unwrap_or(0));
             while let Some(chunk) = payload.next().await {
-                body.extend_from_slice(&chunk?);
+                body.extend_from_slice(&chunk.map_err(AuthError::from)?);
             }
 
             Ok(Self {
-                data: serde_json::from_slice(if body.is_empty() { b"null" } else { &body })?,
+                data: serde_json::from_slice(if body.is_empty() { b"null" } else { &body })
+                    .map_err(AuthError::from)?,
                 auth: sig
                     .map(|sig| {
                         if std::option_env!("DEV_SKIP_SIGNATURE_VERIFICATION") == Some("1") {
@@ -211,12 +255,8 @@ impl<T: DeserializeOwned + 'static> FromRequest for SignedJSON<T> {
                             });
                         }
 
-                        Ok::<_, actix_web::Error>(Auth {
-                            public_key: sig.verify(&body).map_err(|e| {
-                                actix_web::error::ErrorUnauthorized(format!(
-                                    "failed to validate signature: {e}"
-                                ))
-                            })?,
+                        Ok::<_, AuthError>(Auth {
+                            public_key: sig.verify(&body)?,
                         })
                     })
                     .transpose()?,
@@ -265,5 +305,48 @@ mod tests {
         assert_eq!(signature.timestamp, 1234);
         assert_eq!(signature.version, "1");
         assert_eq!(signature.hash, "deadbeef");
+    }
+
+    #[test]
+    fn test_signature_verify() {
+        let (private, public) = secp256k1::generate_keypair(&mut rand::thread_rng());
+        let public = PublicKey::from_secp256k1_key(&public).unwrap();
+
+        let body = r#"{ "message": "hello world" }"#;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
+
+        let message_content = format!("{timestamp}.{body}");
+        let message_content_length = message_content.len().to_string();
+
+        let message_parts = &[
+            &[19][..],
+            b"Ethereum Signed Message:\n",
+            message_content_length.as_bytes(),
+            message_content.as_bytes(),
+        ];
+
+        let mut hasher = sha3::Keccak256::new();
+        for part in message_parts {
+            hasher.update(part);
+        }
+
+        let message_hash = hasher.finalize();
+        let message = secp256k1::Message::from_slice(&message_hash).unwrap();
+
+        let sig = secp256k1::global::SECP256K1.sign_ecdsa_recoverable(&message, &private);
+
+        let signature = Signature {
+            public_key: Some(public.clone()),
+            sig,
+            timestamp: timestamp.parse().unwrap(),
+            version: "0".to_owned(),
+            hash: "eth-personal-sign".to_owned(),
+        };
+
+        assert_eq!(signature.verify(body.as_bytes()).unwrap(), public);
     }
 }

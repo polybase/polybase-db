@@ -24,7 +24,10 @@ pub trait FieldWalker<'ast> {
     );
 
     /// Find a field by its path.
-    fn find_field(&'ast self, path: &[&str]) -> Option<Field<'ast>> {
+    fn find_field<T>(&'ast self, path: &[T]) -> Option<Field<'ast>>
+    where
+        for<'a> &'a str: std::cmp::PartialEq<T>,
+    {
         let mut found = None;
 
         self.walk_fields(&mut Vec::new(), &mut |p, f| {

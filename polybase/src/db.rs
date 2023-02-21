@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use gateway::{Change, Gateway};
+use indexer::collection::validate_collection_record;
 use indexer::{validate_schema_change, Indexer, RecordRoot};
 
 use crate::hash;
@@ -289,7 +290,9 @@ impl Db {
             serde_json::from_str(old_ast).unwrap(),
             serde_json::from_str(new_ast).unwrap(),
         )
-        .unwrap();
+        .map_err(indexer::IndexerError::from)?;
+
+        validate_collection_record(record).map_err(indexer::IndexerError::from)?;
 
         Ok(())
     }

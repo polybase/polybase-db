@@ -14,6 +14,9 @@ pub enum PublicKeyError {
     #[error("invalid type for field {field:?}, expected string")]
     InvalidTypeExpectedString { field: &'static str },
 
+    #[error("from utf8 error")]
+    FromUtf8Error(#[from] std::string::FromUtf8Error),
+
     #[error("base64 decode error")]
     Base64DecodeError(#[from] base64::DecodeError),
 }
@@ -118,6 +121,38 @@ impl PublicKey {
         v.extend_from_slice(&self.y);
 
         v
+    }
+
+    pub(crate) fn from_indexable(v: &[u8]) -> Result<Self> {
+        let mut parts = v.split(|b| *b == b'|');
+
+        let kty = parts
+            .next()
+            .ok_or(PublicKeyError::MissingField { name: "kty" })?;
+        let crv = parts
+            .next()
+            .ok_or(PublicKeyError::MissingField { name: "crv" })?;
+        let alg = parts
+            .next()
+            .ok_or(PublicKeyError::MissingField { name: "alg" })?;
+        let use_ = parts
+            .next()
+            .ok_or(PublicKeyError::MissingField { name: "use" })?;
+        let x = parts
+            .next()
+            .ok_or(PublicKeyError::MissingField { name: "x" })?;
+        let y = parts
+            .next()
+            .ok_or(PublicKeyError::MissingField { name: "y" })?;
+
+        Ok(Self {
+            kty: String::from_utf8(kty.to_vec())?,
+            crv: String::from_utf8(crv.to_vec())?,
+            alg: String::from_utf8(alg.to_vec())?,
+            use_: String::from_utf8(use_.to_vec())?,
+            x: x.to_vec(),
+            y: y.to_vec(),
+        })
     }
 }
 

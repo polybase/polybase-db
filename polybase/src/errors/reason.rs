@@ -34,6 +34,15 @@ pub enum ReasonCode {
     #[display(fmt = "function/invalid-call")]
     FunctionInvalidCall,
 
+    #[display(fmt = "function/javascript-exception")]
+    FunctionJavaScriptException,
+
+    #[display(fmt = "function/collection-error")]
+    FunctionCollectionError,
+
+    #[display(fmt = "constructor/no-id-assigned")]
+    ConstructorNoId,
+
     #[display(fmt = "collection/invalid-call")]
     CollectionRecordIdNotFound,
 
@@ -43,7 +52,7 @@ pub enum ReasonCode {
     #[display(fmt = "collection/not-found")]
     CollectionNotFound,
 
-    #[display(fmt = "collection/id-exist")]
+    #[display(fmt = "collection/id-exists")]
     CollectionIdExists,
 
     #[display(fmt = "collection/invalid-id")]
@@ -87,6 +96,9 @@ impl ReasonCode {
             ReasonCode::FunctionNotFound => ErrorCode::NotFound,
             ReasonCode::FunctionInvalidArgs => ErrorCode::InvalidArgument,
             ReasonCode::FunctionInvalidCall => ErrorCode::InvalidArgument,
+            ReasonCode::FunctionJavaScriptException => ErrorCode::FailedPrecondition,
+            ReasonCode::FunctionCollectionError => ErrorCode::FailedPrecondition,
+            ReasonCode::ConstructorNoId => ErrorCode::InvalidArgument,
             ReasonCode::CollectionNotFound => ErrorCode::NotFound,
             ReasonCode::CollectionIdExists => ErrorCode::AlreadyExists,
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
@@ -134,6 +146,20 @@ impl ReasonCode {
             }
 
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
+
+            gateway::GatewayUserError::JavaScriptException { .. } => {
+                ReasonCode::FunctionJavaScriptException
+            }
+
+            gateway::GatewayUserError::CollectionFunctionError { .. } => {
+                ReasonCode::FunctionCollectionError
+            }
+
+            gateway::GatewayUserError::FunctionInvalidArgumentType { .. } => {
+                ReasonCode::FunctionInvalidArgs
+            }
+
+            gateway::GatewayUserError::ConstructorMustAssignId => ReasonCode::ConstructorNoId,
         }
     }
 
@@ -162,6 +188,39 @@ impl ReasonCode {
             indexer::collection::CollectionUserError::UnauthorizedRead => ReasonCode::Unauthorized,
             indexer::collection::CollectionUserError::InvalidCursorKey => {
                 ReasonCode::IndexerInvalidCursorKey
+            }
+            indexer::collection::CollectionUserError::CollectionIdMissingNamespace => {
+                ReasonCode::CollectionInvalidId
+            }
+            indexer::collection::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
+                ReasonCode::CollectionInvalidId
+            }
+            indexer::collection::CollectionUserError::MissingDefinitionForCollection { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::CollectionMissingIdField => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::CollectionIdFieldMustBeString => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::CollectionIdFieldCannotBeOptional => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            indexer::collection::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
+                ReasonCode::CollectionInvalidSchema
             }
         }
     }
