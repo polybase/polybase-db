@@ -186,12 +186,12 @@ async fn dereference_fields(
             _ => continue,
         };
 
-        let Some(RecordValue::IndexValue(IndexValue::String(value))) = map.get("id") else {
+        let Some(RecordValue::String(value)) = map.get("id") else {
             return Err(GatewayUserError::CollectionRecordIdNotFound)?;
         };
 
         let collection = if let polylang::stableast::Type::ForeignRecord(fr) = type_ {
-            let Some(RecordValue::IndexValue(IndexValue::String(collection_id))) = map.get("collectionId") else { 
+            let Some(RecordValue::String(collection_id)) = map.get("collectionId") else { 
                 return Err(GatewayUserError::RecordCollectionIdNotFound)?;
             };
 
@@ -361,9 +361,7 @@ async fn has_permission_to_call(
         };
 
         match value {
-            RecordValue::IndexValue(indexer::IndexValue::PublicKey(pk))
-                if pk == auth.public_key() =>
-            {
+            RecordValue::PublicKey(pk) if pk == auth.public_key() => {
                 return Ok(true);
             }
             RecordValue::RecordReference(r) => {
@@ -462,7 +460,7 @@ fn get_collection_ast<'a>(
         return Err(GatewayError::CollectionHasNoAST)?;
     };
 
-    let RecordValue::IndexValue(IndexValue::String(ast_str)) = ast else {
+    let RecordValue::String(ast_str) = ast else {
         return Err(GatewayError::CollectionASTNotString)?;
     };
 
@@ -614,7 +612,7 @@ impl Gateway {
         let Some(output_instance_id) = instance.get("id") else {
             return Err(GatewayUserError::CollectionRecordIdNotFound)?;
         };
-        let RecordValue::IndexValue(IndexValue::String(output_instance_id)) = output_instance_id else {
+        let RecordValue::String(output_instance_id) = output_instance_id else {
             return Err(GatewayUserError::RecordIdNotString)?;
         };
 
@@ -742,7 +740,7 @@ impl Gateway {
                 return Err(GatewayUserError::CollectionRecordIdNotFound)?;
             };
 
-            let RecordValue::IndexValue(IndexValue::String(id)) = id else {
+            let RecordValue::String(id) = id else {
                 return Err(GatewayUserError::RecordIdNotString)?;
             };
 
@@ -1111,17 +1109,10 @@ mod tests {
             .set(
                 "ns/User".to_string(),
                 &[
-                    (
-                        "id".into(),
-                        indexer::RecordValue::IndexValue(indexer::IndexValue::String(
-                            "ns/User".into(),
-                        )),
-                    ),
+                    ("id".into(), indexer::RecordValue::String("ns/User".into())),
                     (
                         "ast".into(),
-                        indexer::RecordValue::IndexValue(indexer::IndexValue::String(
-                            serde_json::to_string(&stable_ast).unwrap(),
-                        )),
+                        indexer::RecordValue::String(serde_json::to_string(&stable_ast).unwrap()),
                     ),
                 ]
                 .into(),
@@ -1134,16 +1125,8 @@ mod tests {
             .set(
                 "1".to_string(),
                 &[
-                    (
-                        "id".into(),
-                        indexer::RecordValue::IndexValue(indexer::IndexValue::String("1".into())),
-                    ),
-                    (
-                        "name".into(),
-                        indexer::RecordValue::IndexValue(indexer::IndexValue::String(
-                            "John".into(),
-                        )),
-                    ),
+                    ("id".into(), indexer::RecordValue::String("1".into())),
+                    ("name".into(), indexer::RecordValue::String("John".into())),
                 ]
                 .into(),
             )
@@ -1170,14 +1153,8 @@ mod tests {
                 collection_id: "ns/User".to_string(),
                 record_id: "1".to_string(),
                 record: HashMap::from([
-                    (
-                        "id".into(),
-                        indexer::RecordValue::IndexValue(indexer::IndexValue::String("1".into()))
-                    ),
-                    (
-                        "name".into(),
-                        indexer::RecordValue::IndexValue(indexer::IndexValue::String("Tim".into()))
-                    )
+                    ("id".into(), indexer::RecordValue::String("1".into())),
+                    ("name".into(), indexer::RecordValue::String("Tim".into()))
                 ])
             }
         );

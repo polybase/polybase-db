@@ -274,12 +274,12 @@ impl Db {
             .get("ast")
             .expect("Collection AST not found in collection record");
 
-        let indexer::RecordValue::IndexValue(indexer::IndexValue::String(old_ast)) = old_ast
+        let indexer::RecordValue::String(old_ast) = old_ast
             else {
                 return Err(DbError::CollectionASTInvalid("Collection AST in old record is not a string".into()));
             };
 
-        let indexer::RecordValue::IndexValue(indexer::IndexValue::String(new_ast)) = record
+        let indexer::RecordValue::String(new_ast) = record
                 .get("ast")
                 .expect("Collection AST not found in new collection record") else {
             return Err(DbError::CollectionASTInvalid("Collection AST in new ".into()));

@@ -57,6 +57,7 @@ pub(crate) const BYTE_NULL: u8 = 0x00;
 pub(crate) const BYTE_STRING: u8 = 0x04;
 pub(crate) const BYTE_NUMBER: u8 = 0x05;
 pub(crate) const BYTE_BOOLEAN: u8 = 0x06;
+#[allow(dead_code)]
 pub(crate) const BYTE_BYTES: u8 = 0x07;
 pub(crate) const BYTE_PUBLIC_KEY: u8 = 0x08;
 
@@ -160,7 +161,7 @@ pub(crate) enum Key<'a> {
     Index {
         cid: Cow<'a, [u8]>,
         directions: Cow<'a, [Direction]>,
-        values: Vec<Cow<'a, IndexValue>>,
+        values: Vec<Cow<'a, IndexValue<'a>>>,
     },
 }
 
@@ -204,7 +205,7 @@ impl<'a> Key<'a> {
         namespace: String,
         paths: &[&[impl AsRef<str>]],
         directions: &[Direction],
-        values: Vec<Cow<'a, IndexValue>>,
+        values: Vec<Cow<'a, IndexValue<'a>>>,
     ) -> Result<Self> {
         let data = proto::IndexKey {
             namespace,
@@ -331,7 +332,7 @@ impl<'a> Key<'a> {
                 directions: Cow::Owned(directions.into_owned()),
                 values: values
                     .into_iter()
-                    .map(|v| Cow::Owned(v.into_owned()))
+                    .map(|v| Cow::Owned(v.into_owned().with_static()))
                     .collect(),
             },
         }
@@ -417,7 +418,7 @@ where
         .collect::<Vec<_>>();
 
     for missing_field in &missing_fields {
-        found_values.push((missing_field, &IndexValue::Null));
+        found_values.push((missing_field, IndexValue::Null));
     }
 
     found_values.sort_by(|(p1, _), (p2, _)| {
@@ -429,7 +430,7 @@ where
 
     let found_values = found_values
         .into_iter()
-        .map(|(_, v)| Cow::Borrowed(v))
+        .map(|(_, v)| Cow::Owned(v))
         .collect::<Vec<_>>();
 
     let key = Key::new_index(namespace, paths, directions, found_values)?;
@@ -439,8 +440,6 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::record::RecordValue;
-
     use super::*;
 
     impl Key<'_> {
@@ -462,7 +461,7 @@ mod test {
 
     #[test]
     fn test_index_value_string() {
-        let value = IndexValue::String("hello".to_string());
+        let value = IndexValue::String("hello".to_string().into());
         let mut serialized = vec![];
         value.serialize(&mut serialized).unwrap();
         let (field, _) = eat_field(&serialized);
@@ -508,7 +507,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Descending],
             vec![
-                Cow::Borrowed(&IndexValue::String("hello".to_string())),
+                Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -518,7 +517,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Descending],
             vec![
-                Cow::Borrowed(&IndexValue::String("hello".to_string())),
+                Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -533,7 +532,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("hello".to_string())),
+                Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -543,7 +542,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("hello".to_string())),
+                Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
             ],
         )
@@ -558,7 +557,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("hello".to_string())),
+                Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
             ],
         )
@@ -568,7 +567,7 @@ mod test {
             &[&["a"], &["b"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("hello".to_string())),
+                Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
             ],
         )
@@ -582,14 +581,18 @@ mod test {
             "namespace".to_string(),
             &[&["a"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("hello2".to_string()))]
+            vec![Cow::Borrowed(&IndexValue::String(
+                "hello2".to_string().into()
+            ))]
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
             &[&["a"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("hello".to_string()))]
+            vec![Cow::Borrowed(&IndexValue::String(
+                "hello".to_string().into()
+            ))]
         )
         .unwrap(),
         Ordering::Greater
@@ -652,7 +655,7 @@ mod test {
             &[Direction::Ascending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String("John".to_string())),
+                Cow::Borrowed(&IndexValue::String("John".to_string().into())),
             ],
         )
         .unwrap(),
@@ -683,7 +686,7 @@ mod test {
             &[Direction::Ascending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String("John".to_string())),
+                Cow::Borrowed(&IndexValue::String("John".to_string().into())),
             ],
         )
         .unwrap(),
@@ -828,7 +831,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
-                Cow::Borrowed(&IndexValue::String("1".to_string())),
+                Cow::Borrowed(&IndexValue::String("1".to_string().into())),
             ],
         )
         .unwrap(),
@@ -871,7 +874,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(40.0)),
-                Cow::Borrowed(&IndexValue::String("2".to_string())),
+                Cow::Borrowed(&IndexValue::String("2".to_string().into())),
             ],
         )
         .unwrap(),
@@ -881,7 +884,7 @@ mod test {
             &[Direction::Descending, Direction::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(39.0)),
-                Cow::Borrowed(&IndexValue::String("2".to_string())),
+                Cow::Borrowed(&IndexValue::String("2".to_string().into())),
             ],
         )
         .unwrap(),
@@ -895,8 +898,8 @@ mod test {
             &[&["name"], &["id"]],
             &[Direction::Ascending, Direction::Ascending],
             vec![
-                Cow::Borrowed(&IndexValue::String("John".to_string())),
-                Cow::Borrowed(&IndexValue::String("rec1".to_string())),
+                Cow::Borrowed(&IndexValue::String("John".to_string().into())),
+                Cow::Borrowed(&IndexValue::String("rec1".to_string().into())),
             ],
         )
         .unwrap(),
@@ -904,7 +907,9 @@ mod test {
             "namespace".to_string(),
             &[&["name"], &["id"]],
             &[Direction::Ascending, Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("Jane".to_string()))],
+            vec![Cow::Borrowed(&IndexValue::String(
+                "Jane".to_string().into()
+            ))],
         )
         .unwrap()
         .wildcard(),
@@ -917,14 +922,16 @@ mod test {
             "namespace".to_string(),
             &[&["id"]],
             &[Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("3/last".to_string()))],
+            vec![Cow::Borrowed(&IndexValue::String(
+                "3/last".to_string().into()
+            ))],
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
             &[&["id"]],
             &[Direction::Ascending],
-            vec![Cow::Borrowed(&IndexValue::String("2".to_string())),],
+            vec![Cow::Borrowed(&IndexValue::String("2".to_string().into()))],
         )
         .unwrap(),
         Ordering::Greater
