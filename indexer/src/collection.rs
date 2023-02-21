@@ -352,11 +352,11 @@ impl<'a> Collection<'a> {
             None => return Err(CollectionError::CollectionRecordMissingID),
         };
 
-        let short_collection_name = id.split('/').last().unwrap();
+        let short_collection_name = Collection::normalize_name(id.as_str());
 
         let collection_ast: stableast::Collection = match record.get("ast") {
             Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
-                collection_ast_from_json(ast, short_collection_name)?
+                collection_ast_from_json(ast, short_collection_name.as_str())?
             }
             Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
             None => return Err(CollectionError::CollectionRecordMissingAST),
@@ -455,8 +455,17 @@ impl<'a> Collection<'a> {
         &self.collection_id
     }
 
-    pub fn name(&self) -> &str {
-        self.collection_id.split('/').last().unwrap()
+    pub fn name(&self) -> String {
+        Self::normalize_name(self.collection_id.as_str())
+    }
+
+    pub fn normalize_name(collection_id: &str) -> String {
+        collection_id
+            .split('/')
+            .last()
+            .unwrap()
+            .to_string()
+            .replace('-', "_")
     }
 
     pub fn namespace(&self) -> &str {
@@ -920,7 +929,7 @@ impl<'a> Collection<'a> {
 
         let collection_ast = match meta.get("ast") {
             Some(RecordValue::IndexValue(IndexValue::String(ast))) => {
-                collection_ast_from_json(ast, self.name())?
+                collection_ast_from_json(ast, self.name().as_str())?
             }
             _ => return Err(CollectionError::CollectionRecordMissingAST),
         };

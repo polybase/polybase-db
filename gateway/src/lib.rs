@@ -495,7 +495,7 @@ impl Gateway {
             })?;
         };
 
-        let collection_ast = get_collection_ast(collection.name(), &meta)?;
+        let collection_ast = get_collection_ast(collection.name().as_str(), &meta)?;
 
         let js_collection = polylang::js::generate_js_collection(&collection_ast);
 
@@ -942,6 +942,15 @@ impl Gateway {
             (None, None) => unreachable!(),
         }
     }
+}
+
+fn normalized_collection_name(collection_id: &str) -> String {
+    collection_id
+        .split('/')
+        .last()
+        .unwrap()
+        .to_string()
+        .replace("-", "_")
 }
 
 #[cfg(test)]

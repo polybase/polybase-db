@@ -108,7 +108,8 @@ async fn main() -> Result<()> {
 
         let records = get_records::<serde_json::Value>(collection_id.as_str()).await?;
         let records_len = records.len();
-        let col_ast = indexer::collection::collection_ast_from_json(&ast, name(collection_id))?;
+        let col_ast =
+            indexer::collection::collection_ast_from_json(&ast, name(collection_id).as_str())?;
 
         for record in records {
             let id = record.data.get("id").unwrap().as_str().unwrap();
@@ -135,6 +136,7 @@ async fn main() -> Result<()> {
 fn convert_public_key(public_key_str: &str) -> Result<PublicKey> {
     let hex_str = normalize_hex(public_key_str);
     let res = hex::decode(&hex_str).unwrap();
+    // hex::from_hex(hex_str.as_str()).unwrap();
     let pubkey = &Secp256k1PublicKey::from_str(hex_str.as_str()).unwrap();
     Ok(PublicKey::from_secp256k1_key(pubkey)?)
 }
@@ -218,8 +220,13 @@ fn encode(s: &str) -> String {
     byte_serialize(s.as_bytes()).collect::<String>()
 }
 
-fn name(collection_id: &str) -> &str {
-    collection_id.split('/').last().unwrap()
+fn name(collection_id: &str) -> String {
+    collection_id
+        .split('/')
+        .last()
+        .unwrap()
+        .to_string()
+        .replace("-", "_")
 }
 
 fn namespace(collection_id: &str) -> &str {
