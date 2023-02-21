@@ -377,6 +377,8 @@ impl RmqttRaftStore for RaftConnector {
                 // Send commit to DB
                 self.db.commit(key).await?;
 
+                debug!(self.shared.logger, "db updated: {commit_id}"; "time" => timer.elapsed().as_millis());
+
                 // Finalise the commit, and notify all call waiters
                 self.shared.end_commit()?;
 
