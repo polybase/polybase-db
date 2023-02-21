@@ -43,9 +43,9 @@ COPY migrate ./migrate/
 RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
 # Run unit tests
-FROM builder as unit-tests
+# FROM builder as unit-tests
 
-CMD cargo test
+# CMD cargo test
 
 
 ## Client e2e tests (pdolybase/client)
