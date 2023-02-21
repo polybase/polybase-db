@@ -1074,7 +1074,7 @@ impl<'a> Collection<'a> {
         &self,
         // The old collection record, loaded before the AST was changed
         old_collection: Collection<'async_recursion>,
-        _old_collection_record: &RecordRoot,
+        old_collection_record: &RecordRoot,
     ) -> Result<()> {
         let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
         let meta = collection_collection
@@ -1088,6 +1088,16 @@ impl<'a> Collection<'a> {
             Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
             _ => return Err(CollectionError::CollectionRecordMissingAST),
         };
+
+        let old_collection_ast = match old_collection_record.get("ast") {
+            Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
+            _ => return Err(CollectionError::CollectionRecordMissingAST),
+        };
+
+        if collection_ast == old_collection_ast {
+            // Collection code was not changed, no need to rebuild anything
+            return Ok(());
+        }
 
         // TODO: diff old and new ASTs to determine which indexes need to be rebuilt
         // For now, let's just rebuild all indexes
