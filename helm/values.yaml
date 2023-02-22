@@ -41,7 +41,7 @@ extraEnvVarsSecret: ""
 
 ## @param replicaCount Number of Polybase replicas
 ##
-replicaCount: 3
+replicaCount: 1
 ## @param updateStrategy.type updateStrategy for Polybase statefulset
 ## ref: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#update-strategies
 ##
@@ -97,10 +97,10 @@ nodeSelector:
 ## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
 ##
 tolerations:
-  - key: "app-pool"
-    operator: "Equal"
-    value: "true"
-    effect: "NoSchedule"
+- key: "app-pool"
+  operator: "Equal"
+  value: "true"
+  effect: "NoSchedule"
 ## @param topologySpreadConstraints Topology Spread Constraints for pod assignment
 ## https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/
 ## The value is evaluated as a template
@@ -127,11 +127,12 @@ containerSecurityContext:
 
 resources:
   limits:
-    cpu: 3
-    memory: 4Gi
+     cpu: 3
+     memory: 4Gi
   requests:
-    cpu: 1500m
-    memory: 1Gi
+     cpu: 1500m
+     memory: 1Gi
+
 
 livenessProbe:
   enabled: true
@@ -218,6 +219,7 @@ containerPorts:
   tendermint_metrics: 26660
   public_api: 8080
 
+
 ## Polybase pods ServiceAccount
 ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
 ##
@@ -287,6 +289,7 @@ service:
   ##
   annotations:
     cloud.google.com/backend-config: '{"default": "polybase"}'
+    cloud.google.com/neg: '{"ingress": true}'
   ## @param service.sessionAffinity Session Affinity for Kubernetes service, can be "None" or "ClientIP"
   ## If "ClientIP", consecutive client requests will be directed to the same Pod
   ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#virtual-ips-and-service-proxies
@@ -346,5 +349,5 @@ persistence:
   ## @param persistence.size PVC Storage Request for Polybase data volume
   ##
   size: 50Gi
-
+ 
   mountPath: /polybase
