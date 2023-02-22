@@ -76,7 +76,7 @@ jobs:
         run: |-
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-      - name: Deploy
-        run: |-
-          cd ./helm/
-          helm upgrade --install --set image.tag=${{ steps.vars.outputs.tag }} polybase . -f testnet-values.yaml -n polybase
+    #  - name: Deploy
+    #    run: |-
+    #      cd ./helm/
+    #      helm upgrade --install --set image.tag=${{ steps.vars.outputs.tag }} polybase . -f testnet-values.yaml -n polybase
