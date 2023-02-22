@@ -8,7 +8,7 @@ name: Test
 
 jobs:
   test:
-    name: Unit tests
+    name: Tests
     runs-on: ubuntu-latest-16-cores
     steps:
       - name: Checkout
