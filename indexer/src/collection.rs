@@ -139,7 +139,7 @@ static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
 
     hm.insert(
         "id".to_string(),
-        RecordValue::String("collections".to_string()),
+        RecordValue::String("Collection".to_string()),
     );
 
     let code = r#"
