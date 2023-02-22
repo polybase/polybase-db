@@ -531,13 +531,7 @@ async fn main() -> Result<(), AppError> {
     let server_logger = logger.clone();
 
     let server = HttpServer::new(move || {
-        let cors = Cors::default()
-            .allow_any_origin()
-            .send_wildcard()
-            .allowed_methods(vec!["GET", "POST"])
-            .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
-            .allowed_header(header::CONTENT_TYPE)
-            .max_age(3600);
+        let cors = Cors::permissive();
 
         App::new()
             .app_data(web::Data::new(RouteState {
