@@ -78,7 +78,7 @@ where
                                 error = source;
                             }
                             if err.reason == ReasonCode::Internal {
-                                sentry::capture_error(&err);
+                                sentry::capture_error(&error.source().unwrap_or(&err));
                                 crit!(logger, "Error: {output}");
                             } else {
                                 error!(logger, "Error: {output}");
