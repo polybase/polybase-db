@@ -471,7 +471,6 @@ async fn find_leader_info(
                 info!(logger, "error finding leader: {err}");
             }
         }
-        info!(logger, "no leader found, retrying");
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
