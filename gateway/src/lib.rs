@@ -803,8 +803,8 @@ impl Gateway {
                         {
                             Ok(x) => x,
                             Err(e) => {
-                                let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
-                                let exception = v8::Exception::type_error(scope, error);
+                                let error_msg = v8::String::new(scope, &e.message).unwrap();
+                                let exception = v8::Exception::error(scope, error_msg);
                                 scope.throw_exception(exception);
                                 return;
                             }
@@ -993,29 +993,23 @@ impl Gateway {
 
         match (result, try_catch.exception()) {
             (_, Some(exception)) => {
-                // TODO: this doesn't work, we still get Error { message: ... }
-                let exception_string = if let Some(object) = exception.to_object(&mut try_catch) {
+                let msg = (|| {
+                    // Extract `message` property from exception object
                     let message_str = v8::String::new(&mut try_catch, "message").unwrap();
 
-                    if let Some(message) = object.get(&mut try_catch, message_str.into()) {
-                        message
-                            .to_string(&mut try_catch)
-                            .map(|message| message.to_rust_string_lossy(&mut try_catch))
-                    } else {
-                        None
+                    if let Some(object) = exception.to_object(&mut try_catch) {
+                        if let Some(message) = object.get(&mut try_catch, message_str.into()) {
+                            return message;
+                        }
                     }
-                } else {
-                    None
-                };
 
-                let exception_string = if let Some(s) = exception_string {
-                    s
-                } else {
                     exception
-                        .to_string(&mut try_catch)
-                        .unwrap()
-                        .to_rust_string_lossy(&mut try_catch)
-                };
+                })();
+
+                let exception_string = msg
+                    .to_string(&mut try_catch)
+                    .unwrap()
+                    .to_rust_string_lossy(&mut try_catch);
 
                 let s = exception_string.replace("$$__USER_ERROR:", "");
                 if exception_string == s {
