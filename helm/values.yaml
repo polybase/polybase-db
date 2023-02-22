@@ -41,7 +41,7 @@ extraEnvVarsSecret: ""
 
 ## @param replicaCount Number of Polybase replicas
 ##
-replicaCount: 4
+replicaCount: 3
 ## @param updateStrategy.type updateStrategy for Polybase statefulset
 ## ref: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#update-strategies
 ##
@@ -97,10 +97,10 @@ nodeSelector:
 ## ref: https://kubernetes.io/docs/concepts/configuration/taint-and-toleration/
 ##
 tolerations:
-- key: "app-pool"
-  operator: "Equal"
-  value: "true"
-  effect: "NoSchedule"
+  - key: "app-pool"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
 ## @param topologySpreadConstraints Topology Spread Constraints for pod assignment
 ## https://kubernetes.io/docs/concepts/workloads/pods/pod-topology-spread-constraints/
 ## The value is evaluated as a template
@@ -127,12 +127,11 @@ containerSecurityContext:
 
 resources:
   limits:
-     cpu: 3
-     memory: 4Gi
+    cpu: 3
+    memory: 4Gi
   requests:
-     cpu: 1500m
-     memory: 1Gi
-
+    cpu: 1500m
+    memory: 1Gi
 
 livenessProbe:
   enabled: true
@@ -218,7 +217,6 @@ containerPorts:
   tendermint_rpc: 26657
   tendermint_metrics: 26660
   public_api: 8080
-
 
 ## Polybase pods ServiceAccount
 ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
@@ -348,5 +346,5 @@ persistence:
   ## @param persistence.size PVC Storage Request for Polybase data volume
   ##
   size: 50Gi
- 
+
   mountPath: /polybase
