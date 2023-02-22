@@ -567,7 +567,10 @@ impl Gateway {
             .iter()
             .zip(args.into_iter())
             .map(|(param, arg)| {
-                // TODO: consider what to do with optional arguments
+                if !param.required & arg.is_null() {
+                    return Ok(RecordValue::Null);
+                }
+
                 Converter::convert((&param.type_, arg), false).map_err(|_| {
                     GatewayUserError::FunctionInvalidArgumentType {
                         parameter_name: param.name.to_string(),
@@ -751,8 +754,6 @@ impl Gateway {
             });
         }
 
-        // TODO: We should call polylang's validate_set on all the records we're changing
-
         Ok(changes)
     }
 
@@ -802,8 +803,8 @@ impl Gateway {
                         {
                             Ok(x) => x,
                             Err(e) => {
-                                let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
-                                let exception = v8::Exception::type_error(scope, error);
+                                let error_msg = v8::String::new(scope, &e.message).unwrap();
+                                let exception = v8::Exception::error(scope, error_msg);
                                 scope.throw_exception(exception);
                                 return;
                             }
@@ -960,7 +961,7 @@ impl Gateway {
             $auth = ctx;
             args = JSON.parse(argsJSON);
             for (const i in args) {
-                if (typeof args[i] === "object" && args[i].$$__type === "record") {
+                if (args[i] && typeof args[i] === "object" && args[i].$$__type === "record") {
                     args[i] = eval(args[i].$$__fn)(args[i].$$__data);
                     limitMethods(args[i]);
                     args[i][dereferencedRecordSymbol] = true;
@@ -992,29 +993,23 @@ impl Gateway {
 
         match (result, try_catch.exception()) {
             (_, Some(exception)) => {
-                // TODO: this doesn't work, we still get Error { message: ... }
-                let exception_string = if let Some(object) = exception.to_object(&mut try_catch) {
+                let msg = (|| {
+                    // Extract `message` property from exception object
                     let message_str = v8::String::new(&mut try_catch, "message").unwrap();
 
-                    if let Some(message) = object.get(&mut try_catch, message_str.into()) {
-                        message
-                            .to_string(&mut try_catch)
-                            .map(|message| message.to_rust_string_lossy(&mut try_catch))
-                    } else {
-                        None
+                    if let Some(object) = exception.to_object(&mut try_catch) {
+                        if let Some(message) = object.get(&mut try_catch, message_str.into()) {
+                            return message;
+                        }
                     }
-                } else {
-                    None
-                };
 
-                let exception_string = if let Some(s) = exception_string {
-                    s
-                } else {
                     exception
-                        .to_string(&mut try_catch)
-                        .unwrap()
-                        .to_rust_string_lossy(&mut try_catch)
-                };
+                })();
+
+                let exception_string = msg
+                    .to_string(&mut try_catch)
+                    .unwrap()
+                    .to_rust_string_lossy(&mut try_catch);
 
                 let s = exception_string.replace("$$__USER_ERROR:", "");
                 if exception_string == s {
@@ -1048,7 +1043,15 @@ fn normalized_collection_name(collection_id: &str) -> String {
 mod tests {
     use std::ops::{Deref, DerefMut};
 
+    use slog::Drain;
+
     use super::*;
+
+    fn logger() -> slog::Logger {
+        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        slog::Logger::root(drain, slog::o!())
+    }
 
     pub(crate) struct TestIndexer(Option<Indexer>);
 
@@ -1060,7 +1063,7 @@ mod tests {
                 rand::random::<u32>()
             ));
 
-            Self(Some(Indexer::new(path).unwrap()))
+            Self(Some(Indexer::new(logger(), path).unwrap()))
         }
     }
 

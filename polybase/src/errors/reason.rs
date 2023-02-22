@@ -1,6 +1,6 @@
 use derive_more::Display;
 
-use crate::errors::code::ErrorCode;
+use crate::{auth, errors::code::ErrorCode};
 
 #[derive(Debug, Display, PartialEq)]
 pub enum ReasonCode {
@@ -76,6 +76,9 @@ pub enum ReasonCode {
     #[display(fmt = "indexer/invalid-cursor")]
     IndexerInvalidCursorKey,
 
+    #[display(fmt = "auth/invalid-signature")]
+    AuthInvalidSignature,
+
     #[display(fmt = "unauthorized")]
     Unauthorized,
 
@@ -110,6 +113,7 @@ impl ReasonCode {
             ReasonCode::IndexerQueryInequalityNotLast => ErrorCode::InvalidArgument,
             ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
             ReasonCode::IndexerInvalidCursorKey => ErrorCode::InvalidArgument,
+            ReasonCode::AuthInvalidSignature => ErrorCode::InvalidArgument,
             ReasonCode::Unauthorized => ErrorCode::PermissionDenied,
             ReasonCode::Internal => ErrorCode::Internal,
         }
@@ -223,5 +227,9 @@ impl ReasonCode {
                 ReasonCode::CollectionInvalidSchema
             }
         }
+    }
+
+    pub fn from_auth_error(_err: &auth::AuthUserError) -> Self {
+        ReasonCode::AuthInvalidSignature
     }
 }

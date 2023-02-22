@@ -198,6 +198,7 @@ pub(crate) struct PrivateAuthorization {
 
 #[derive(Clone)]
 pub struct Collection<'a> {
+    logger: slog::Logger,
     store: &'a store::Store,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
@@ -372,7 +373,7 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
 
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast)?;
 
-    let Some(collection) = collection_ast_from_root(ast, name) else {
+    let Some(collection) = collection_ast_from_root(ast, &Collection::normalize_name( name)) else {
         return Err(CollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
     };
 
@@ -456,12 +457,14 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
 
 impl<'a> Collection<'a> {
     fn new(
+        logger: slog::Logger,
         store: &'a store::Store,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
         authorization: Authorization,
     ) -> Self {
         Self {
+            logger: logger.new(slog::o!("collection" => collection_id.clone())),
             store,
             collection_id,
             indexes,
@@ -469,17 +472,33 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub(crate) async fn load(store: &'a store::Store, id: String) -> Result<Collection<'_>> {
+    pub(crate) async fn load(
+        logger: slog::Logger,
+        store: &'a store::Store,
+        id: String,
+    ) -> Result<Collection<'_>> {
         let collection_collection = Self::new(
+            logger.clone(),
             store,
             "Collection".to_string(),
-            // TODO: add more indexes to this collection
-            vec![index::CollectionIndex::new(vec![
-                index::CollectionIndexField::new(
+            vec![
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
                     vec![Cow::Borrowed("id")],
                     keys::Direction::Ascending,
-                ),
-            ])],
+                )]),
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                    vec![Cow::Borrowed("name")],
+                    keys::Direction::Ascending,
+                )]),
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                    vec![Cow::Borrowed("lastRecordUpdated")],
+                    keys::Direction::Ascending,
+                )]),
+                index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                    vec![Cow::Borrowed("publicKey")],
+                    keys::Direction::Ascending,
+                )]),
+            ],
             Authorization::Public,
         );
 
@@ -558,6 +577,7 @@ impl<'a> Collection<'a> {
         let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
 
         Ok(Self {
+            logger: logger.clone(),
             store,
             collection_id: id.to_string(),
             indexes,
@@ -685,8 +705,12 @@ impl<'a> Collection<'a> {
             }
 
             for foreign_record_reference in foreign_record_references {
-                let collection =
-                    Collection::load(self.store, foreign_record_reference.collection_id).await?;
+                let collection = Collection::load(
+                    self.logger.clone(),
+                    self.store,
+                    foreign_record_reference.collection_id,
+                )
+                .await?;
 
                 let Some(record) = collection
                     .get(foreign_record_reference.id, Some(user))
@@ -749,7 +773,9 @@ impl<'a> Collection<'a> {
                     }
                 }
                 RecordValue::ForeignRecordReference(fr) => {
-                    let collection = Collection::load(self.store, fr.collection_id.clone()).await?;
+                    let collection =
+                        Collection::load(self.logger.clone(), self.store, fr.collection_id.clone())
+                            .await?;
 
                     let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
                         continue;
@@ -877,7 +903,7 @@ impl<'a> Collection<'a> {
         }
 
         let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.store, id.clone()).await {
+            match Collection::load(self.logger.clone(), self.store, id.clone()).await {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -887,6 +913,8 @@ impl<'a> Collection<'a> {
         } else {
             None
         };
+
+        let old_value = self.get_without_auth_check(id.clone()).await?;
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
@@ -898,24 +926,16 @@ impl<'a> Collection<'a> {
         self.update_record_metadata(id.clone(), &SystemTime::now())
             .await?;
 
-        // TODO: ignore index failures
-        let index_value = store::Value::IndexValue(proto::IndexRecord {
-            id: data_key.serialize()?,
-        });
-        for index in self.indexes.iter() {
-            let index_key = keys::index_record_key_with_record(
-                self.collection_id.clone(),
-                &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-                &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-                value,
-            )?;
-
-            self.store.set(&index_key, &index_value).await?;
+        if let Some(old_value) = old_value {
+            // delete the indexes for the old values
+            self.delete_indexes(&id, &old_value).await;
         }
+
+        self.add_indexes(&id, &data_key, value).await;
 
         if self.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {
-                let target_col = Collection::load(self.store, id).await?;
+                let target_col = Collection::load(self.logger.clone(), self.store, id).await?;
 
                 target_col.rebuild(collection_before, value).await?;
             }
@@ -954,14 +974,82 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
+    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
+        let index_value = store::Value::IndexValue(proto::IndexRecord {
+            id: match data_key.serialize() {
+                Ok(data) => data,
+                Err(e) => {
+                    slog::crit!(self.logger, "failed to serialize data key: {e}");
+                    return;
+                }
+            },
+        });
+
+        for index in self.indexes.iter() {
+            if let Err(indexing_failure) = async {
+                let index_key = keys::index_record_key_with_record(
+                    self.collection_id.clone(),
+                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+                    record,
+                )?;
+
+                self.store.set(&index_key, &index_value).await?;
+
+                Ok::<_, CollectionError>(())
+            }
+            .await
+            {
+                slog::crit!(
+                    self.logger,
+                    "indexing failure: {indexing_failure}";
+                    "record" => record_id,
+                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
+                );
+            }
+        }
+    }
+
+    async fn delete_indexes(&self, record_id: &str, record: &RecordRoot) {
+        for index in self.indexes.iter() {
+            if let Err(deindexing_failure) = async {
+                let index_key = keys::index_record_key_with_record(
+                    self.collection_id.clone(),
+                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+                    record,
+                )?;
+
+                self.store.delete(&index_key).await?;
+
+                Ok::<_, CollectionError>(())
+            }
+            .await
+            {
+                slog::crit!(
+                    self.logger,
+                    "failed to delete index: {deindexing_failure}";
+                    "record" => record_id,
+                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
+                );
+            }
+        }
+    }
+
     pub async fn delete(&self, id: String) -> Result<()> {
+        let Some(record) = self.get_without_auth_check(id.clone()).await? else {
+            return Ok(());
+        };
+
         let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
         self.store.delete(&key).await?;
 
         let now = SystemTime::now();
         self.update_metadata(&now).await?;
-        self.update_record_metadata(id, &now).await?;
+        self.update_record_metadata(id.clone(), &now).await?;
+
+        self.delete_indexes(&id, &record).await;
 
         Ok(())
     }
@@ -1040,17 +1128,18 @@ impl<'a> Collection<'a> {
         .filter_map(|r| async {
             match r {
                 Ok((cursor, record)) => {
-                    if !self
-                        .user_can_read(&record, user)
-                        .await
-                        // TODO: should we propagate this error?
-                        .unwrap_or(false)
-                    {
-                        // Skip records that the user can't read
-                        return None;
+                    match self.user_can_read(&record, user).await {
+                        Ok(false) => None,
+                        Ok(true) => Some(Ok((cursor, record))),
+                        Err(e) => {
+                            // TODO: should we propagate this error?
+                            slog::warn!(
+                                self.logger,
+                                "failed to check if user can read record: {e:#?}",
+                            );
+                            None
+                        }
                     }
-
-                    Some(Ok((cursor, record)))
                 }
                 Err(e) => Some(Err(e)),
             }
@@ -1063,9 +1152,10 @@ impl<'a> Collection<'a> {
         &self,
         // The old collection record, loaded before the AST was changed
         old_collection: Collection<'async_recursion>,
-        _old_collection_record: &RecordRoot,
+        old_collection_record: &RecordRoot,
     ) -> Result<()> {
-        let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
+        let collection_collection =
+            Collection::load(self.logger.clone(), self.store, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;
@@ -1077,6 +1167,16 @@ impl<'a> Collection<'a> {
             Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
             _ => return Err(CollectionError::CollectionRecordMissingAST),
         };
+
+        let old_collection_ast = match old_collection_record.get("ast") {
+            Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
+            _ => return Err(CollectionError::CollectionRecordMissingAST),
+        };
+
+        if collection_ast == old_collection_ast {
+            // Collection code was not changed, no need to rebuild anything
+            return Ok(());
+        }
 
         // TODO: diff old and new ASTs to determine which indexes need to be rebuilt
         // For now, let's just rebuild all indexes
@@ -1116,21 +1216,28 @@ impl<'a> Collection<'a> {
 #[cfg(test)]
 mod tests {
     use futures::TryStreamExt;
+    use slog::Drain;
 
     use crate::store::tests::TestStore;
 
     use super::*;
 
+    fn logger() -> slog::Logger {
+        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        slog::Logger::root(drain, slog::o!())
+    }
+
     #[tokio::test]
     async fn test_collection_collection_load() {
         let store = TestStore::default();
-        let collection = Collection::load(&store, "Collection".to_string())
+        let collection = Collection::load(logger(), &store, "Collection".to_string())
             .await
             .unwrap();
 
         assert_eq!(collection.collection_id, "Collection");
         assert_eq!(collection.authorization, Authorization::Public);
-        assert_eq!(collection.indexes.len(), 1);
+        assert_eq!(collection.indexes.len(), 4);
         assert_eq!(
             collection.indexes[0],
             index::CollectionIndex::new(vec![index::CollectionIndexField::new(
@@ -1144,7 +1251,7 @@ mod tests {
         store: &'a TestStore,
         ast: stableast::Root<'_>,
     ) -> Vec<Collection<'a>> {
-        let collection_collection = Collection::load(store, "Collection".to_string())
+        let collection_collection = Collection::load(logger(), store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1174,7 +1281,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            collections.push(Collection::load(store, id).await.unwrap());
+            collections.push(Collection::load(logger(), store, id).await.unwrap());
         }
 
         collections
@@ -1265,7 +1372,13 @@ mod tests {
     #[tokio::test]
     async fn test_collection_set_get() {
         let store = TestStore::default();
-        let collection = Collection::new(&store, "test".to_string(), vec![], Authorization::Public);
+        let collection = Collection::new(
+            logger(),
+            &store,
+            "test".to_string(),
+            vec![],
+            Authorization::Public,
+        );
 
         let value = HashMap::from([
             ("id".to_string(), RecordValue::String("1".into())),
@@ -1286,6 +1399,7 @@ mod tests {
     async fn test_collection_set_list() {
         let store = TestStore::default();
         let collection = Collection::new(
+            logger(),
             &store,
             "test".to_string(),
             vec![index::CollectionIndex {

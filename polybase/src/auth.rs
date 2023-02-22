@@ -16,6 +16,21 @@ pub type Result<T> = std::result::Result<T, AuthError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuthError {
+    #[error("user error")]
+    User(#[from] AuthUserError),
+
+    #[error("actix web http header to str error")]
+    ToStr(#[from] actix_web::http::header::ToStrError),
+
+    #[error("actix web payload error")]
+    Payload(#[from] actix_web::error::PayloadError),
+
+    #[error("secp256k1 error")]
+    Secp256k1(#[from] secp256k1::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AuthUserError {
     #[error("missing = in key=value pair")]
     MissingEquals,
 
@@ -43,29 +58,35 @@ pub enum AuthError {
     #[error("unknown key {key:?}")]
     UnknownKey { key: String },
 
-    #[error("invalid signature for public key")]
-    InvalidSignatureForPublicKey,
+    #[error("public key does not match key recovered from signature")]
+    SignaturePublicKeyMismatch,
 
     #[error("signature expired")]
     SignatureExpired,
 
-    #[error("from hex error")]
-    FromHexError(#[from] hex::FromHexError),
+    #[error("failed to decode hex parameter {parameter:?}")]
+    FailedToDecodeHexParameter {
+        parameter: String,
+        source: hex::FromHexError,
+    },
 
-    #[error("parse int error")]
-    ParseIntError(#[from] std::num::ParseIntError),
+    #[error("failed to decode timestamp")]
+    FailedToDecodeTimestamp(#[source] std::num::ParseIntError),
 
-    #[error("actix web http header to str error")]
-    ToStrError(#[from] actix_web::http::header::ToStrError),
+    #[error("invalid recovery id {n:?}")]
+    InvalidRecoveryId { n: u8, source: secp256k1::Error },
 
-    #[error("actix web payload error")]
-    PayloadError(#[from] actix_web::error::PayloadError),
+    #[error("failed to decode public key")]
+    FailedToDecodePublicKey(#[source] secp256k1::Error),
 
-    #[error("secp256k1 error")]
-    Secp256k1Error(#[from] secp256k1::Error),
+    #[error("invalid signature")]
+    InvalidSignature(#[source] secp256k1::Error),
+
+    #[error("failed to recover public key")]
+    FailedToRecoverPublicKey(#[source] secp256k1::Error),
 
     #[error("serde_json error")]
-    SerdeJsonError(#[from] serde_json::Error),
+    FailedToParseBody(#[source] serde_json::Error),
 }
 
 const TIME_TOLERANCE: u64 = 5 * 60; // 5 minutes
@@ -84,6 +105,7 @@ impl From<Auth> for indexer::AuthUser {
 struct Signature {
     public_key: Option<PublicKey>,
     sig: RecoverableSignature,
+    /// Unix timestamp in *milliseconds*.
     timestamp: u64,
     version: String,
     hash: String,
@@ -100,7 +122,7 @@ impl Signature {
 
         for kv in header_value.split(',') {
             let Some((k, v)) = kv.split_once('=') else {
-                return Err(AuthError::MissingEquals);
+                return Err(AuthUserError::MissingEquals.into());
             };
 
             match k {
@@ -108,12 +130,19 @@ impl Signature {
                     let original_v = v;
                     let v = v.trim_start_matches("0x");
                     if v == original_v {
-                        return Err(AuthError::PublicKeyMustStartWith0x);
+                        return Err(AuthUserError::PublicKeyMustStartWith0x.into());
                     }
 
-                    let hex = hex::decode(v)?;
-                    let pk = secp256k1::PublicKey::from_slice(&hex)?;
-                    let pk = PublicKey::from_secp256k1_key(&pk)?;
+                    let hex = hex::decode(v).map_err(|source| {
+                        AuthUserError::FailedToDecodeHexParameter {
+                            parameter: "pk".to_string(),
+                            source,
+                        }
+                    })?;
+                    let pk = secp256k1::PublicKey::from_slice(&hex)
+                        .map_err(AuthUserError::FailedToDecodePublicKey)?;
+                    let pk = PublicKey::from_secp256k1_key(&pk)
+                        .map_err(AuthUserError::FailedToDecodePublicKey)?;
 
                     public_key = Some(pk)
                 }
@@ -121,38 +150,46 @@ impl Signature {
                     let original_v = v;
                     let v = v.trim_start_matches("0x");
                     if v == original_v {
-                        return Err(AuthError::SignatureMustStartWith0x);
+                        return Err(AuthUserError::SignatureMustStartWith0x.into());
                     }
 
-                    let hex = hex::decode(v)?;
+                    let hex = hex::decode(v).map_err(|source| {
+                        AuthUserError::FailedToDecodeHexParameter {
+                            parameter: "sig".to_string(),
+                            source,
+                        }
+                    })?;
                     if hex.len() != 65 {
-                        return Err(AuthError::SignatureMustBe65Bytes);
+                        return Err(AuthUserError::SignatureMustBe65Bytes.into());
                     }
 
                     let rec_id = if hex[64] >= 27 { hex[64] - 27 } else { hex[64] };
 
                     let recoverable_signature = RecoverableSignature::from_compact(
                         &hex[0..64],
-                        RecoveryId::from_i32(rec_id as i32)?,
-                    )?;
+                        RecoveryId::from_i32(rec_id as i32).map_err(|source| {
+                            AuthUserError::InvalidRecoveryId { n: rec_id, source }
+                        })?,
+                    )
+                    .map_err(AuthUserError::InvalidSignature)?;
 
                     signature = Some(recoverable_signature)
                 }
                 "t" => {
-                    // TODO: is v in seconds or milliseconds? check explorer signing message
-                    let v: u64 = v.parse()?;
+                    // Example t from explorer: 1677023964425000
+                    let v: u64 = v.parse().map_err(AuthUserError::FailedToDecodeTimestamp)?;
                     timestamp = Some(v)
                 }
                 "v" => version = Some(v.to_string()),
                 "h" => hash = Some(v.to_string()),
-                x => return Err(AuthError::UnknownKey { key: x.to_string() }),
+                x => return Err(AuthUserError::UnknownKey { key: x.to_string() }.into()),
             }
         }
 
-        let signature = signature.ok_or(AuthError::MissingSignature)?;
-        let timestamp = timestamp.ok_or(AuthError::MissingTimestamp)?;
-        let version = version.ok_or(AuthError::MissingVersion)?;
-        let hash = hash.ok_or(AuthError::MissingHash)?;
+        let signature = signature.ok_or(AuthError::User(AuthUserError::MissingSignature))?;
+        let timestamp = timestamp.ok_or(AuthError::User(AuthUserError::MissingTimestamp))?;
+        let version = version.ok_or(AuthError::User(AuthUserError::MissingVersion))?;
+        let hash = hash.ok_or(AuthError::User(AuthUserError::MissingHash))?;
 
         Ok(Self {
             public_key,
@@ -183,11 +220,12 @@ impl Signature {
 
         let sig_pk = self
             .sig
-            .recover(&secp256k1::Message::from_slice(&message_hash)?)?;
+            .recover(&secp256k1::Message::from_slice(&message_hash)?)
+            .map_err(|source| AuthError::User(AuthUserError::FailedToRecoverPublicKey(source)))?;
         let sig_pk = PublicKey::from_secp256k1_key(&sig_pk)?;
 
         if self.public_key.as_ref().map_or(false, |pk| *pk != sig_pk) {
-            return Err(AuthError::InvalidSignatureForPublicKey);
+            return Err(AuthUserError::SignaturePublicKeyMismatch.into());
         }
 
         Ok(sig_pk)
@@ -207,8 +245,8 @@ impl Signature {
             .unwrap()
             .as_secs();
 
-        if signature.timestamp + TIME_TOLERANCE < now {
-            return Err(AuthError::SignatureExpired);
+        if signature.timestamp / 1000 + TIME_TOLERANCE < now {
+            return Err(AuthUserError::SignatureExpired.into());
         }
 
         Ok(Some(signature))
@@ -248,6 +286,7 @@ impl<T: DeserializeOwned + 'static> FromRequest for SignedJSON<T> {
 
             Ok(Self {
                 data: serde_json::from_slice(if body.is_empty() { b"null" } else { &body })
+                    .map_err(AuthUserError::FailedToParseBody)
                     .map_err(AuthError::from)?,
                 auth: sig
                     .map(|sig| {

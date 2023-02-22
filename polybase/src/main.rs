@@ -436,7 +436,7 @@ async fn main() -> std::io::Result<()> {
     let logger = slog::Logger::root(drain, slog_o!("version" => env!("CARGO_PKG_VERSION")));
 
     let indexer_dir = get_indexer_dir(&config.root_dir);
-    let indexer = Arc::new(Indexer::new(indexer_dir).unwrap());
+    let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).unwrap());
 
     let db = Arc::new(Db::new(Arc::clone(&indexer)));
 

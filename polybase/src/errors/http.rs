@@ -155,7 +155,15 @@ impl From<indexer::IndexerError> for HTTPError {
 
 impl From<auth::AuthError> for HTTPError {
     fn from(err: auth::AuthError) -> Self {
-        // TODO: use a proper reason code. E2E tests expect a BadRequest
-        HTTPError::new(ReasonCode::RecordIdNotString, Some(Box::new(err)))
+        match err {
+            auth::AuthError::User(e) => e.into(),
+            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+        }
+    }
+}
+
+impl From<auth::AuthUserError> for HTTPError {
+    fn from(err: auth::AuthUserError) -> Self {
+        HTTPError::new(ReasonCode::from_auth_error(&err), Some(Box::new(err)))
     }
 }
