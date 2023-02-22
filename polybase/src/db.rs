@@ -39,15 +39,17 @@ pub struct Db {
     gateway: Gateway,
     rollup: Rollup,
     pub indexer: Arc<Indexer>,
+    logger: slog::Logger,
 }
 
 impl Db {
-    pub fn new(indexer: Arc<Indexer>) -> Self {
+    pub fn new(indexer: Arc<Indexer>, logger: slog::Logger) -> Self {
         Self {
             pending: PendingQueue::new(),
             rollup: Rollup::new(),
             gateway: gateway::initialize(),
             indexer,
+            logger,
         }
     }
 
@@ -71,32 +73,35 @@ impl Db {
         record.map_err(|e| DbError::IndexerError(e.into()))
     }
 
-    pub async fn commit(&self, commit_until_key: [u8; 32]) -> Result<()> {
+    pub async fn commit(&self, commit_until_key: [u8; 32]) {
         // TODO: If there is a commit to collection metadata, we should ignore other changes?
 
         // Cachce collections
         while let Some(value) = self.pending.pop() {
             let (key, change) = value;
+
             // Insert into indexer
-            match change {
+            let res = match change {
                 Change::Create {
                     record,
                     collection_id,
                     record_id,
-                } => {
-                    self.set(key, collection_id, record_id, record).await?;
-                }
+                } => self.set(key, collection_id, record_id, record).await,
                 Change::Update {
                     record,
                     collection_id,
                     record_id,
-                } => {
-                    self.set(key, collection_id, record_id, record).await?;
-                }
+                } => self.set(key, collection_id, record_id, record).await,
                 Change::Delete {
                     record_id,
                     collection_id,
-                } => self.delete(key, collection_id, record_id).await?,
+                } => self.delete(key, collection_id, record_id).await,
+            };
+
+            // TODO: is the best way to handle an error in commit?
+            match res {
+                Ok(_) => {}
+                Err(e) => warn!(self.logger, "error committing change: {:?}", e),
             }
 
             // Commit up until this point
@@ -104,8 +109,6 @@ impl Db {
                 break;
             }
         }
-
-        Ok(())
     }
 
     async fn delete(&self, key: [u8; 32], collection_id: String, record_id: String) -> Result<()> {
