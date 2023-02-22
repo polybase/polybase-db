@@ -40,7 +40,7 @@ pub enum DbError {
 pub struct Db {
     pending: PendingQueue<[u8; 32], Change>,
     gateway: Gateway,
-    rollup: Rollup,
+    pub rollup: Rollup,
     pub indexer: Arc<Indexer>,
     logger: slog::Logger,
 }
@@ -111,6 +111,11 @@ impl Db {
             if key == commit_until_key {
                 break;
             }
+        }
+
+        match self.rollup.commit() {
+            Ok(_) => {}
+            Err(e) => warn!(self.logger, "error committing rollup: {:?}", e),
         }
     }
 

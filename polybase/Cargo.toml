@@ -34,6 +34,10 @@ futures-util = "0.3.26"
 dirs = "4.0.0"
 sentry = "0.29.3"
 hex = "0.4.3"
+actix-cors = "0.6.4"
+env_logger = "0.10.0"
+slog-scope = "4.4.0"
+slog-stdlog = "4.1.1"
 
 [dev-dependencies]
 tokio-test = "0.4.2"
