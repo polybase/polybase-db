@@ -34,6 +34,7 @@ futures-util = "0.3.26"
 dirs = "4.0.0"
 sentry = "0.29.3"
 hex = "0.4.3"
+actix-cors = "0.6.4"
 
 [dev-dependencies]
 tokio-test = "0.4.2"

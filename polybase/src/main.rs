@@ -12,6 +12,8 @@ mod pending;
 mod raft;
 mod rollup;
 
+use actix_cors::Cors;
+use actix_web::http::header;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use futures::TryStreamExt;
@@ -432,7 +434,7 @@ async fn health() -> impl Responder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StatusResponse {
     status: String,
-    root: Option<String>,
+    root: String,
     peers: usize,
     leader: usize,
 }
@@ -441,7 +443,7 @@ struct StatusResponse {
 async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
     Ok(web::Json(StatusResponse {
         status: "OK".to_string(),
-        root: state.db.rollup.root().unwrap_or(None).map(hex::encode),
+        root: hex::encode(state.db.rollup.root().unwrap()),
         peers: 23,
         leader: 12,
     }))
@@ -512,6 +514,13 @@ async fn main() -> std::io::Result<()> {
     let server_logger = logger.clone();
 
     let server = HttpServer::new(move || {
+        // let cors = Cors::default()
+        //     .allowed_origin("*")
+        //     .allowed_methods(vec!["GET", "POST"])
+        //     .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
+        //     .allowed_header(header::CONTENT_TYPE)
+        //     .max_age(3600);
+
         App::new()
             .app_data(web::Data::new(RouteState {
                 db: Arc::clone(&db),
@@ -519,6 +528,7 @@ async fn main() -> std::io::Result<()> {
                 raft: Arc::clone(&server_raft),
             }))
             .wrap(SlogMiddleware::new(server_logger.clone()))
+            // .wrap(cors)
             .service(root)
             .service(health)
             .service(raft_status)

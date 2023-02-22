@@ -1,8 +1,8 @@
+use rand::Rng;
 use std::sync::RwLock;
 use winter_crypto::hashers::Rp64_256;
-use winter_crypto::Digest;
 
-use crate::hash;
+use crate::hash::{self, hash_bytes};
 use indexer::RecordRoot;
 use rbmerkle::RedBlackTree;
 
@@ -72,22 +72,30 @@ impl Rollup {
         Ok(())
     }
 
-    pub fn root(&self) -> Result<Option<[u8; 32]>> {
-        let mut state = match self.state.write() {
+    pub fn hash(&self) -> Result<Option<[u8; 32]>> {
+        let state = match self.state.write() {
             Ok(state) => state,
             Err(_) => return Err(RollupError::LockError),
         };
-
-        return Ok(state.hash.clone());
+        Ok(state.hash)
     }
 
-    pub fn commit(&self) -> Result<Option<[u8; 32]>> {
+    pub fn root(&self) -> Result<[u8; 32]> {
+        match self.hash()? {
+            Some(hash) => Ok(hash),
+            None => self.commit(),
+        }
+    }
+
+    pub fn commit(&self) -> Result<[u8; 32]> {
         let mut state = match self.state.write() {
             Ok(state) => state,
             Err(_) => return Err(RollupError::LockError),
         };
-        let hash = state.tree.root_hash().map(|p| p.as_bytes());
-        state.hash = hash;
-        Ok(hash.clone())
+        // let hash = state.tree.root_hash().map(|p| p.as_bytes());
+        let random_bytes = rand::thread_rng().gen::<[u8; 32]>();
+        let hash = hash_bytes(random_bytes.to_vec());
+        state.hash = Some(hash);
+        Ok(hash)
     }
 }
