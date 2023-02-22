@@ -33,6 +33,7 @@ derive_more = "0.99.17"
 thiserror = "1.0.38"
 futures-util = "0.3.26"
 dirs = "4.0.0"
+sentry = "0.29.3"
 
 [dev-dependencies]
 tokio-test = "0.4.2"

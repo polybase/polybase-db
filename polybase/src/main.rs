@@ -45,7 +45,10 @@ struct RouteState {
 async fn root() -> impl Responder {
     HttpResponse::Ok()
         .content_type("application/json")
-        .body(r#"{ "server": "Polybase", "version": "0.1.0" }"#)
+        .body(format!(
+            "{{ \"server\": \"Polybase\", \"version\": \"{}\" }}",
+            env!("CARGO_PKG_VERSION")
+        ))
 }
 
 #[derive(Default)]
@@ -427,8 +430,22 @@ async fn health() -> impl Responder {
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    let _guard = sentry::init((
+        "https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376",
+        sentry::ClientOptions {
+            release: sentry::release_name!(),
+            environment: Some(
+                std::env::var("ENV_NAME")
+                    .unwrap_or("dev".to_string())
+                    .into(),
+            ),
+            ..Default::default()
+        },
+    ));
+
     let config = Config::parse();
 
+    // Logs
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
