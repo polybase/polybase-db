@@ -432,7 +432,8 @@ async fn raft_init_setup(raft: RmqttRaft<RaftConnector>, peers: Vec<String>, log
 
     info!(logger, "peers: {:?}", p);
 
-    let leader_info = raft.find_leader_info(p).await.unwrap();
+    let leader_info = find_leader_info(&raft, p, logger.clone()).await.unwrap();
+
     info!(logger, "leader_info: {:?}", leader_info);
 
     match leader_info {
@@ -444,6 +445,34 @@ async fn raft_init_setup(raft: RmqttRaft<RaftConnector>, peers: Vec<String>, log
             info!(logger, "running in leader mode");
             raft.lead(id).await.unwrap();
         }
+    }
+}
+
+async fn find_leader_info(
+    raft: &RmqttRaft<RaftConnector>,
+    peers: Vec<String>,
+    logger: slog::Logger,
+) -> rmqtt_raft::Result<Option<(u64, String)>> {
+    loop {
+        match raft.find_leader_info(peers.clone()).await {
+            Ok(Some((leader_id, leader_addr))) => {
+                return Ok(Some((leader_id, leader_addr)));
+            }
+            Ok(None) => return Ok(None),
+            Err(err) => {
+                match err {
+                    rmqtt_raft::Error::LeaderNotExist => {
+                        info!(logger, "no leader found, retrying");
+                    }
+                    _ => {
+                        return Err(err);
+                    }
+                }
+                info!(logger, "error finding leader: {err}");
+            }
+        }
+        info!(logger, "no leader found, retrying");
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
