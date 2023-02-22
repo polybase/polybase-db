@@ -20,6 +20,8 @@ jobs:
           context: .
           file: ./docker/Dockerfile
           push: false
+          build-args: |
+            RELEASE=0
           outputs: type=docker
           cache-from: type=gha
           cache-to: type=gha,mode=max
