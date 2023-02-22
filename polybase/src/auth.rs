@@ -105,6 +105,7 @@ impl From<Auth> for indexer::AuthUser {
 struct Signature {
     public_key: Option<PublicKey>,
     sig: RecoverableSignature,
+    /// Unix timestamp in *milliseconds*.
     timestamp: u64,
     version: String,
     hash: String,
@@ -175,7 +176,7 @@ impl Signature {
                     signature = Some(recoverable_signature)
                 }
                 "t" => {
-                    // TODO: is v in seconds or milliseconds? check explorer signing message
+                    // Example t from explorer: 1677023964425000
                     let v: u64 = v.parse().map_err(AuthUserError::FailedToDecodeTimestamp)?;
                     timestamp = Some(v)
                 }
@@ -244,7 +245,7 @@ impl Signature {
             .unwrap()
             .as_secs();
 
-        if signature.timestamp + TIME_TOLERANCE < now {
+        if signature.timestamp / 1000 + TIME_TOLERANCE < now {
             return Err(AuthUserError::SignatureExpired.into());
         }
 
