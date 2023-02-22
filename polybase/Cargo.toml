@@ -14,7 +14,6 @@ rbmerkle = { path = "../rbmerkle" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = { version = "2.2", features = ["json"] }
-hex = "0.4.3"
 futures = "0.3.26"
 sha3 = "0.10.6"
 secp256k1 = { version = "0.26", features = ["recovery", "global-context"] }
@@ -34,6 +33,7 @@ thiserror = "1.0.38"
 futures-util = "0.3.26"
 dirs = "4.0.0"
 sentry = "0.29.3"
+hex = "0.4.3"
 
 [dev-dependencies]
 tokio-test = "0.4.2"

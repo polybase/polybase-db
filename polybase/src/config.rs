@@ -7,6 +7,10 @@ use clap::{Parser, ValueEnum};
 #[command(author, version, about = "The p2p decentralized database", long_about = None)]
 #[command(propagate_version = true)]
 pub struct Config {
+    /// ID of the node
+    #[arg(long, env = "ID")]
+    pub id: Option<u64>,
+
     /// Root directory where application data is stored
     #[arg(short, long, env = "ROOT_DIR", default_value = "~/.polybase")]
     pub root_dir: String,

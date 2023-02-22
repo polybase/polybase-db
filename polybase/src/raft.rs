@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 // use bincode::{serde_json::from_slice, serialize};
-use rand::Rng;
 use rmqtt_raft::{Config as RaftConfig, Mailbox, Raft as RmqttRaft, Store as RmqttRaftStore};
 use serde::{Deserialize, Serialize};
 use slog::{debug, info};
@@ -110,14 +109,17 @@ impl Drop for Raft {
 
 impl Raft {
     pub fn new(
+        id: u64,
         laddr: String,
         peers: Vec<String>,
         db: Arc<Db>,
         logger: slog::Logger,
     ) -> (Self, JoinHandle<()>) {
-        let cfg = RaftConfig {
+        let mut cfg = RaftConfig {
             ..Default::default()
         };
+
+        cfg.raft_cfg.check_quorum = false;
 
         let shared = Arc::new(RaftSharedState {
             logger: logger.clone(),
@@ -145,12 +147,19 @@ impl Raft {
         });
 
         // Create the server handle
-        let handle = tokio::spawn(raft_init_setup(raft, peers, logger.clone()));
+        let handle = tokio::spawn(raft_init_setup(id, raft, peers, logger.clone()));
 
         // Start the loop to commit every ~1 second
         tokio::spawn(commit_interval(Arc::clone(&shared)));
 
         (Self { shared }, handle)
+    }
+
+    pub async fn status(&self) -> Result<rmqtt_raft::Status> {
+        match self.shared.mailbox.status().await {
+            Ok(status) => Ok(status),
+            Err(e) => Err(RaftError::Raft(e)),
+        }
     }
 
     // Proxy call() to Raft so that all nodes apply .call() in the same order. We need to await
@@ -416,23 +425,17 @@ impl RmqttRaftStore for RaftConnector {
         }
     }
 }
+async fn raft_init_setup(
+    id: u64,
+    raft: RmqttRaft<RaftConnector>,
+    peers: Vec<String>,
+    logger: slog::Logger,
+) {
+    info!(logger, "peers: {:?}", peers);
 
-async fn raft_init_setup(raft: RmqttRaft<RaftConnector>, peers: Vec<String>, logger: slog::Logger) {
-    let id: u64 = rand::thread_rng().gen();
-    let mut p: Vec<String> = peers.clone();
-
-    // TEMP FIX: remove own hostname
-    if let Ok(hostname) = std::env::var("HOSTNAME") {
-        p = peers
-            .iter()
-            .filter(|p| !p.starts_with(&hostname))
-            .cloned()
-            .collect();
-    }
-
-    info!(logger, "peers: {:?}", p);
-
-    let leader_info = find_leader_info(&raft, p, logger.clone()).await.unwrap();
+    let leader_info = find_leader_info(&raft, peers, logger.clone())
+        .await
+        .unwrap();
 
     info!(logger, "leader_info: {:?}", leader_info);
 
@@ -454,7 +457,7 @@ async fn find_leader_info(
     logger: slog::Logger,
 ) -> rmqtt_raft::Result<Option<(u64, String)>> {
     loop {
-        match raft.find_leader_info(peers.clone()).await {
+        match get_leader_info(raft, peers.clone()).await {
             Ok(Some((leader_id, leader_addr))) => {
                 return Ok(Some((leader_id, leader_addr)));
             }
@@ -473,6 +476,28 @@ async fn find_leader_info(
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+async fn get_leader_info(
+    raft: &RmqttRaft<RaftConnector>,
+    peers: Vec<String>,
+) -> rmqtt_raft::Result<Option<(u64, String)>> {
+    let leader_info = None;
+    for peer in peers {
+        match raft.find_leader_info(vec![peer]).await {
+            Ok(addr) => match addr {
+                Some(leader) => return Ok(Some(leader)),
+                None => continue,
+            },
+            Err(e) => match e {
+                // If we get LeaderNotExist, it may be because the first node to respond
+                // is not active
+                rmqtt_raft::Error::LeaderNotExist => continue,
+                _ => return Err(e),
+            },
+        }
+    }
+    Ok(leader_info)
 }
 
 async fn commit_interval(shared: Arc<RaftShared>) {

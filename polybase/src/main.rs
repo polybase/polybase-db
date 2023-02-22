@@ -16,6 +16,7 @@ use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer,
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::Indexer;
+use rand::Rng;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
@@ -428,6 +429,14 @@ async fn health() -> impl Responder {
     HttpResponse::Ok()
 }
 
+#[get("/v0/raft/status")]
+async fn raft_status(
+    state: web::Data<RouteState>,
+) -> Result<web::Json<rmqtt_raft::Status>, HTTPError> {
+    let status = state.raft.status().await?;
+    Ok(web::Json(status))
+}
+
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let _guard = sentry::init((
@@ -458,7 +467,22 @@ async fn main() -> std::io::Result<()> {
 
     let peers: Vec<String> = config.raft_peers.split(',').map(|s| s.into()).collect();
 
-    let (raft, raft_handle) = Raft::new(config.raft_laddr, peers, Arc::clone(&db), logger.clone());
+    let random: u64 = rand::thread_rng().gen();
+
+    // TODO: we need to find a better way of getting the ID
+    let id = config.id.unwrap_or(
+        std::env::var("HOSTNAME")
+            .map(|p| p.replace("polybase-", "").parse().unwrap_or(random))
+            .unwrap_or(random),
+    );
+
+    let (raft, raft_handle) = Raft::new(
+        id,
+        config.raft_laddr,
+        peers,
+        Arc::clone(&db),
+        logger.clone(),
+    );
 
     let raft = Arc::new(raft);
 
@@ -471,6 +495,8 @@ async fn main() -> std::io::Result<()> {
             }))
             .wrap(SlogMiddleware::new(logger.clone()))
             .service(root)
+            .service(health)
+            .service(raft_status)
             .service(
                 web::scope("/v0/collections")
                     .service(get_record)
