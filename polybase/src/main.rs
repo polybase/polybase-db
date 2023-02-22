@@ -44,6 +44,21 @@ struct RouteState {
     raft: Arc<Raft>,
 }
 
+#[derive(Debug, thiserror::Error)]
+enum AppError {
+    #[error("failed to join task")]
+    JoinError(#[from] tokio::task::JoinError),
+
+    #[error("raft failed unexpectedly")]
+    Raft(#[from] raft::RaftError),
+
+    #[error("server failed unexpectedly")]
+    HttpServer(#[from] actix_web::Error),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
 #[get("/")]
 async fn root() -> impl Responder {
     HttpResponse::Ok()
@@ -458,7 +473,7 @@ async fn raft_status(
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), AppError> {
     let _guard = sentry::init((
         "https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376",
         sentry::ClientOptions {
@@ -551,11 +566,14 @@ async fn main() -> std::io::Result<()> {
     let logger = logger.clone();
 
     select!(
-        e = server => { // TODO: check if err
-            error!(logger, "HTTP server exited unexpectedly {e:#?}");
+        res = server => { // TODO: check if err
+            // res
+            error!(logger, "HTTP server exited unexpectedly {res:#?}");
+            res?
         }
-        e = raft_handle => {
-            error!(logger, "Raft server exited unexpectedly: {e:#?}");
+        res = raft_handle => {
+            error!(logger, "Raft server exited unexpectedly: {res:#?}");
+            res?
         },
         _ = tokio::signal::ctrl_c() => {
             match raft.clone().shutdown().await {
