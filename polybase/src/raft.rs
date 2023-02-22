@@ -433,9 +433,7 @@ async fn raft_init_setup(
 ) {
     info!(logger, "peers: {:?}", peers);
 
-    let leader_info = find_leader_info(&raft, peers, logger.clone())
-        .await
-        .unwrap();
+    let leader_info = raft.find_leader_info(peers).await.unwrap();
 
     info!(logger, "leader_info: {:?}", leader_info);
 
@@ -451,54 +449,54 @@ async fn raft_init_setup(
     }
 }
 
-async fn find_leader_info(
-    raft: &RmqttRaft<RaftConnector>,
-    peers: Vec<String>,
-    logger: slog::Logger,
-) -> rmqtt_raft::Result<Option<(u64, String)>> {
-    loop {
-        match get_leader_info(raft, peers.clone()).await {
-            Ok(Some((leader_id, leader_addr))) => {
-                return Ok(Some((leader_id, leader_addr)));
-            }
-            Ok(None) => return Ok(None),
-            Err(err) => {
-                match err {
-                    rmqtt_raft::Error::LeaderNotExist => {
-                        info!(logger, "no leader found, retrying");
-                    }
-                    _ => {
-                        return Err(err);
-                    }
-                }
-                info!(logger, "error finding leader: {err}");
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-}
+// async fn find_leader_info(
+//     raft: &RmqttRaft<RaftConnector>,
+//     peers: Vec<String>,
+//     logger: slog::Logger,
+// ) -> rmqtt_raft::Result<Option<(u64, String)>> {
+//     loop {
+//         match get_leader_info(raft, peers.clone()).await {
+//             Ok(Some((leader_id, leader_addr))) => {
+//                 return Ok(Some((leader_id, leader_addr)));
+//             }
+//             Ok(None) => return Ok(None),
+//             Err(err) => {
+//                 match err {
+//                     rmqtt_raft::Error::LeaderNotExist => {
+//                         info!(logger, "no leader found, retrying");
+//                     }
+//                     _ => {
+//                         return Err(err);
+//                     }
+//                 }
+//                 info!(logger, "error finding leader: {err}");
+//             }
+//         }
+//         tokio::time::sleep(Duration::from_secs(1)).await;
+//     }
+// }
 
-async fn get_leader_info(
-    raft: &RmqttRaft<RaftConnector>,
-    peers: Vec<String>,
-) -> rmqtt_raft::Result<Option<(u64, String)>> {
-    let leader_info = None;
-    for peer in peers {
-        match raft.find_leader_info(vec![peer]).await {
-            Ok(addr) => match addr {
-                Some(leader) => return Ok(Some(leader)),
-                None => continue,
-            },
-            Err(e) => match e {
-                // If we get LeaderNotExist, it may be because the first node to respond
-                // is not active
-                rmqtt_raft::Error::LeaderNotExist => continue,
-                _ => return Err(e),
-            },
-        }
-    }
-    Ok(leader_info)
-}
+// async fn get_leader_info(
+//     raft: &RmqttRaft<RaftConnector>,
+//     peers: Vec<String>,
+// ) -> rmqtt_raft::Result<Option<(u64, String)>> {
+//     let leader_info = None;
+//     for peer in peers {
+//         match raft.find_leader_info(vec![peer]).await {
+//             Ok(addr) => match addr {
+//                 Some(leader) => return Ok(Some(leader)),
+//                 None => continue,
+//             },
+//             Err(e) => match e {
+//                 // If we get LeaderNotExist, it may be because the first node to respond
+//                 // is not active
+//                 rmqtt_raft::Error::LeaderNotExist => continue,
+//                 _ => return Err(e),
+//             },
+//         }
+//     }
+//     Ok(leader_info)
+// }
 
 async fn commit_interval(shared: Arc<RaftShared>) {
     while !shared.shared.is_shutdown() {
