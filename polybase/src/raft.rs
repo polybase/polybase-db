@@ -419,7 +419,7 @@ impl RmqttRaftStore for RaftConnector {
 
 async fn raft_init_setup(raft: RmqttRaft<RaftConnector>, peers: Vec<String>, logger: slog::Logger) {
     let id: u64 = rand::thread_rng().gen();
-    let leader_info = raft.find_leader_info(peers).await.unwrap();
+    let leader_info = get_leader_info(&raft, peers).await.unwrap();
     info!(logger, "leader_info: {:?}", leader_info);
 
     match leader_info {
@@ -432,6 +432,28 @@ async fn raft_init_setup(raft: RmqttRaft<RaftConnector>, peers: Vec<String>, log
             raft.lead(id).await.unwrap();
         }
     }
+}
+
+async fn get_leader_info(
+    raft: &RmqttRaft<RaftConnector>,
+    peers: Vec<String>,
+) -> rmqtt_raft::Result<Option<(u64, String)>> {
+    let leader_info = None;
+    for peer in peers {
+        match raft.find_leader_info(vec![peer]).await {
+            Ok(addr) => match addr {
+                Some(leader) => return Ok(Some(leader)),
+                None => continue,
+            },
+            Err(e) => match e {
+                // If we get LeaderNotExist, it may be because the first node to respond
+                // is not active
+                rmqtt_raft::Error::LeaderNotExist => continue,
+                _ => return Err(e),
+            },
+        }
+    }
+    Ok(leader_info)
 }
 
 async fn commit_interval(shared: Arc<RaftShared>) {
