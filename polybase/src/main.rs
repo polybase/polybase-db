@@ -468,10 +468,16 @@ async fn main() -> std::io::Result<()> {
     let peers: Vec<String> = config.raft_peers.split(',').map(|s| s.into()).collect();
 
     let random: u64 = rand::thread_rng().gen();
+
+    // TODO: we need to find a better way of getting the ID
+    let id = config.id.unwrap_or(
+        std::env::var("HOSTNAME")
+            .map(|p| p.replace("polybase-", "").parse().unwrap_or(random))
+            .unwrap_or(random),
+    );
+
     let (raft, raft_handle) = Raft::new(
-        config
-            .id
-            .unwrap_or(std::env::var("HOSTNAME").unwrap_or(random.to_string())),
+        id,
         config.raft_laddr,
         peers,
         Arc::clone(&db),

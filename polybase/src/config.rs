@@ -9,7 +9,7 @@ use clap::{Parser, ValueEnum};
 pub struct Config {
     /// ID of the node
     #[arg(long, env = "ID")]
-    pub id: Option<String>,
+    pub id: Option<u64>,
 
     /// Root directory where application data is stored
     #[arg(short, long, env = "ROOT_DIR", default_value = "~/.polybase")]

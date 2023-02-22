@@ -109,7 +109,7 @@ impl Drop for Raft {
 
 impl Raft {
     pub fn new(
-        id: String,
+        id: u64,
         laddr: String,
         peers: Vec<String>,
         db: Arc<Db>,
@@ -120,8 +120,6 @@ impl Raft {
         };
 
         cfg.raft_cfg.check_quorum = false;
-
-        let id = u64::from_str_radix(&id, 9).unwrap();
 
         let shared = Arc::new(RaftSharedState {
             logger: logger.clone(),
