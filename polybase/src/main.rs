@@ -22,7 +22,6 @@ use slog::Drain;
 use std::{
     borrow::Cow,
     cmp::min,
-    collections::HashMap,
     path::PathBuf,
     sync::Arc,
     time::{Duration, SystemTime},
@@ -438,7 +437,7 @@ async fn main() -> std::io::Result<()> {
     let indexer_dir = get_indexer_dir(&config.root_dir);
     let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).unwrap());
 
-    let db = Arc::new(Db::new(Arc::clone(&indexer)));
+    let db = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
 
     let peers: Vec<String> = config.raft_peers.split(',').map(|s| s.into()).collect();
 
