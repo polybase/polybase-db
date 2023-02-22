@@ -95,7 +95,7 @@ impl From<WhereValue> for IndexValue<'_> {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Default, Clone)]
 pub(crate) struct WhereInequality {
     #[serde(rename = "$gt")]
     pub(crate) gt: Option<WhereValue>,
@@ -105,6 +105,50 @@ pub(crate) struct WhereInequality {
     pub(crate) lt: Option<WhereValue>,
     #[serde(rename = "$lte")]
     pub(crate) lte: Option<WhereValue>,
+}
+
+impl<'de> Deserialize<'de> for WhereInequality {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut map = serde_json::Map::deserialize(deserializer)?;
+        let mut inequality = WhereInequality::default();
+
+        if let Some(value) = map.remove("$gt") {
+            inequality.gt = Some(
+                serde_json::from_value(value)
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $gt: {}", e)))?,
+            );
+        }
+
+        if let Some(value) = map.remove("$gte") {
+            inequality.gte = Some(
+                serde_json::from_value(value)
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $gte: {}", e)))?,
+            );
+        }
+
+        if let Some(value) = map.remove("$lt") {
+            inequality.lt = Some(
+                serde_json::from_value(value)
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $lt: {}", e)))?,
+            );
+        }
+
+        if let Some(value) = map.remove("$lte") {
+            inequality.lte = Some(
+                serde_json::from_value(value)
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $lte: {}", e)))?,
+            );
+        }
+
+        if !map.is_empty() {
+            return Err(serde::de::Error::custom("too many fields in inequality"));
+        }
+
+        Ok(inequality)
+    }
 }
 
 #[derive(Debug)]
