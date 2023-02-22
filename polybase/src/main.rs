@@ -472,7 +472,12 @@ async fn main() -> std::io::Result<()> {
     // TODO: we need to find a better way of getting the ID
     let id = config.id.unwrap_or(
         std::env::var("HOSTNAME")
-            .map(|p| p.replace("polybase-", "").parse().unwrap_or(random))
+            .map(|p| {
+                p.replace("polybase-", "")
+                    .parse::<u64>()
+                    .map(|n| n + 1)
+                    .unwrap_or(random)
+            })
             .unwrap_or(random),
     );
 
