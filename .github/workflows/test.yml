@@ -1,5 +1,9 @@
 on:
-  push:
+  pull_request:
+    paths-ignore:
+      - ".github/**"
+      - ".vscode/**"
+      - "helm/**"
 
 name: Test
 
@@ -14,7 +18,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Unit Test in Docker
+      - name: Build unit test
         uses: docker/build-push-action@v4
         with:
           context: .
@@ -32,19 +36,7 @@ jobs:
         run: |
           docker run polybase-unit-tests
 
-  test-polybase-ts:
-    name: E2E polybase-ts tests
-    runs-on: ubuntu-latest-16-cores
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v2
-        with:
-          submodules: "true"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
-
-      - name: Build in Docker
+      - name: Build e2e tests
         uses: docker/build-push-action@v2
         with:
           context: .
