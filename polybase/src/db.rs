@@ -172,7 +172,8 @@ impl Db {
         let indexer = Arc::clone(&self.indexer);
 
         // Get changes
-        self.gateway
+        let changes = self
+            .gateway
             .call(
                 &indexer,
                 collection_id,
@@ -182,6 +183,15 @@ impl Db {
                 auth,
             )
             .await?;
+
+        for change in changes {
+            let (collection_id, record_id) = change.get_path();
+            let k = get_key(collection_id, record_id);
+
+            if self.pending.has(&k) {
+                return Err(DbError::RecordChangeExists);
+            }
+        }
 
         Ok(())
     }

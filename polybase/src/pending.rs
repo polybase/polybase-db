@@ -37,6 +37,11 @@ impl<K: Eq + PartialEq + Hash + Clone, V> PendingQueue<K, V> {
         Ok(())
     }
 
+    pub fn has(&self, key: &K) -> bool {
+        let state = self.state.lock().unwrap();
+        state.pending_lock.contains(key)
+    }
+
     pub fn pop(&self) -> Option<(K, V)> {
         let mut state = self.state.lock().unwrap();
         let value = state.pending.pop_front()?;
