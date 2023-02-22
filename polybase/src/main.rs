@@ -479,6 +479,8 @@ async fn main() -> std::io::Result<()> {
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
     let logger = slog::Logger::root(drain, slog_o!("version" => env!("CARGO_PKG_VERSION")));
+    // let _guard = slog_scope::set_global_logger(logger.clone());
+    // let _log_guard = slog_stdlog::init().unwrap();
 
     let indexer_dir = get_indexer_dir(&config.root_dir);
     let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).unwrap());
@@ -514,12 +516,13 @@ async fn main() -> std::io::Result<()> {
     let server_logger = logger.clone();
 
     let server = HttpServer::new(move || {
-        // let cors = Cors::default()
-        //     .allowed_origin("*")
-        //     .allowed_methods(vec!["GET", "POST"])
-        //     .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
-        //     .allowed_header(header::CONTENT_TYPE)
-        //     .max_age(3600);
+        let cors = Cors::default()
+            .allow_any_origin()
+            .send_wildcard()
+            .allowed_methods(vec!["GET", "POST"])
+            .allowed_headers(vec![header::AUTHORIZATION, header::ACCEPT])
+            .allowed_header(header::CONTENT_TYPE)
+            .max_age(3600);
 
         App::new()
             .app_data(web::Data::new(RouteState {
@@ -528,7 +531,7 @@ async fn main() -> std::io::Result<()> {
                 raft: Arc::clone(&server_raft),
             }))
             .wrap(SlogMiddleware::new(server_logger.clone()))
-            // .wrap(cors)
+            .wrap(cors)
             .service(root)
             .service(health)
             .service(raft_status)
