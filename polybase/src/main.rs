@@ -551,8 +551,12 @@ async fn main() -> std::io::Result<()> {
     let logger = logger.clone();
 
     select!(
-        _ = server => (),
-        _ = raft_handle => (),
+        e = server => { // TODO: check if err
+            error!(logger, "HTTP server exited unexpectedly {e:#?}");
+        }
+        e = raft_handle => {
+            error!(logger, "Raft server exited unexpectedly: {e:#?}");
+        },
         _ = tokio::signal::ctrl_c() => {
             match raft.clone().shutdown().await {
                 Ok(_) => info!(logger, "Raft shutdown successfully"),
