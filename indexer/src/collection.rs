@@ -1128,17 +1128,18 @@ impl<'a> Collection<'a> {
         .filter_map(|r| async {
             match r {
                 Ok((cursor, record)) => {
-                    if !self
-                        .user_can_read(&record, user)
-                        .await
-                        // TODO: should we propagate this error?
-                        .unwrap_or(false)
-                    {
-                        // Skip records that the user can't read
-                        return None;
+                    match self.user_can_read(&record, user).await {
+                        Ok(false) => None,
+                        Ok(true) => Some(Ok((cursor, record))),
+                        Err(e) => {
+                            // TODO: should we propagate this error?
+                            slog::warn!(
+                                self.logger,
+                                "failed to check if user can read record: {e:#?}",
+                            );
+                            None
+                        }
                     }
-
-                    Some(Ok((cursor, record)))
                 }
                 Err(e) => Some(Err(e)),
             }
