@@ -1,7 +1,6 @@
 on:
   pull_request:
     paths-ignore:
-      - ".github/**"
       - ".vscode/**"
       - "helm/**"
 
