@@ -1,3 +1,5 @@
+use bincode::{deserialize, serialize};
+use serde::{Deserialize, Serialize};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
 use prost::Message;
@@ -36,6 +38,15 @@ pub(crate) struct Store {
 pub(crate) enum Value<'a> {
     DataValue(&'a RecordRoot),
     IndexValue(proto::IndexRecord),
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Snapshot(Vec<SnapshotValue>);
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SnapshotValue {
+    key: Vec<u8>,
+    value: Vec<u8>,
 }
 
 impl<'a> Value<'a> {
@@ -125,6 +136,33 @@ impl Store {
         drop(self.db);
         rocksdb::DB::destroy(&rocksdb::Options::default(), path)?;
 
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> Result<Vec<u8>> {
+        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
+
+        let mut values: Vec<SnapshotValue> = Vec::new();
+
+        // Iterate through every key-value pair in the database
+        for entry in iter {
+            let (key, value) = entry?;
+            values.push(SnapshotValue {
+                key: key.to_vec(),
+                value: value.to_vec(),
+            });
+        }
+
+        Ok(serialize(&Snapshot(values))?)
+    }
+
+    pub fn restore(&self, data: Vec<u8>) -> Result<()> {
+        let mut batch = rocksdb::WriteBatch::default();
+        let snapshot: Snapshot = deserialize(&data)?;
+        for entry in snapshot.0 {
+            batch.put(entry.key, entry.value);
+        }
+        self.db.write(batch)?;
         Ok(())
     }
 }

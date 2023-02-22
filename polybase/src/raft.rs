@@ -400,14 +400,20 @@ impl RmqttRaftStore for RaftConnector {
         Ok(Vec::new())
     }
 
-    // TODO
     async fn snapshot(&self) -> rmqtt_raft::Result<Vec<u8>> {
-        Ok(Vec::new())
+        let indexer = &self.db.indexer;
+        match indexer.snapshot() {
+            Ok(snapshot) => Ok(snapshot),
+            Err(e) => Err(rmqtt_raft::Error::Other(Box::new(e))),
+        }
     }
 
-    // TODO
     async fn restore(&mut self, snapshot: &[u8]) -> rmqtt_raft::Result<()> {
-        Ok(())
+        let indexer = &self.db.indexer;
+        match indexer.restore(snapshot.to_vec()) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(rmqtt_raft::Error::Other(Box::new(e))),
+        }
     }
 }
 
