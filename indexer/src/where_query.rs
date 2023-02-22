@@ -3,6 +3,7 @@ use std::{borrow::Cow, collections::HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::{self, Direction};
+use crate::publickey;
 use crate::record::IndexValue;
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
@@ -80,6 +81,7 @@ pub(crate) enum WhereValue {
     String(String),
     Number(f64),
     Boolean(bool),
+    PublicKey(Box<publickey::PublicKey>),
 }
 
 impl From<WhereValue> for IndexValue<'_> {
@@ -88,6 +90,7 @@ impl From<WhereValue> for IndexValue<'_> {
             WhereValue::String(s) => IndexValue::String(Cow::Owned(s)),
             WhereValue::Number(n) => IndexValue::Number(n),
             WhereValue::Boolean(b) => IndexValue::Boolean(b),
+            WhereValue::PublicKey(pk) => IndexValue::PublicKey(Cow::Owned(*pk)),
         }
     }
 }
