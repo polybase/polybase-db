@@ -21,6 +21,9 @@ pub enum DbError {
     #[error("collection AST is invalid: {0}")]
     CollectionASTInvalid(String),
 
+    #[error("cannot update the Collection collection record")]
+    CollectionCollectionRecordUpdate,
+
     #[error(transparent)]
     GatewayError(#[from] gateway::GatewayError),
 
@@ -247,6 +250,10 @@ impl Db {
             } = &change
             {
                 if collection_id == "Collection" {
+                    if record_id == "Collection" {
+                        return Err(DbError::CollectionCollectionRecordUpdate);
+                    }
+
                     self.validate_schema_update(collection_id, record_id, record, auth)
                         .await?;
                 }
