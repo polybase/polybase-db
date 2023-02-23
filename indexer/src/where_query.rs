@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::keys::{self, Direction};
 use crate::record::IndexValue;
-use crate::{publickey, record, FieldWalker};
+use crate::{record, FieldWalker};
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
@@ -124,7 +124,7 @@ impl WhereValue {
         for<'b> &'b str: std::cmp::PartialEq<T>,
         T: AsRef<str>,
     {
-        record::IndexValue::try_from(self.into_record_value(collection_ast, path)?).map_err(|e| {
+        record::IndexValue::try_from(self.into_record_value(collection_ast, path)?).map_err(|_| {
             WhereQueryError::UserError(WhereQueryUserError::CannotFilterOrSortByField(
                 path.iter()
                     .map(|x| x.as_ref())

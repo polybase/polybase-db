@@ -299,8 +299,6 @@ impl Default for PublicKey {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_public_key() {
         super::PublicKey::random();
