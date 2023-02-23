@@ -3,8 +3,8 @@ use std::{borrow::Cow, collections::HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::{self, Direction};
-use crate::publickey;
 use crate::record::IndexValue;
+use crate::{publickey, record, FieldWalker};
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
@@ -15,6 +15,9 @@ pub enum WhereQueryError {
 
     #[error("keys error")]
     KeysError(#[from] keys::KeysError),
+
+    #[error("record error")]
+    RecordError(#[from] record::RecordError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -24,6 +27,9 @@ pub enum WhereQueryUserError {
 
     #[error("inequality can only be the last condition")]
     InequalityNotLast,
+
+    #[error("you cannot filter/sort by field {0}")]
+    CannotFilterOrSortByField(String),
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
@@ -71,27 +77,61 @@ pub struct WhereQuery(pub(crate) HashMap<FieldPath, WhereNode>);
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub(crate) enum WhereNode {
-    Equality(WhereValue),
     Inequality(WhereInequality),
+    Equality(WhereValue),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(untagged)]
-pub(crate) enum WhereValue {
-    String(String),
-    Number(f64),
-    Boolean(bool),
-    PublicKey(Box<publickey::PublicKey>),
-}
+pub(crate) struct WhereValue(pub(crate) serde_json::Value);
 
-impl From<WhereValue> for IndexValue<'_> {
-    fn from(value: WhereValue) -> Self {
-        match value {
-            WhereValue::String(s) => IndexValue::String(Cow::Owned(s)),
-            WhereValue::Number(n) => IndexValue::Number(n),
-            WhereValue::Boolean(b) => IndexValue::Boolean(b),
-            WhereValue::PublicKey(pk) => IndexValue::PublicKey(Cow::Owned(*pk)),
-        }
+impl WhereValue {
+    fn into_record_value<T>(
+        self,
+        collection_ast: &polylang::stableast::Collection,
+        path: &[T],
+    ) -> Result<record::RecordValue>
+    where
+        for<'a> &'a str: std::cmp::PartialEq<T>,
+        T: AsRef<str>,
+    {
+        let field = collection_ast.find_field(path).ok_or_else(|| {
+            WhereQueryError::UserError(WhereQueryUserError::CannotFilterOrSortByField(
+                path.iter()
+                    .map(|x| x.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            ))
+        })?;
+
+        // Only implicitly cast string to PublicKey. We can relax this in the future.
+        // Relaxing this would mean that if the user provides an invalid value,
+        // they will search by the defualt value instead of returning nothing or getting an error.
+        let always_cast =
+            matches!(field.type_(), polylang::stableast::Type::PublicKey(_)) && self.0.is_string();
+
+        Ok(record::Converter::convert(
+            (field.type_(), self.0),
+            always_cast,
+        )?)
+    }
+
+    fn into_index_value<'a, T>(
+        self,
+        collection_ast: &polylang::stableast::Collection,
+        path: &[T],
+    ) -> Result<IndexValue<'a>>
+    where
+        for<'b> &'b str: std::cmp::PartialEq<T>,
+        T: AsRef<str>,
+    {
+        record::IndexValue::try_from(self.into_record_value(collection_ast, path)?).map_err(|e| {
+            WhereQueryError::UserError(WhereQueryUserError::CannotFilterOrSortByField(
+                path.iter()
+                    .map(|x| x.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("."),
+            ))
+        })
     }
 }
 
@@ -160,12 +200,15 @@ pub(crate) struct KeyRange<'a> {
 impl WhereQuery {
     pub(crate) fn key_range<T>(
         self,
+        collection_ast: &polylang::stableast::Collection,
         namespace: String,
         paths: &[&[T]],
         directions: &[keys::Direction],
     ) -> Result<KeyRange<'static>>
     where
-        T: for<'other> PartialEq<String> + AsRef<str>,
+        T: AsRef<str>,
+        T: PartialEq<String>,
+        for<'a> &'a str: std::cmp::PartialEq<T>,
     {
         if paths.len() != directions.len() {
             return Err(WhereQueryUserError::PathsAndDirectionsLengthMismatch)?;
@@ -185,8 +228,12 @@ impl WhereQuery {
 
                 match node {
                     WhereNode::Equality(value) => {
-                        lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
-                        upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                        lower_values.push(Cow::Owned(
+                            value.clone().into_index_value(collection_ast, path)?,
+                        ));
+                        upper_values.push(Cow::Owned(
+                            value.clone().into_index_value(collection_ast, path)?,
+                        ));
                     }
                     WhereNode::Inequality(inequality) => {
                         ineq_found = true;
@@ -194,36 +241,52 @@ impl WhereQuery {
                         if let Some(value) = &inequality.gt {
                             if direction == &Direction::Ascending {
                                 lower_exclusive = true;
-                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                lower_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             } else {
                                 upper_exclusive = true;
-                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                upper_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             }
                         }
 
                         if let Some(value) = &inequality.gte {
                             if direction == &Direction::Ascending {
-                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                lower_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             } else {
-                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                upper_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             }
                         }
 
                         if let Some(value) = &inequality.lt {
                             if direction == &Direction::Ascending {
                                 upper_exclusive = true;
-                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                upper_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             } else {
                                 lower_exclusive = true;
-                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                lower_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             }
                         }
 
                         if let Some(value) = &inequality.lte {
                             if direction == &Direction::Ascending {
-                                upper_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                upper_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             } else {
-                                lower_values.push(Cow::Owned(IndexValue::from(value.clone())));
+                                lower_values.push(Cow::Owned(
+                                    value.clone().into_index_value(collection_ast, path)?,
+                                ));
                             }
                         }
                     }
@@ -263,7 +326,55 @@ mod test {
                 let query = $query;
 
                 let key_range = query
-                    .key_range("namespace".to_string(), $fields, $directions)
+                    .key_range(
+                        &polylang::stableast::Collection {
+                            namespace: polylang::stableast::Namespace {
+                                value: "test".into(),
+                            },
+                            name: "Sample".into(),
+                            attributes: vec![
+                                polylang::stableast::CollectionAttribute::Property(
+                                    polylang::stableast::Property {
+                                        name: "id".into(),
+                                        type_: polylang::stableast::Type::Primitive(
+                                            polylang::stableast::Primitive {
+                                                value: polylang::stableast::PrimitiveType::String,
+                                            },
+                                        ),
+                                        directives: vec![],
+                                        required: false,
+                                    },
+                                ),
+                                polylang::stableast::CollectionAttribute::Property(
+                                    polylang::stableast::Property {
+                                        name: "name".into(),
+                                        type_: polylang::stableast::Type::Primitive(
+                                            polylang::stableast::Primitive {
+                                                value: polylang::stableast::PrimitiveType::String,
+                                            },
+                                        ),
+                                        directives: vec![],
+                                        required: false,
+                                    },
+                                ),
+                                polylang::stableast::CollectionAttribute::Property(
+                                    polylang::stableast::Property {
+                                        name: "age".into(),
+                                        type_: polylang::stableast::Type::Primitive(
+                                            polylang::stableast::Primitive {
+                                                value: polylang::stableast::PrimitiveType::Number,
+                                            },
+                                        ),
+                                        directives: vec![],
+                                        required: false,
+                                    },
+                                ),
+                            ],
+                        },
+                        "namespace".to_string(),
+                        $fields,
+                        $directions,
+                    )
                     .unwrap();
 
                 assert_eq!(key_range.lower, $lower, "lower");
@@ -277,7 +388,7 @@ mod test {
         test_to_key_range_name_eq_john,
         WhereQuery(HashMap::from_iter(vec![(
             FieldPath(vec!["name".to_string()]),
-            WhereNode::Equality(WhereValue::String("john".to_string())),
+            WhereNode::Equality(WhereValue("john".into())),
         )])),
         &[&["name"]],
         &[keys::Direction::Ascending],
@@ -303,7 +414,7 @@ mod test {
         WhereQuery(HashMap::from_iter(vec![(
             FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
-                gt: Some(WhereValue::Number(30.0)),
+                gt: Some(WhereValue(30.0.into())),
                 ..Default::default()
             }),
         )])),
@@ -332,7 +443,7 @@ mod test {
         WhereQuery(HashMap::from_iter(vec![(
             FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
-                gte: Some(WhereValue::Number(30.0)),
+                gte: Some(WhereValue(30.0.into())),
                 ..Default::default()
             }),
         )])),
@@ -360,7 +471,7 @@ mod test {
         WhereQuery(HashMap::from_iter(vec![(
             FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
-                lt: Some(WhereValue::Number(30.0)),
+                lt: Some(WhereValue(30.0.into())),
                 ..Default::default()
             }),
         )])),
@@ -387,7 +498,7 @@ mod test {
         WhereQuery(HashMap::from_iter(vec![(
             FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
-                lte: Some(WhereValue::Number(30.0)),
+                lte: Some(WhereValue(30.0.into())),
                 ..Default::default()
             }),
         )])),
@@ -415,7 +526,7 @@ mod test {
         WhereQuery(HashMap::from_iter(vec![(
             FieldPath(vec!["age".to_string()]),
             WhereNode::Inequality(WhereInequality {
-                lt: Some(WhereValue::Number(50.0)),
+                lt: Some(WhereValue(50.0.into())),
                 ..Default::default()
             }),
         )])),
@@ -445,13 +556,13 @@ mod test {
             (
                 FieldPath(vec!["age".to_string()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::Number(30.0)),
+                    gt: Some(WhereValue(30.0.into())),
                     ..Default::default()
                 }),
             ),
             (
                 FieldPath(vec!["name".to_string()]),
-                WhereNode::Equality(WhereValue::String("John".into())),
+                WhereNode::Equality(WhereValue("John".into())),
             ),
         ])),
         &[&["name"], &["age"]],
@@ -482,11 +593,11 @@ mod test {
         WhereQuery(HashMap::from_iter(vec![
             (
                 FieldPath(vec!["name".to_string()]),
-                WhereNode::Equality(WhereValue::String("John".into())),
+                WhereNode::Equality(WhereValue("John".into())),
             ),
             (
                 FieldPath(vec!["id".to_string()]),
-                WhereNode::Equality(WhereValue::String("rec1".into())),
+                WhereNode::Equality(WhereValue("rec1".into())),
             ),
         ])),
         &[&["name"], &["id"]],

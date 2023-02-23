@@ -932,3 +932,22 @@ impl IndexValue<'_> {
         }
     }
 }
+
+impl TryFrom<RecordValue> for IndexValue<'_> {
+    type Error = ();
+
+    fn try_from(value: RecordValue) -> std::result::Result<Self, ()> {
+        match value {
+            RecordValue::Null => Ok(IndexValue::Null),
+            RecordValue::Boolean(b) => Ok(IndexValue::Boolean(b)),
+            RecordValue::Number(n) => Ok(IndexValue::Number(n)),
+            RecordValue::String(s) => Ok(IndexValue::String(Cow::Owned(s))),
+            RecordValue::PublicKey(p) => Ok(IndexValue::PublicKey(Cow::Owned(p))),
+            RecordValue::Bytes(_) => Err(()),
+            RecordValue::RecordReference(_) => Err(()),
+            RecordValue::ForeignRecordReference(_) => Err(()),
+            RecordValue::Map(_) => Err(()),
+            RecordValue::Array(_) => Err(()),
+        }
+    }
+}

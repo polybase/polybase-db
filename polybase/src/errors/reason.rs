@@ -175,6 +175,9 @@ impl ReasonCode {
             indexer::where_query::WhereQueryUserError::InequalityNotLast => {
                 ReasonCode::IndexerQueryInequalityNotLast
             }
+            indexer::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
+                ReasonCode::IndexerMissingIndex
+            }
         }
     }
 
