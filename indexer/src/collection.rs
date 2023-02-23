@@ -88,9 +88,6 @@ pub enum CollectionUserError {
     #[error("collection {name} not found")]
     CollectionNotFound { name: String },
 
-    #[error("cannot change type of field {path:?} to PublicKey. First, delete the field and then add it back with the new type.")]
-    CannotChangeFieldTypeToPublicKey { path: Vec<String> },
-
     #[error("no index found matching the query")]
     NoIndexFoundMatchingTheQuery,
 
