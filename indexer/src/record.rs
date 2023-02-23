@@ -371,9 +371,32 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
                 }
             },
-            Type::PublicKey(_) => Ok(RecordValue::PublicKey(publickey::PublicKey::try_from(
-                value,
-            )?)),
+            Type::PublicKey(_) => match value {
+                serde_json::Value::Object(_) => Ok(RecordValue::PublicKey(
+                    publickey::PublicKey::try_from(value)?,
+                )),
+                serde_json::Value::String(s)
+                    if always_cast && s.starts_with("0x") && s.len() == (2 + 32 * 2 * 2) =>
+                {
+                    // s is 0x-prefixed hex-encoded x and y parameters, without 0x04 prefix
+                    if let Ok(bytes) = hex::decode(s[2..].as_bytes()) {
+                        // Unwrap is safe because we know the hex is 64 bytes
+                        let bytes = <[u8; 64]>::try_from(bytes.as_slice()).unwrap();
+
+                        Ok(RecordValue::PublicKey(
+                            publickey::PublicKey::try_from(bytes)
+                                .unwrap_or_else(|_| publickey::PublicKey::default()),
+                        ))
+                    } else {
+                        Ok(RecordValue::PublicKey(publickey::PublicKey::default()))
+                    }
+                }
+                _ if always_cast => Ok(RecordValue::PublicKey(publickey::PublicKey::default())),
+                x => Err(RecordError::InvalidSerdeJSONType {
+                    value: x,
+                    field: None,
+                }),
+            },
             Type::Record(_) => Ok(RecordValue::RecordReference({
                 let mut r = RecordReference::try_from(value);
                 if r.is_err() && always_cast {
