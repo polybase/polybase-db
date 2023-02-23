@@ -317,29 +317,6 @@ pub fn validate_schema_change(
         return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
     };
 
-    // You cannot change the type of a field to PublicKey
-    let mut public_key_in_new = vec![];
-    new_ast.walk_fields(&mut vec![], &mut |path, field| {
-        if let stableast::Type::PublicKey(_) = field.type_() {
-            public_key_in_new.push(path.to_vec())
-        }
-    });
-
-    for path in public_key_in_new {
-        let Some(old_field) = old_ast.find_field(&path) else {
-            // Adding a new PublicKey field is fine
-            continue;
-        };
-
-        if let stableast::Type::PublicKey(_) = old_field.type_() {
-            continue;
-        }
-
-        return Err(CollectionUserError::CannotChangeFieldTypeToPublicKey {
-            path: path.iter().map(|s| (*s).to_owned()).collect(),
-        })?;
-    }
-
     Ok(())
 }
 
@@ -926,9 +903,9 @@ impl<'a> Collection<'a> {
         self.update_record_metadata(id.clone(), &SystemTime::now())
             .await?;
 
-        if let Some(old_value) = old_value {
+        if let Some(old_value) = &old_value {
             // delete the indexes for the old values
-            self.delete_indexes(&id, &old_value).await;
+            self.delete_indexes(&id, old_value).await;
         }
 
         self.add_indexes(&id, &data_key, value).await;
@@ -937,7 +914,9 @@ impl<'a> Collection<'a> {
             if let Some(collection_before) = collection_before {
                 let target_col = Collection::load(self.logger.clone(), self.store, id).await?;
 
-                target_col.rebuild(collection_before, value).await?;
+                target_col
+                    .rebuild(collection_before, &old_value.unwrap())
+                    .await?;
             }
         }
 
