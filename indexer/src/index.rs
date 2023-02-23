@@ -284,7 +284,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["name".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::String("cal".into())),
+                    gt: Some(WhereValue("cal".into())),
                     ..Default::default()
                 }),
             );
@@ -325,7 +325,7 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -368,7 +368,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["v".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    lt: Some(WhereValue::Number(2.0)),
+                    lt: Some(WhereValue(2.0.into())),
                     ..Default::default()
                 }),
             );
@@ -399,7 +399,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["age".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    lt: Some(WhereValue::Number(40.0)),
+                    lt: Some(WhereValue(40.0.into())),
                     ..Default::default()
                 }),
             );
@@ -449,7 +449,7 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -469,7 +469,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["name".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::String("cal".into())),
+                    gt: Some(WhereValue("cal".into())),
                     ..Default::default()
                 }),
             );
@@ -490,7 +490,7 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -529,7 +529,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["name".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::String("cal".into())),
+                    gt: Some(WhereValue("cal".into())),
                     ..Default::default()
                 }),
             );
@@ -567,7 +567,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["name".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    lt: Some(WhereValue::String("cal".into())),
+                    lt: Some(WhereValue("cal".into())),
                     ..Default::default()
                 }),
             );
@@ -617,12 +617,12 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map.insert(
                 FieldPath(vec!["age".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::Number(20.into())),
+                    gt: Some(WhereValue(20.into())),
                     ..Default::default()
                 }),
             );
@@ -654,16 +654,16 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map.insert(
                 FieldPath(vec!["country".into()]),
-                WhereNode::Equality(WhereValue::String("uk".into())),
+                WhereNode::Equality(WhereValue("uk".into())),
             );
             map.insert(
                 FieldPath(vec!["age".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    lt: Some(WhereValue::Number(20.into())),
+                    lt: Some(WhereValue(20.into())),
                     ..Default::default()
                 }),
             );
@@ -686,7 +686,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["age".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::Number(20.into())),
+                    gt: Some(WhereValue(20.into())),
                     ..Default::default()
                 }),
             );
@@ -715,13 +715,13 @@ mod test {
             map.insert(
                 FieldPath(vec!["age".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::Number(20.into())),
+                    gt: Some(WhereValue(20.into())),
                     ..Default::default()
                 }),
             );
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -751,7 +751,7 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -784,7 +784,7 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -817,11 +817,11 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map.insert(
                 FieldPath(vec!["age".into()]),
-                WhereNode::Equality(WhereValue::Number(10.into())),
+                WhereNode::Equality(WhereValue(10.into())),
             );
             map
         },
@@ -854,7 +854,7 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -894,7 +894,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["name".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::String("cal".into())),
+                    gt: Some(WhereValue("cal".into())),
                     ..Default::default()
                 }),
             );
@@ -936,7 +936,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["name".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::String("cal".into())),
+                    gt: Some(WhereValue("cal".into())),
                     ..Default::default()
                 }),
             );
@@ -977,7 +977,7 @@ mod test {
             let mut map = HashMap::new();
             map.insert(
                 FieldPath(vec!["name".into()]),
-                WhereNode::Equality(WhereValue::String("cal".into())),
+                WhereNode::Equality(WhereValue("cal".into())),
             );
             map
         },
@@ -1017,7 +1017,7 @@ mod test {
             map.insert(
                 FieldPath(vec!["name".into()]),
                 WhereNode::Inequality(WhereInequality {
-                    gt: Some(WhereValue::String("cal".into())),
+                    gt: Some(WhereValue("cal".into())),
                     ..Default::default()
                 }),
             );

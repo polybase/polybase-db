@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 
 use indexer::{
-    collection::validate_collection_record, Converter, FieldWalker, IndexValue, Indexer,
-    IndexerError, PathFinder, RecordValue,
+    collection::validate_collection_record, Converter, FieldWalker, Indexer, IndexerError,
+    PathFinder, RecordValue,
 };
 
 pub type Result<T> = std::result::Result<T, GatewayError>;

@@ -61,9 +61,6 @@ pub enum ReasonCode {
     #[display(fmt = "collection/invalid-schema")]
     CollectionInvalidSchema,
 
-    #[display(fmt = "collection/alter-public-key")]
-    CollectionCannotChangeFieldTypeToPublicKey,
-
     #[display(fmt = "indexer/missing-index")]
     IndexerMissingIndex,
 
@@ -106,7 +103,6 @@ impl ReasonCode {
             ReasonCode::CollectionIdExists => ErrorCode::AlreadyExists,
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,
-            ReasonCode::CollectionCannotChangeFieldTypeToPublicKey => ErrorCode::InvalidArgument,
             ReasonCode::IndexerMissingIndex => ErrorCode::FailedPrecondition,
             ReasonCode::CollectionMismatch => ErrorCode::InvalidArgument,
             ReasonCode::CollectionRecordIdNotFound => ErrorCode::NotFound,
@@ -175,6 +171,9 @@ impl ReasonCode {
             indexer::where_query::WhereQueryUserError::InequalityNotLast => {
                 ReasonCode::IndexerQueryInequalityNotLast
             }
+            indexer::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
+                ReasonCode::IndexerMissingIndex
+            }
         }
     }
 
@@ -183,9 +182,6 @@ impl ReasonCode {
             indexer::collection::CollectionUserError::CollectionNotFound { .. } => {
                 ReasonCode::CollectionNotFound
             }
-            indexer::collection::CollectionUserError::CannotChangeFieldTypeToPublicKey {
-                ..
-            } => ReasonCode::CollectionCannotChangeFieldTypeToPublicKey,
             indexer::collection::CollectionUserError::NoIndexFoundMatchingTheQuery => {
                 ReasonCode::IndexerMissingIndex
             }

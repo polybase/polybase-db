@@ -323,6 +323,28 @@ impl From<PublicKey> for serde_json::Value {
     }
 }
 
+impl TryFrom<[u8; 64]> for PublicKey {
+    type Error = PublicKeyError;
+
+    fn try_from(bytes: [u8; 64]) -> Result<Self> {
+        let x = <[u8; 32]>::try_from(&bytes[0..32]).unwrap();
+        let y = <[u8; 32]>::try_from(&bytes[32..64]).unwrap();
+
+        Self::es256k(x, y).map_err(PublicKeyError::from)
+    }
+}
+
+impl Default for PublicKey {
+    fn default() -> Self {
+        let mut compressed = [0u8; 33];
+        compressed[0] = 2;
+        compressed[32] = 1;
+
+        let key = secp256k1::PublicKey::from_slice(&compressed).unwrap();
+        Self::from_secp256k1_key(&key).unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

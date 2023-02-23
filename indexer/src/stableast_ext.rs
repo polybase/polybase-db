@@ -14,6 +14,13 @@ impl<'ast> Field<'ast> {
             Field::ObjectField(f) => &f.type_,
         }
     }
+
+    pub fn required(&self) -> bool {
+        match self {
+            Field::Property(p) => p.required,
+            Field::ObjectField(f) => f.required,
+        }
+    }
 }
 
 pub trait FieldWalker<'ast> {
