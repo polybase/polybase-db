@@ -321,7 +321,7 @@ async fn get_records(
         let records = collection
             .list(
                 indexer::ListQuery {
-                    limit: Some(min(1000, query.limit.unwrap_or(1000))),
+                    limit: Some(min(1000, query.limit.unwrap_or(100))),
                     where_query: query.where_query.clone(),
                     order_by: &sort_indexes,
                     cursor_after: query.after.0.clone(),
