@@ -61,33 +61,17 @@ spec:
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- end }}
       initContainers:
-      - name: init-set
-        image: alpine:latest
-        command:
-        - /mnt/scripts/run.sh
-        volumeMounts:
-        - name: data
-          mountPath: /polybase
-        - name: genesis
-          mountPath: /mnt/tendermint_files/genesis.json
-          subPath: genesis.json
-        {{- range $i := until (.Values.replicaCount | int) }}
-        - name: node-key{{$i}}
-          mountPath: /mnt/tendermint_files/node_key{{$i}}.json
-          subPath: node_key{{$i}}.json
-        - name: priv-validator-key{{$i}}
-          mountPath: /mnt/tendermint_files/priv_validator_key{{$i}}.json
-          subPath: priv_validator_key{{$i}}.json
-        {{- end }}
-        - name: scripts-vol
-          mountPath: /mnt/scripts
-      - name: migration
-        image: {{ include "polybase.main_image" . }}
-        command:
-        - polybase-migrate
-        volumeMounts:
-        - name: data
-          mountPath: /polybase
+        - name: migration
+          image: {{ include "polybase.main_image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+          {{- if .Values.containerSecurityContext.enabled }}
+          securityContext: {{- omit .Values.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          command:
+          - polybase-migrate
+          volumeMounts:
+          - name: data
+            mountPath: /polybase
       containers:
         - name: polybase
           command:
