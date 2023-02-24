@@ -61,7 +61,13 @@ async fn main() -> Result<()> {
 
     let indexer_dir = get_indexer_dir(&config.root_dir);
     println!("Indexer store path: {}", indexer_dir.display());
-    let indexer = indexer::Indexer::new(logger, indexer_dir).unwrap();
+
+    let indexer = indexer::Indexer::new(logger.clone(), indexer_dir.clone()).unwrap();
+    indexer.destroy().unwrap();
+
+    println!("Database reset");
+
+    let indexer = indexer::Indexer::new(logger.clone(), indexer_dir).unwrap();
     let collection_collection = indexer.collection("Collection".into()).await?;
 
     // Get list of all collections data
