@@ -169,7 +169,11 @@ collection Collection {
 }
 "#;
 
-    hm.insert("code".to_string(), RecordValue::String(code.to_string()));
+    hm.insert(
+        "code".to_string(),
+        // The replaces are for clients <=0.3.23
+        RecordValue::String(code.replace("@public", "").replace("PublicKey", "string")),
+    );
 
     let mut program = None;
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
