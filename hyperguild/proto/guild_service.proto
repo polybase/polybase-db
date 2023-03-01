@@ -1,0 +1,25 @@
+ syntax = "proto3";
+
+ package guildservice;
+
+message EventResponse {
+  bytes data = 1;
+}
+
+ message RegisterStream {
+   bytes peerId = 1;
+ }
+
+ message SnapshotRequest {
+    bytes peerId = 1;
+    bytes from = 2;
+ }
+
+ message SnapshotResponse {
+    bytes data = 4;
+ }
+
+ service GuildService {
+   rpc EventStream(RegisterStream) returns (stream EventResponse) {}
+   rpc Snapshot(SnapshotRequest) returns (SnapshotResponse) {}
+ }

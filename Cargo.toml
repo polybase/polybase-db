@@ -1,3 +1,10 @@
 [workspace]
 
-members = ["polybase", "indexer", "gateway", "rbmerkle", "migrate"]
+members = [
+    "polybase",
+    "indexer",
+    "gateway",
+    "rbmerkle",
+    "migrate",
+    "hyperguild",
+]
