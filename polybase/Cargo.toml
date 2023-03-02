@@ -11,6 +11,7 @@ actix-web = "4"
 indexer = { path = "../indexer" }
 gateway = { path = "../gateway" }
 rbmerkle = { path = "../rbmerkle" }
+guild = { path = "../hyperguild" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = { version = "2.2", features = ["json"] }

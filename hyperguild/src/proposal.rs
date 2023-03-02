@@ -19,7 +19,7 @@ use tokio_stream::StreamExt;
 #[derive(Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Clone)]
 pub struct ProposalHash(Vec<u8>);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProposalEvent {
     /// Proposal register is missing proposals
     OutOfSync {
@@ -57,15 +57,18 @@ pub enum ProposalEvent {
     DuplicateProposal,
 }
 
+#[derive(Debug)]
 pub struct ProposalRegister {
     shared: Arc<ProposalRegisterShared>,
 }
 
+#[derive(Debug)]
 pub struct ProposalRegisterShared {
     background_worker: Notify,
     state: Mutex<ProposalRegisterState>,
 }
 
+#[derive(Debug)]
 struct ProposalRegisterState {
     // Events to be streamed
     events: VecDeque<ProposalEvent>,
@@ -140,7 +143,7 @@ pub struct ProposalManifest {
 }
 
 impl ProposalRegister {
-    fn new(local_peer_id: PeerId, peers: Vec<PeerId>) -> Self {
+    pub(crate) fn new(local_peer_id: PeerId, peers: Vec<PeerId>) -> Self {
         let mut peers = peers;
 
         if !peers.contains(&local_peer_id) {

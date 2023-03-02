@@ -2610,6 +2610,7 @@ dependencies = [
  "futures",
  "futures-util",
  "gateway",
+ "guild",
  "hex",
  "indexer",
  "rand 0.8.5",
