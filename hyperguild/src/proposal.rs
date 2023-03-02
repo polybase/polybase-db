@@ -327,19 +327,22 @@ impl ProposalRegister {
         drop(state);
         self.shared.background_worker.notify_one();
     }
+
+    pub fn poll(&mut self) -> Poll<ProposalEvent> {
+        let mut state = self.shared.state.lock().unwrap();
+        if let Some(event) = state.events.pop_front() {
+            return Poll::Ready(event);
+        }
+
+        Poll::Pending
+    }
 }
 
 impl Stream for ProposalRegister {
     type Item = ProposalEvent;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<ProposalEvent>> {
-        let mut state = self.shared.state.lock().unwrap();
-        // self.shared = cx.waker().wake_by_ref();
-        if let Some(event) = state.events.pop_front() {
-            return Poll::Ready(Some(event));
-        }
-        //  cx.waker().wake_by_ref()
-        Poll::Pending
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<ProposalEvent>> {
+        self.poll().map(Some)
     }
 }
 

@@ -54,8 +54,9 @@ impl GuildServer {
 
         loop {
             interval.tick().await;
-            let Some(proposal) = proposal_register.write().unwrap().next().await else {
-                continue;
+            let proposal = match proposal_register.write().unwrap().poll() {
+                std::task::Poll::Ready(p) => p,
+                std::task::Poll::Pending => continue,
             };
 
             let proposal_serialized = bincode::serialize(&proposal).unwrap();
