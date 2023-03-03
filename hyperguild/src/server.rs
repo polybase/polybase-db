@@ -1,13 +1,17 @@
 use futures::TryStreamExt;
 use libp2p_core::PeerId;
 use std::{
+    collections::{HashMap, HashSet},
     net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     task::Poll,
     time::Duration,
 };
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{
+    broadcast::{self, Receiver},
+    mpsc,
+};
 use tokio_stream::{
     wrappers::{BroadcastStream, ReceiverStream},
     Stream, StreamExt,
@@ -29,11 +33,14 @@ type ResponseStream = Pin<Box<dyn Stream<Item = Result<EventResponse, Status>> +
 #[derive(Debug)]
 struct GuildServer {
     timeout: Duration,
-    peers: Vec<PeerId>,
     addr: SocketAddr,
+    peers: Arc<Mutex<HashSet<PeerId>>>,
     proposal_register: Arc<proposal::ProposalRegister>,
     event_sender: Arc<broadcast::Sender<EventResponse>>,
+    peer_to_receiver: Arc<RwLock<HashMap<PeerId, Receiver<EventResponse>>>>,
 }
+
+const BROADCAST_EVENTS_CAPACITY: usize = 128;
 
 impl GuildServer {
     pub fn new<A: ToSocketAddrs>(timeout: Duration, addr: A) -> Self {
@@ -41,14 +48,15 @@ impl GuildServer {
         let peer_id = peer::PeerId::random();
         let proposal_register = proposal::ProposalRegister::new(peer_id, vec![]);
 
-        let (event_sender, _) = broadcast::channel(128);
+        let (event_sender, _) = broadcast::channel(BROADCAST_EVENTS_CAPACITY);
 
         Self {
             timeout,
-            peers: vec![],
             addr,
+            peers: Arc::new(Mutex::new(HashSet::new())),
             proposal_register: Arc::new(proposal_register),
             event_sender: Arc::new(event_sender),
+            peer_to_receiver: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -110,25 +118,55 @@ impl GuildService for GuildServer {
         &self,
         req: Request<RegisterStream>,
     ) -> TonicResult<Self::EventStreamStream> {
-        let mut events = BroadcastStream::new(self.event_sender.subscribe());
+        let peer_id = PeerId::from_bytes(&req.into_inner().peer_id).unwrap();
+
+        {
+            let mut peers = self.peers.lock().unwrap();
+            if !peers.insert(peer_id) {
+                return Err(Status::already_exists("Peer already listening to events"));
+            }
+        }
+
+        let mut events = match self.peer_to_receiver.write().unwrap().remove(&peer_id) {
+            // If events.len() was more than BROADCAST_EVENTS_CAPACITY, calling recv would return an error `Lagged`
+            Some(events) if events.len() < BROADCAST_EVENTS_CAPACITY => events,
+            _ => self.event_sender.subscribe(),
+        };
 
         let (tx, rx) = mpsc::channel(128);
+        let peer_to_receiver = Arc::clone(&self.peer_to_receiver);
+        let peers = Arc::clone(&self.peers);
         tokio::spawn(async move {
-            while let Some(item) = events.next().await {
-                match tx
-                    .send(item.map_err(|e| Status::internal(format!("{}", e))))
-                    .await
-                {
-                    Ok(_) => {
-                        // item (server response) was queued to be send to client
+            loop {
+                tokio::select! {
+                    event = events.recv() => {
+                        match tx
+                            .send(event.map_err(|e| {
+                                Status::internal(format!("Broadcast Stream Recv Error: {:#?}", e))
+                            }))
+                            .await
+                        {
+                            Ok(_) => {
+                                // item (server response) was queued to be send to client
+                            }
+                            Err(_item) => {
+                                // TODO: how to handle this?
+                                // The events stream doesn't have the event anymore,
+                                // so we can't save the stream for reconnect
+                                break;
+                            }
+                        }
                     }
-                    Err(_item) => {
-                        // output_stream was build from rx and both are dropped
+                    _ = tx.closed() => {
+                        // We store their receiver in case they reconnect
+                        peer_to_receiver.write().unwrap().insert(peer_id, events);
                         break;
                     }
-                }
+                };
+
+                peers.lock().unwrap().remove(&peer_id);
+                eprintln!("\tclient disconnected");
             }
-            eprintln!("\tclient disconnected");
         });
 
         let rx = ReceiverStream::new(rx);
