@@ -1,4 +1,5 @@
 mod change;
+mod client;
 mod config;
 mod event;
 pub mod guild;
