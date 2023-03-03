@@ -1,13 +1,17 @@
-use futures::Stream;
+use futures::TryStreamExt;
 use libp2p_core::PeerId;
 use std::{
     net::{SocketAddr, ToSocketAddrs},
     pin::Pin,
     sync::{Arc, RwLock},
+    task::Poll,
     time::Duration,
 };
-use tokio::sync::mpsc;
-use tokio_stream::{wrappers::ReceiverStream, StreamExt};
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::{
+    wrappers::{BroadcastStream, ReceiverStream},
+    Stream, StreamExt,
+};
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::{
@@ -27,8 +31,8 @@ struct GuildServer {
     timeout: Duration,
     peers: Vec<PeerId>,
     addr: SocketAddr,
-    proposal_register: Arc<RwLock<proposal::ProposalRegister>>,
-    event_listeners: Arc<RwLock<Vec<mpsc::Sender<Result<EventResponse, tonic::Status>>>>>,
+    proposal_register: Arc<proposal::ProposalRegister>,
+    event_sender: Arc<broadcast::Sender<EventResponse>>,
 }
 
 impl GuildServer {
@@ -37,26 +41,28 @@ impl GuildServer {
         let peer_id = peer::PeerId::random();
         let proposal_register = proposal::ProposalRegister::new(peer_id, vec![]);
 
+        let (event_sender, _) = broadcast::channel(128);
+
         Self {
             timeout,
             peers: vec![],
             addr,
-            proposal_register: Arc::new(RwLock::new(proposal_register)),
-            event_listeners: Arc::new(RwLock::new(vec![])),
+            proposal_register: Arc::new(proposal_register),
+            event_sender: Arc::new(event_sender),
         }
     }
 
     pub async fn broadcaster(
-        proposal_register: Arc<RwLock<proposal::ProposalRegister>>,
-        event_listeners: Arc<RwLock<Vec<mpsc::Sender<Result<EventResponse, tonic::Status>>>>>,
+        proposal_register: Arc<proposal::ProposalRegister>,
+        event_sender: Arc<broadcast::Sender<EventResponse>>,
     ) {
         let mut interval = tokio::time::interval(Duration::from_millis(100));
 
         loop {
             interval.tick().await;
-            let proposal = match proposal_register.write().unwrap().poll() {
-                std::task::Poll::Ready(p) => p,
-                std::task::Poll::Pending => continue,
+            let proposal = match proposal_register.poll() {
+                Poll::Ready(p) => p,
+                Poll::Pending => continue,
             };
 
             let proposal_serialized = bincode::serialize(&proposal).unwrap();
@@ -65,26 +71,11 @@ impl GuildServer {
                 data: proposal_serialized,
             };
 
-            let mut closed_listeners = vec![];
-            for (i, listener) in event_listeners.read().unwrap().iter().enumerate() {
-                match listener.try_send(Ok(event.clone())) {
-                    Ok(()) => {}
-                    Err(e) => match e {
-                        mpsc::error::TrySendError::Full(_) => todo!(),
-                        mpsc::error::TrySendError::Closed(_) => {
-                            closed_listeners.push(i);
-                        }
-                    },
-                }
-            }
-
-            if !closed_listeners.is_empty() {
-                // Remove from last to first to avoid index shifting
-                closed_listeners.reverse();
-                let mut event_listeners = event_listeners.write().unwrap();
-                for listener in closed_listeners {
-                    event_listeners.remove(listener);
-                }
+            #[allow(clippy::single_match)]
+            match event_sender.send(event) {
+                Ok(_) => {}
+                // Err means that there are no receivers, which is fine
+                Err(_) => {}
             }
         }
     }
@@ -92,7 +83,7 @@ impl GuildServer {
     pub async fn run(self) {
         let broadcaster = Self::broadcaster(
             Arc::clone(&self.proposal_register),
-            Arc::clone(&self.event_listeners),
+            Arc::clone(&self.event_sender),
         );
 
         let addr = self.addr;
@@ -119,13 +110,29 @@ impl GuildService for GuildServer {
         &self,
         req: Request<RegisterStream>,
     ) -> TonicResult<Self::EventStreamStream> {
-        // spawn and channel are required if you want handle "disconnect" functionality
-        // the `out_stream` will not be polled after client disconnect
-        let (tx, rx) = mpsc::channel(128);
-        self.event_listeners.write().unwrap().push(tx);
+        let mut events = BroadcastStream::new(self.event_sender.subscribe());
 
-        let output_stream = ReceiverStream::new(rx);
-        Ok(Response::new(Box::pin(output_stream) as ResponseStream))
+        let (tx, rx) = mpsc::channel(128);
+        tokio::spawn(async move {
+            while let Some(item) = events.next().await {
+                match tx
+                    .send(item.map_err(|e| Status::internal(format!("{}", e))))
+                    .await
+                {
+                    Ok(_) => {
+                        // item (server response) was queued to be send to client
+                    }
+                    Err(_item) => {
+                        // output_stream was build from rx and both are dropped
+                        break;
+                    }
+                }
+            }
+            eprintln!("\tclient disconnected");
+        });
+
+        let rx = ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(rx) as ResponseStream))
     }
 
     async fn snapshot(&self, request: Request<SnapshotRequest>) -> TonicResult<SnapshotResponse> {
