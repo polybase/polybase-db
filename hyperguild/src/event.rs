@@ -1,5 +1,5 @@
 use crate::change::Change;
-use crate::proposal::ProposalManifest;
+use crate::proposal::manifest::ProposalManifest;
 use libp2p_core::PeerId;
 use serde::{de, Deserialize, Deserializer, Serialize};
 

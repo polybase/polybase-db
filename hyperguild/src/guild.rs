@@ -2,7 +2,9 @@ use crate::change::Change;
 use crate::event::GuildEvent;
 use crate::key::Key;
 use crate::pending::{self, PendingQueue};
-use crate::proposal::{Proposal, ProposalHash, ProposalManifest};
+use crate::proposal::hash::ProposalHash;
+use crate::proposal::manifest::ProposalManifest;
+use crate::proposal::proposal::Proposal;
 use bincode::{deserialize, serialize};
 use libp2p_core::PeerId;
 
@@ -165,7 +167,7 @@ where
     }
 
     fn receive_proposal(&self, proposal_manifest: ProposalManifest) {
-        let proposal = Proposal::new(proposal_manifest);
+        // let proposal = Proposal::new(proposal_manifest);
     }
 
     fn receive_accept(&self, proposal_hash: ProposalHash) {}
