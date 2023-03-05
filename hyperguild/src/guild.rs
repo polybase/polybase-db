@@ -1,14 +1,14 @@
 use crate::change::Change;
 use crate::event::GuildEvent;
 use crate::key::Key;
-use crate::pending::{self, PendingQueue};
-use crate::proposal::hash::ProposalHash;
-use crate::proposal::manifest::ProposalManifest;
-use crate::proposal::proposal::Proposal;
+use crate::peer::PeerId;
+use crate::proposal::event::ProposalEvent;
+use crate::proposal::manifest::{self, ProposalManifest};
+use crate::proposal::proposal::Accept;
+use crate::proposal::register::ProposalRegister;
 use bincode::{deserialize, serialize};
-use libp2p_core::PeerId;
 
-use slog::{crit, warn};
+use slog::{crit, info};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -18,14 +18,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error(transparent)]
-    PendingCache(#[from] pending::Error),
+    // #[error(transparent)]
+    // PendingCache(#[from] pending::Error),
 }
 
 pub trait Store {
     // Store should apply changes and return the new root hash
     // for the rollup/store
-    fn commit(&self, changes: Change) -> Vec<u8>;
+    fn commit(&self, changes: Vec<Change>) -> Vec<u8>;
 
     // Restore the database from a snapshot
     fn restore(&self, from: Option<Vec<u8>>) -> SnapshotResp;
@@ -58,14 +58,11 @@ pub struct Guild<TStore, TNetwork> {
     /// Connected members
     connected_members: Vec<Key<PeerId>>,
 
-    /// PeerId for the current leader
-    last_proposal: Option<Proposal>,
+    /// Proposal Register
+    register: ProposalRegister,
 
-    /// List of proposals that have been accepted
-    proposals: HashMap<Vec<u8>, Proposal>,
-
-    /// Pending txns that this node will include it if becomes the leader
-    pending: PendingQueue<Vec<u8>, Change>,
+    /// Pending changes (aka txn pool)
+    pending_changes: HashMap<Vec<u8>, Change>,
 
     /// Store to set and get state
     store: TStore,
@@ -78,6 +75,9 @@ pub struct Guild<TStore, TNetwork> {
 
     /// Logger
     logger: slog::Logger,
+
+    /// Root hash
+    root_hash: Option<Vec<u8>>,
 }
 
 impl<TStore, TNetwork> Guild<TStore, TNetwork>
@@ -92,25 +92,34 @@ where
         logger: slog::Logger,
     ) -> Self {
         Self {
-            local_peer_id,
+            local_peer_id: local_peer_id.clone(),
             members: Vec::new(),
             connected_members: Vec::new(),
-            last_proposal: None,
-            proposals: HashMap::new(),
-            pending: PendingQueue::new(),
+            register: ProposalRegister::new(local_peer_id, vec![]),
+            pending_changes: HashMap::new(),
             store,
             network,
             up_to_date: false,
             logger,
+            root_hash: None,
         }
     }
 
-    pub fn add(&mut self, changes: Vec<Change>) {
-        // Send new txns to other members
-        self.send_all(GuildEvent::Pending { changes });
+    // TODO: have a promise that can be used
+    pub fn add_pending_changes(&mut self, changes: Vec<Change>) {
+        for change in changes.iter() {
+            self.pending_changes
+                .entry(change.id.clone())
+                .or_insert_with(|| change.clone());
+        }
 
-        // Add pending changes locally
-        // self.add_pending_changes(changes);
+        // Send new txns to other members
+        self.send_all(&GuildEvent::AddPendingChange { changes });
+    }
+
+    pub fn send_pending_change(&mut self, changes: Vec<Change>) {
+        // Send new txns to other members
+        self.send_all(&GuildEvent::AddPendingChange { changes });
     }
 
     async fn run() {
@@ -119,31 +128,18 @@ where
         }
     }
 
-    fn send(&self, peerId: &PeerId, event: &GuildEvent) {
+    fn send(&self, peer_id: &PeerId, event: &GuildEvent) {
         // Serialize the data
         let data = serialize(&event).unwrap();
 
         // Send event to all peers
-        self.network.send(&peerId, data);
+        self.network.send(&peer_id, data);
     }
 
-    fn send_all(&self, event: GuildEvent) {
+    fn send_all(&self, event: &GuildEvent) {
         for peer in self.connected_members.iter() {
             self.send(peer.preimage(), &event);
         }
-    }
-
-    fn handle_proposal(&self) {
-        // Check if node is valid leader
-        // Check if up to date
-        // Check if txn is valid
-    }
-
-    fn is_proposal_valid(&self) -> bool {
-        // Check if node is valid leader
-        // Check if up to date
-        // Check if txn is valid
-        true
     }
 
     fn join() {
@@ -152,43 +148,83 @@ where
         // Send state to other peers on
     }
 
-    fn snapshot() {
-        // Take a snapshot of proposals??
-        // Take a snapshot of database state
-    }
-
-    fn add_pending_changes(&self, changes: Vec<Change>) -> Result<()> {
-        let kvp = changes
-            .into_iter()
-            .map(|change| (change.id.clone(), change))
-            .collect();
-
-        Ok(self.pending.append(kvp)?)
-    }
-
-    fn receive_proposal(&self, proposal_manifest: ProposalManifest) {
-        // let proposal = Proposal::new(proposal_manifest);
-    }
-
-    fn receive_accept(&self, proposal_hash: ProposalHash) {}
-
-    fn on_event(&self, event: GuildEvent, peerId: PeerId) {
+    /// Events from the proposal state machine, which notify of new
+    /// actions that should be taken
+    fn on_proposal_event(&mut self, event: ProposalEvent) {
         match event {
-            GuildEvent::Proposal {
-                proposal_manifest, ..
-            } => self.receive_proposal(proposal_manifest),
-            GuildEvent::Accept { proposal_hash } => {}
-            GuildEvent::Pending { changes } => {
-                match self.add_pending_changes(changes) {
-                    Ok(_) => {}
-                    Err(e) => match e {
-                        Error::PendingCache(pending::Error::KeyExists) => {
-                            // In this case, we won't add the txn to the queue and so these
-                            // txns won't be included if this node becomes the leader. However,
-                            // the txn is likely included by another node
-                            warn!(self.logger, "Duplicate changes detected, dropping changes");
-                        }
+            // Node should send accept for an active proposal
+            // to another peer
+            ProposalEvent::SendAccept {
+                peer_id,
+                height,
+                proposal_hash,
+                skips,
+            } => {
+                self.send(
+                    // TODO: Accept should not have optional peer
+                    &peer_id.unwrap_or(PeerId::random()),
+                    &GuildEvent::Accept {
+                        accept: Accept {
+                            peer_id: self.local_peer_id.clone(),
+                            proposal_hash: proposal_hash.clone(),
+                            height,
+                            skips: 0,
+                        },
                     },
+                );
+            }
+
+            // Node should create and send a new proposal
+            ProposalEvent::Propose {
+                last_proposal_hash,
+                height,
+            } => {
+                // Get changes from the pending changes cache
+
+                // Create the proposl manfiest
+                let manifest = ProposalManifest {
+                    last_proposal_hash,
+                    skips: 0,
+                    height,
+                    peer_id: self.local_peer_id.clone(),
+                    changes: vec![],
+                };
+
+                //
+                self.register.receive_proposal(manifest)
+            }
+
+            // Commit a confirmed proposal changes
+            ProposalEvent::Commit { manifest } => {
+                // Remove commits from pending changes store
+                for change in &manifest.changes {
+                    self.pending_changes.remove(&change.id);
+                }
+
+                self.root_hash = Some(self.store.commit(manifest.changes));
+            }
+
+            _ => {
+                info!(self.logger, "Proposal event: {:?}", event);
+            }
+        }
+    }
+
+    /// Events sent by other peers to this node
+    fn on_incoming_event(&mut self, event: GuildEvent, peer_id: PeerId) {
+        match event {
+            // Incoming proposal from another peer
+            GuildEvent::Proposal { manifest, .. } => self.register.receive_proposal(manifest),
+
+            // Incoming accept from another peer
+            GuildEvent::Accept { accept } => self.register.receive_accept(accept),
+
+            // Incoming changes from another peer
+            GuildEvent::AddPendingChange { changes } => {
+                for change in changes {
+                    self.pending_changes
+                        .entry(change.id.clone())
+                        .or_insert_with(|| change);
                 }
             }
             _ => {

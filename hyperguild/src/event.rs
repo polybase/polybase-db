@@ -1,5 +1,6 @@
-use crate::change::Change;
+use crate::proposal::hash::ProposalHash;
 use crate::proposal::manifest::ProposalManifest;
+use crate::{change::Change, proposal::proposal::Accept};
 use libp2p_core::PeerId;
 use serde::{de, Deserialize, Deserializer, Serialize};
 
@@ -13,18 +14,18 @@ pub enum NetworkEvent {
 pub enum GuildEvent {
     /// Propose a commit
     Proposal {
-        proposal_manifest: ProposalManifest,
-        proposal_hash: Vec<u8>,
+        manifest: ProposalManifest,
+        proposal_hash: ProposalHash,
     },
 
     /// Accept a proposal, this is a vote this node
     /// to become the next leader (and create a proposal)
     Accept {
-        proposal_hash: Vec<u8>,
+        accept: Accept,
     },
 
     /// Add a set of pending txns to the queue
-    Pending {
+    AddPendingChange {
         changes: Vec<Change>,
     },
 

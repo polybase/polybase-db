@@ -1,6 +1,7 @@
 use super::event::ProposalEvent;
 use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
+use super::proposal::Accept;
 use super::store::ProposalStore;
 use crate::key::Key;
 use crate::peer::PeerId;
@@ -28,11 +29,13 @@ pub struct ProposalRegisterShared {
     /// for
     peers: Vec<Key<PeerId>>,
 
-    // Notifies the background worker to wake up
+    /// Notifies the background worker to wake up
     background_worker: Notify,
-    // Events to be streamed
+
+    /// Events to be streamed
     events: Mutex<VecDeque<ProposalEvent>>,
 
+    /// Timeout used for expired accepts (no new proposal received within timeout period)
     timeout: Mutex<Option<Instant>>,
 
     /// Shared proposal state, must be updated together
@@ -53,7 +56,7 @@ impl Drop for ProposalRegister {
 }
 
 impl ProposalRegister {
-    fn new(local_peer_id: PeerId, peers: Vec<PeerId>) -> Self {
+    pub fn new(local_peer_id: PeerId, peers: Vec<PeerId>) -> Self {
         let mut peers = peers;
 
         if !peers.contains(&local_peer_id) {
@@ -128,14 +131,14 @@ impl ProposalRegister {
                 .add_pending_proposal(manifest, &self.shared.peers);
         }
 
-        // Process next round with the newly added proposal state, and keep
+        // Process next rounds with the newly added proposal state, and keep
         // processing until nothing is left
         self.process_next()
     }
 
-    pub fn receive_accept(&mut self, proposal_hash: ProposalHash, peer_id: PeerId) {
-        // let mut store = self.shared.state.lock().unwrap().store;
-        // store.
+    pub fn receive_accept(&mut self, accept: Accept) {
+        let mut state = self.shared.state.lock().unwrap();
+        state.store.add_accept(accept);
     }
 
     fn reset_timeout(&self) {
@@ -156,7 +159,7 @@ impl ProposalRegister {
         let mut state = self.shared.state.lock().unwrap();
         while let Some(event) = state.store.process_next() {
             match event {
-                ProposalEvent::Accept { .. } => {
+                ProposalEvent::SendAccept { .. } => {
                     self.reset_timeout();
                 }
                 ProposalEvent::OutOfSync { .. } => {
@@ -208,11 +211,16 @@ impl ProposalRegisterShared {
     }
 
     fn timeout(&self) -> Option<Instant> {
-        let timeout = self.timeout.lock().unwrap();
+        let mut timeout = self.timeout.lock().unwrap();
 
         // Check if we have an expiry time
         if timeout.is_none() {
             return None;
+        }
+
+        if let Some(event) = self.state.lock().unwrap().store.skip() {
+            self.events.lock().unwrap().push_back(event);
+            *timeout = Some(Instant::now() + Duration::from_secs(1));
         }
 
         *timeout
@@ -237,6 +245,8 @@ async fn background_worker(shared: Arc<ProposalRegisterShared>) {
 
 #[cfg(test)]
 mod test {
+    use crate::proposal::proposal::Accept;
+
     use super::*;
 
     // TODO: test with no peers
@@ -284,9 +294,11 @@ mod test {
 
         assert_eq!(
             next,
-            ProposalEvent::Accept {
+            ProposalEvent::SendAccept {
                 proposal_hash: hash,
-                peer_id: Some(peer_1)
+                peer_id: Some(peer_1),
+                height: 0,
+                skips: 0,
             }
         )
     }

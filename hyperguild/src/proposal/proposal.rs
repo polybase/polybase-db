@@ -2,6 +2,7 @@ use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
 use crate::key::Key;
 use crate::peer::PeerId;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 #[derive(Debug)]
@@ -17,6 +18,23 @@ pub struct Proposal {
 
     /// Peers (in order based on manifest.last_hash)
     peers: Vec<Key<PeerId>>,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Accept {
+    /// Peer that sent the accept
+    pub peer_id: PeerId,
+
+    /// Hash of the proposal being accepted
+    pub proposal_hash: ProposalHash,
+
+    /// Height of the proposal being accepted, allowing to more easily
+    /// skip out of date accepts
+    pub height: usize,
+
+    /// If this is a skip accept, i.e. we have skipped over a previous leader
+    /// because they did not produce a proposal within the allocated period
+    pub skips: usize,
 }
 
 impl Proposal {
@@ -60,8 +78,9 @@ impl Proposal {
         peer.preimage().clone()
     }
 
-    pub fn add_accept(&mut self, peer_id: &PeerId) {
-        self.accepts.insert(peer_id.clone());
+    pub fn add_accept(&mut self, peer_id: PeerId) -> bool {
+        self.accepts.insert(peer_id);
+        self.majority_accept()
     }
 
     pub fn majority_accept(&self) -> bool {
@@ -132,11 +151,11 @@ mod test {
             ],
         );
 
-        proposal.add_accept(&peer_1);
+        proposal.add_accept(peer_1);
 
         assert!(!proposal.majority_accept());
 
-        proposal.add_accept(&peer_2);
+        proposal.add_accept(peer_2);
 
         assert!(proposal.majority_accept());
     }

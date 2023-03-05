@@ -1,16 +1,40 @@
 use super::event::ProposalEvent;
 use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
-use super::proposal::Proposal;
+use super::proposal::{Accept, Proposal};
 use crate::key::Key;
 use crate::peer::PeerId;
 use std::collections::{HashMap, VecDeque};
 
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    // #[error("Missing proposal for accept")]
+    // MissingProposalForAccept {
+    //     proposal_hash: ProposalHash,
+    //     peer_id: PeerId,
+    // },
+}
+
 pub struct ProposalStore {
+    /// Pending proposals that may or may not end up being confiremd.
     pending_proposals: HashMap<ProposalHash, Proposal>,
+
+    /// List of confirmed proposals, we keep a copy of confirmed proposals to share
+    /// with other nodes on the network
     confirmed_proposals: VecDeque<Proposal>,
+
+    /// Next height to considered for processing, proposals must be processed
+    /// in order
     next_height: Option<usize>,
+
+    /// Max height seen across all received proposals
     max_height: Option<usize>,
+
+    /// Orphaned accepts are when we receive an accept for a proposal before we
+    /// receive the propsal itself. We can then add these as soon as the proposal arrives.
+    orphan_accepts: HashMap<ProposalHash, Vec<PeerId>>,
 }
 
 impl ProposalStore {
@@ -20,6 +44,7 @@ impl ProposalStore {
             confirmed_proposals: VecDeque::new(),
             max_height: None,
             next_height: None,
+            orphan_accepts: HashMap::new(),
         }
     }
 
@@ -33,7 +58,14 @@ impl ProposalStore {
 
     pub fn add_pending_proposal(&mut self, manifest: ProposalManifest, peers: &[Key<PeerId>]) {
         let hash: ProposalHash = (&manifest).into();
-        let proposal = Proposal::new(manifest, peers);
+        let mut proposal = Proposal::new(manifest, peers);
+
+        // Check if we have orphaned accepts
+        if let Some(accepts) = self.orphan_accepts.remove(&hash) {
+            for peer_id in accepts {
+                proposal.add_accept(peer_id);
+            }
+        }
 
         // Update max height seen
         if self.max_height.is_none() || proposal.height() > self.max_height.unwrap() {
@@ -45,7 +77,8 @@ impl ProposalStore {
     }
 
     pub fn process_next(&mut self) -> Option<ProposalEvent> {
-        let next_proposal = self.next_pending_proposal()?;
+        let next_height = self.next_height();
+        let next_proposal = self.next_pending_proposal(next_height)?;
         let next_proposal_height = next_proposal.height();
         let next_proposal_hash = next_proposal.hash().clone();
         let next_proposal_last_hash = next_proposal.last_hash().clone();
@@ -57,7 +90,7 @@ impl ProposalStore {
             .last_confirmed_proposal()
             .map(|p| p.get_next_leader(&next_proposal.skips()));
 
-        // TODO: validate last hash is valid
+        // TODO: validate last hash and peer_id is valid
 
         // Confirm the proposal before this one
         self.confirm(&next_proposal_last_hash);
@@ -78,28 +111,71 @@ impl ProposalStore {
         }
 
         // In sync, so we should send accept to the next leader
-        Some(ProposalEvent::Accept {
+        Some(ProposalEvent::SendAccept {
             proposal_hash: next_proposal_hash,
             peer_id: next_leader,
+            height: next_proposal_height,
+            skips: 0,
         })
     }
 
-    pub fn add_accept(&mut self, proposal_hash: &ProposalHash, peer_id: &PeerId) {
-        let proposal = self.pending_proposals.get_mut(proposal_hash);
-        match self.pending_proposals.get_mut(proposal_hash) {
+    /// Adds an accept to a proposal, we should only be receiving accepts if we are the
+    /// designated leader. Returns whether a majority has been reached.
+    pub fn add_accept(&mut self, accept: Accept) -> bool {
+        let Accept {
+            proposal_hash,
+            peer_id,
+            height,
+            skips,
+        } = accept;
+
+        // Accept is out of date
+        if self.height().unwrap_or(0) >= height {
+            return false;
+        }
+
+        match self.pending_proposals.get_mut(&proposal_hash) {
             Some(p) => p.add_accept(peer_id),
             None => {
-                // Create the propsoal
+                // Get exisiting orphaned proposal list
+                if let Some(p) = self.orphan_accepts.get_mut(&proposal_hash) {
+                    p.push(peer_id);
+                } else {
+                    self.orphan_accepts
+                        .insert(proposal_hash.clone(), vec![peer_id]);
+                }
+                false
             }
         }
     }
 
-    pub fn next_pending_proposal(&self) -> Option<&Proposal> {
-        let next_height = self.next_height();
+    pub fn skip(&self) -> Option<ProposalEvent> {
+        // Current active proposal height
+        let current_proposal_height = self.height().unwrap_or(0) + 1;
+
+        // Get the next proposal
+        let current_proposal = self.next_pending_proposal(current_proposal_height)?;
+
+        let new_skips = current_proposal.skips() + 1;
+
+        let next_leader = self
+            .last_confirmed_proposal()
+            .map(|p| p.get_next_leader(&new_skips));
+
+        // Send skip
+        Some(ProposalEvent::SendAccept {
+            height: current_proposal_height,
+            skips: new_skips,
+            peer_id: next_leader,
+            proposal_hash: current_proposal.hash().clone(),
+        })
+    }
+
+    pub fn next_pending_proposal(&self, height: usize) -> Option<&Proposal> {
         let next_proposal = self
             .pending_proposals
             .values()
-            .filter(|proposal| proposal.height() == next_height)
+            .filter(|proposal| proposal.height() == height)
             .max_by(|a, b| a.skips().cmp(&b.skips()));
         next_proposal
     }
@@ -165,9 +241,11 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Accept {
+            Some(ProposalEvent::SendAccept {
                 proposal_hash: m1_hash.clone(),
+                height: 1,
                 peer_id: None,
+                skips: 0,
             })
         );
         assert_eq!(store.confirmed_proposals.len(), 0);
@@ -184,9 +262,11 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Accept {
+            Some(ProposalEvent::SendAccept {
                 proposal_hash: m2_hash.clone(),
                 peer_id: None,
+                height: 2,
+                skips: 0,
             })
         );
         assert_eq!(store.confirmed_proposals.len(), 1);
@@ -225,9 +305,11 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Accept {
+            Some(ProposalEvent::SendAccept {
                 proposal_hash: m4_hash,
                 peer_id: Some(p2),
+                height: 4,
+                skips: 0,
             })
         );
 
@@ -240,7 +322,7 @@ mod test {
         let peer_id = PeerId::random();
         let peers = [Key::from(peer_id.clone())];
 
-        assert!(store.next_pending_proposal().is_none());
+        assert!(store.next_pending_proposal(store.next_height()).is_none());
 
         let b = Proposal::new(
             ProposalManifest {
@@ -265,7 +347,7 @@ mod test {
         store.next_height = Some(11);
         store.add_pending_proposal(m2, &peers);
 
-        assert!(store.next_pending_proposal().is_none());
+        assert!(store.next_pending_proposal(store.next_height()).is_none());
 
         let m4 = ProposalManifest {
             last_proposal_hash: "e".into(),
@@ -276,7 +358,7 @@ mod test {
         };
         store.add_pending_proposal(m4, &peers);
 
-        assert!(store.next_pending_proposal().is_none());
+        assert!(store.next_pending_proposal(store.next_height()).is_none());
 
         let m1 = ProposalManifest {
             last_proposal_hash: "d".into(),
@@ -298,7 +380,11 @@ mod test {
         store.add_pending_proposal(m3, &peers);
 
         assert_eq!(
-            store.next_pending_proposal().unwrap().hash().clone(),
+            store
+                .next_pending_proposal(store.next_height())
+                .unwrap()
+                .hash()
+                .clone(),
             m3_hash
         );
     }

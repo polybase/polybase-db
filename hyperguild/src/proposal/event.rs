@@ -28,9 +28,11 @@ pub enum ProposalEvent {
     },
 
     /// Send accept to the peer
-    Accept {
-        proposal_hash: ProposalHash,
+    SendAccept {
+        height: usize,
+        skips: usize,
         peer_id: Option<PeerId>,
+        proposal_hash: ProposalHash,
     },
 
     /// Send a new proposal to the network
