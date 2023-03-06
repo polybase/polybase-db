@@ -8,7 +8,7 @@ use crate::proposal::proposal::Accept;
 use crate::proposal::register::ProposalRegister;
 use bincode::{deserialize, serialize};
 
-use slog::{crit, info};
+use slog::{crit, debug, info};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -144,7 +144,6 @@ where
 
     fn join() {
         // Attempt to dial other peers
-
         // Send state to other peers on
     }
 
@@ -160,15 +159,17 @@ where
                 proposal_hash,
                 skips,
             } => {
+                // TODO: send proposal hash and peer_id
+                info!(self.logger, "Send accept"; "height" => height, "skips" => skips);
                 self.send(
                     // TODO: Accept should not have optional peer
                     &peer_id.unwrap_or(PeerId::random()),
                     &GuildEvent::Accept {
                         accept: Accept {
                             peer_id: self.local_peer_id.clone(),
-                            proposal_hash: proposal_hash.clone(),
+                            proposal_hash,
                             height,
-                            skips: 0,
+                            skips,
                         },
                     },
                 );
@@ -180,6 +181,7 @@ where
                 height,
             } => {
                 // Get changes from the pending changes cache
+                let changes = self.pending_changes.values().cloned().collect();
 
                 // Create the proposl manfiest
                 let manifest = ProposalManifest {
@@ -187,7 +189,7 @@ where
                     skips: 0,
                     height,
                     peer_id: self.local_peer_id.clone(),
-                    changes: vec![],
+                    changes,
                 };
 
                 //
@@ -204,8 +206,30 @@ where
                 self.root_hash = Some(self.store.commit(manifest.changes));
             }
 
-            _ => {
-                info!(self.logger, "Proposal event: {:?}", event);
+            ProposalEvent::OutOfSync {
+                local_height,
+                max_seen_height,
+            } => {
+                // TODO: send request to other nodes for missing proposals
+            }
+
+            ProposalEvent::OutOfDate {
+                local_height,
+                proposal_height,
+            } => {
+                debug!(self.logger, "Out of date proposal"; "local_height" => local_height, "proposal_height" => proposal_height);
+            }
+
+            ProposalEvent::DuplicateProposal => {
+                info!(self.logger, "Duplicate proposal");
+            }
+
+            ProposalEvent::CatchingUp {
+                local_height,
+                proposal_height,
+                max_seen_height,
+            } => {
+                info!(self.logger, "Catching up"; "local_height" => local_height, "proposal_height" => proposal_height, "max_seen_height" => max_seen_height);
             }
         }
     }
