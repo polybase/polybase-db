@@ -95,6 +95,7 @@ where
             local_peer_id: local_peer_id.clone(),
             members: Vec::new(),
             connected_members: Vec::new(),
+            // TODO: add peers
             register: ProposalRegister::new(local_peer_id, vec![]),
             pending_changes: HashMap::new(),
             store,
@@ -154,7 +155,7 @@ where
             // Node should send accept for an active proposal
             // to another peer
             ProposalEvent::SendAccept {
-                peer_id,
+                leader_id,
                 height,
                 proposal_hash,
                 skips,
@@ -163,10 +164,10 @@ where
                 info!(self.logger, "Send accept"; "height" => height, "skips" => skips);
                 self.send(
                     // TODO: Accept should not have optional peer
-                    &peer_id.unwrap_or(PeerId::random()),
+                    &leader_id,
                     &GuildEvent::Accept {
                         accept: Accept {
-                            peer_id: self.local_peer_id.clone(),
+                            leader_id: self.local_peer_id.clone(),
                             proposal_hash,
                             height,
                             skips,
@@ -241,7 +242,11 @@ where
             GuildEvent::Proposal { manifest, .. } => self.register.receive_proposal(manifest),
 
             // Incoming accept from another peer
-            GuildEvent::Accept { accept } => self.register.receive_accept(accept),
+            GuildEvent::Accept { accept } => {
+                if let Some(event) = self.register.receive_accept(accept) {
+                    self.on_proposal_event(event);
+                }
+            }
 
             // Incoming changes from another peer
             GuildEvent::AddPendingChange { changes } => {

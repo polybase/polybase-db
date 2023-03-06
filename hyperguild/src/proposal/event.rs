@@ -31,7 +31,7 @@ pub enum ProposalEvent {
     SendAccept {
         height: usize,
         skips: usize,
-        peer_id: Option<PeerId>,
+        leader_id: PeerId,
         proposal_hash: ProposalHash,
     },
 

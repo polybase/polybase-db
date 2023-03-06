@@ -12,6 +12,10 @@ impl PeerId {
         Self(bytes)
     }
 
+    pub fn genesis() -> Self {
+        Self(vec![0u8])
+    }
+
     pub fn random() -> PeerId {
         let peer_id = rand::thread_rng().gen::<[u8; 32]>();
         PeerId(peer_id.to_vec())

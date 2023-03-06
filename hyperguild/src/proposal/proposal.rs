@@ -23,7 +23,7 @@ pub struct Proposal {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Accept {
     /// Peer that sent the accept
-    pub peer_id: PeerId,
+    pub leader_id: PeerId,
 
     /// Hash of the proposal being accepted
     pub proposal_hash: ProposalHash,
@@ -55,6 +55,10 @@ impl Proposal {
         }
     }
 
+    pub fn genesis(existing_peers: &[Key<PeerId>]) -> Self {
+        Self::new(ProposalManifest::genesis(), existing_peers)
+    }
+
     pub fn hash(&self) -> &ProposalHash {
         self.hash.preimage()
     }
@@ -78,9 +82,8 @@ impl Proposal {
         peer.preimage().clone()
     }
 
-    pub fn add_accept(&mut self, peer_id: PeerId) -> bool {
+    pub fn add_accept(&mut self, peer_id: PeerId) {
         self.accepts.insert(peer_id);
-        self.majority_accept()
     }
 
     pub fn majority_accept(&self) -> bool {

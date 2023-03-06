@@ -3,7 +3,6 @@ use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
 use super::proposal::Accept;
 use super::store::ProposalStore;
-use crate::key::Key;
 use crate::peer::PeerId;
 use futures::stream::StreamExt;
 use std::collections::VecDeque;
@@ -20,15 +19,6 @@ pub struct ProposalRegister {
 }
 
 pub struct ProposalRegisterShared {
-    /// Local peer, required so we can determine if
-    /// we are the leader
-    local_peer_id: PeerId,
-
-    /// All peers on the network, this is used to determine
-    /// which peer to send accepts to and the threshold required
-    /// for
-    peers: Vec<Key<PeerId>>,
-
     /// Notifies the background worker to wake up
     background_worker: Notify,
 
@@ -57,20 +47,12 @@ impl Drop for ProposalRegister {
 
 impl ProposalRegister {
     pub fn new(local_peer_id: PeerId, peers: Vec<PeerId>) -> Self {
-        let mut peers = peers;
-
-        if !peers.contains(&local_peer_id) {
-            peers.push(local_peer_id.clone());
-        }
-
         let shared = Arc::new(ProposalRegisterShared {
-            local_peer_id,
-            peers: peers.into_iter().map(Key::new).collect(),
             events: Mutex::new(VecDeque::new()),
             timeout: Mutex::new(None),
             state: Mutex::new(ProposalRegisterState {
                 shutdown: false,
-                store: ProposalStore::new(),
+                store: ProposalStore::new(local_peer_id, peers),
             }),
             background_worker: Notify::new(),
         });
@@ -128,7 +110,7 @@ impl ProposalRegister {
                 .lock()
                 .unwrap()
                 .store
-                .add_pending_proposal(manifest, &self.shared.peers);
+                .add_pending_proposal(manifest);
         }
 
         // Process next rounds with the newly added proposal state, and keep
@@ -136,9 +118,9 @@ impl ProposalRegister {
         self.process_next()
     }
 
-    pub fn receive_accept(&mut self, accept: Accept) {
+    pub fn receive_accept(&mut self, accept: Accept) -> Option<ProposalEvent> {
         let mut state = self.shared.state.lock().unwrap();
-        state.store.add_accept(accept);
+        state.store.add_accept(accept)
     }
 
     fn reset_timeout(&self) {
@@ -296,7 +278,7 @@ mod test {
             next,
             ProposalEvent::SendAccept {
                 proposal_hash: hash,
-                peer_id: Some(peer_1),
+                leader_id: peer_1,
                 height: 0,
                 skips: 0,
             }
