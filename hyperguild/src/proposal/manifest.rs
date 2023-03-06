@@ -19,8 +19,20 @@ pub struct ProposalManifest {
     pub height: usize,
 
     /// PeerId of the proposer/leader
-    pub peer_id: PeerId,
+    pub leader_id: PeerId,
 
     /// Changes included in the proposal
     pub changes: Vec<Change>,
+}
+
+impl ProposalManifest {
+    pub fn genesis() -> Self {
+        ProposalManifest {
+            last_proposal_hash: ProposalHash::genesis(),
+            skips: 0,
+            height: 0,
+            leader_id: PeerId::genesis(),
+            changes: vec![],
+        }
+    }
 }

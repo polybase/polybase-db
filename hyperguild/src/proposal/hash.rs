@@ -11,6 +11,10 @@ impl ProposalHash {
     pub fn new(v: Vec<u8>) -> Self {
         ProposalHash(v)
     }
+
+    pub fn genesis() -> Self {
+        ProposalHash(vec![0u8])
+    }
 }
 
 impl Default for ProposalHash {

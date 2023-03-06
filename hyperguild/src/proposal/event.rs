@@ -1,5 +1,6 @@
 use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
+use super::proposal::ProposalAccept;
 use crate::peer::PeerId;
 use serde::{Deserialize, Serialize};
 
@@ -29,12 +30,7 @@ pub enum ProposalEvent {
     },
 
     /// Send accept to the peer
-    SendAccept {
-        height: usize,
-        skips: usize,
-        peer_id: Option<PeerId>,
-        proposal_hash: ProposalHash,
-    },
+    SendAccept { accept: ProposalAccept },
 
     /// Send a new proposal to the network
     Propose {

@@ -4,7 +4,7 @@ use crate::key::Key;
 use crate::peer::PeerId;
 use crate::proposal::event::ProposalEvent;
 use crate::proposal::manifest::{self, ProposalManifest};
-use crate::proposal::proposal::Accept;
+use crate::proposal::proposal::ProposalAccept;
 use crate::proposal::register::ProposalRegister;
 use bincode::{deserialize, serialize};
 
@@ -108,6 +108,7 @@ where
             local_peer_id: local_peer_id.clone(),
             members: Vec::new(),
             connected_members: Vec::new(),
+            // TODO: add peers
             register: ProposalRegister::new(local_peer_id, vec![]),
             pending_changes: HashMap::new(),
             store,
@@ -166,25 +167,14 @@ where
         match event {
             // Node should send accept for an active proposal
             // to another peer
-            ProposalEvent::SendAccept {
-                peer_id,
-                height,
-                proposal_hash,
-                skips,
-            } => {
+            ProposalEvent::SendAccept { accept } => {
                 // TODO: send proposal hash and peer_id
-                info!(self.logger, "Send accept"; "height" => height, "skips" => skips);
+                let leader = &accept.leader_id.clone();
+                info!(self.logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips);
                 self.send(
                     // TODO: Accept should not have optional peer
-                    &peer_id.unwrap_or(PeerId::random()),
-                    &GuildEvent::Accept {
-                        accept: Accept {
-                            peer_id: self.local_peer_id.clone(),
-                            proposal_hash,
-                            height,
-                            skips,
-                        },
-                    },
+                    leader,
+                    &GuildEvent::Accept { accept },
                 );
             }
 
@@ -201,7 +191,7 @@ where
                     last_proposal_hash,
                     skips: 0,
                     height,
-                    peer_id: self.local_peer_id.clone(),
+                    leader_id: self.local_peer_id.clone(),
                     changes,
                 };
 
@@ -254,7 +244,11 @@ where
             GuildEvent::Proposal { manifest, .. } => self.register.receive_proposal(manifest),
 
             // Incoming accept from another peer
-            GuildEvent::Accept { accept } => self.register.receive_accept(accept),
+            GuildEvent::Accept { accept } => {
+                if let Some(event) = self.register.receive_accept(accept) {
+                    self.on_proposal_event(event);
+                }
+            }
 
             // Incoming changes from another peer
             GuildEvent::AddPendingChange { changes } => {
@@ -264,6 +258,12 @@ where
                         .or_insert_with(|| change);
                 }
             }
+
+            // TODO: catch up from state
+            GuildEvent::Status { height, max_height } => {
+                // TODO: update status
+            }
+
             _ => {
                 crit!(self.logger, "Received unknown event: {event:?}")
             }
