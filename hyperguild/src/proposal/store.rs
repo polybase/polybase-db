@@ -17,6 +17,7 @@ pub enum Error {
     // },
 }
 
+#[derive(Debug)]
 pub struct ProposalStore {
     /// Pending proposals that may or may not end up being confiremd.
     pending_proposals: HashMap<ProposalHash, Proposal>,

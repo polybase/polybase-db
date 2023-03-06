@@ -1,8 +1,9 @@
 use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
 use crate::peer::PeerId;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProposalEvent {
     /// Proposal register is missing proposals
     OutOfSync {

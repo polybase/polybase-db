@@ -20,6 +20,7 @@ use tonic::{transport::Server, Request, Response, Status};
 
 use crate::{
     peer,
+    proposal::register::ProposalRegister,
     service::{EventResponse, RegisterStream, SnapshotRequest, SnapshotResponse},
 };
 use crate::{
@@ -35,7 +36,7 @@ struct GuildServer {
     timeout: Duration,
     addr: SocketAddr,
     peers: Arc<Mutex<HashSet<PeerId>>>,
-    proposal_register: Arc<proposal::ProposalRegister>,
+    proposal_register: Arc<ProposalRegister>,
     event_sender: Arc<broadcast::Sender<EventResponse>>,
     peer_to_receiver: Arc<RwLock<HashMap<PeerId, Receiver<EventResponse>>>>,
 }
@@ -46,7 +47,7 @@ impl GuildServer {
     pub fn new<A: ToSocketAddrs>(timeout: Duration, addr: A) -> Self {
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
         let peer_id = peer::PeerId::random();
-        let proposal_register = proposal::ProposalRegister::new(peer_id, vec![]);
+        let proposal_register = ProposalRegister::new(peer_id, vec![]);
 
         let (event_sender, _) = broadcast::channel(BROADCAST_EVENTS_CAPACITY);
 
@@ -61,7 +62,7 @@ impl GuildServer {
     }
 
     pub async fn broadcaster(
-        proposal_register: Arc<proposal::ProposalRegister>,
+        proposal_register: Arc<ProposalRegister>,
         event_sender: Arc<broadcast::Sender<EventResponse>>,
     ) {
         let mut interval = tokio::time::interval(Duration::from_millis(100));
