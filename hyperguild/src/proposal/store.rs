@@ -37,7 +37,7 @@ pub struct ProposalStore {
     next_height: Option<usize>,
 
     /// Max height seen across all received proposals
-    max_height: Option<usize>,
+    max_height: usize,
 
     /// Number of skips for the current height
     skips: usize,
@@ -65,7 +65,7 @@ impl ProposalStore {
             peers,
             pending_proposals: HashMap::new(),
             confirmed_proposals: confirmed,
-            max_height: None,
+            max_height: 0,
             next_height: None,
             orphan_accepts: HashMap::new(),
             skips: 0,
@@ -92,8 +92,8 @@ impl ProposalStore {
         }
 
         // Update max height seen
-        if self.max_height.is_none() || proposal.height() > self.max_height.unwrap() {
-            self.max_height = Some(proposal.height());
+        if proposal.height() > self.max_height {
+            self.max_height = proposal.height();
         }
 
         // Insert the proposal to be processed later
@@ -108,7 +108,7 @@ impl ProposalStore {
                 if !self.up_to_date() {
                     return Some(ProposalEvent::OutOfSync {
                         local_height: self.height().unwrap_or(0),
-                        max_seen_height: self.max_height.unwrap_or(0),
+                        max_seen_height: self.max_height,
                         skips: self.skips,
                     });
                 }
@@ -152,7 +152,7 @@ impl ProposalStore {
             return Some(ProposalEvent::CatchingUp {
                 local_height: self.height().unwrap_or(0),
                 proposal_height: next_proposal_height,
-                max_seen_height: self.max_height.unwrap_or(0),
+                max_seen_height: self.max_height,
             });
         }
 
@@ -262,9 +262,8 @@ impl ProposalStore {
     }
 
     fn up_to_date(&self) -> bool {
-        let max_height = self.max_height.unwrap_or(0);
         let height = self.height().unwrap_or(0);
-        height + 1 >= max_height
+        height + 1 >= self.max_height
     }
 
     fn confirm(&mut self, proposal_hash: &ProposalHash) {
@@ -566,12 +565,12 @@ mod test {
         // Up to date when no pending proposals
         assert!(store.up_to_date());
 
-        store.max_height = Some(11);
+        store.max_height = 11;
 
         // Up to date when max_height == height + 1
         assert!(store.up_to_date());
 
-        store.max_height = Some(12);
+        store.max_height = 12;
 
         // NOT up to date when max_height > height + 1
         assert!(!store.up_to_date());
