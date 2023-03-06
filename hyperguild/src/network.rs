@@ -11,7 +11,7 @@ pub struct Network {
 }
 
 impl Network {
-    async fn init(
+    pub async fn init(
         server_addr: impl ToSocketAddrs,
         nodes: Vec<(peer::PeerId, tonic::transport::Endpoint)>,
     ) -> Result<Self, tonic::transport::Error> {

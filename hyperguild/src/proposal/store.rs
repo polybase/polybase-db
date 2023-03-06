@@ -2,6 +2,7 @@ use super::event::ProposalEvent;
 use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
 use super::proposal::{Proposal, ProposalAccept};
+use crate::guild;
 use crate::key::Key;
 use crate::peer::PeerId;
 use std::collections::{HashMap, VecDeque};
@@ -247,6 +248,20 @@ impl ProposalStore {
         if let Some(h) = height {
             self.pending_proposals.retain(|_, p| p.height() > h);
         }
+    }
+}
+
+impl guild::Store for ProposalStore {
+    fn commit(&self, changes: Vec<crate::change::Change>) -> Vec<u8> {
+        todo!()
+    }
+
+    fn restore(&self, from: Option<Vec<u8>>) -> guild::SnapshotResp {
+        todo!()
+    }
+
+    fn snapshot(&self, data: Vec<u8>) {
+        todo!()
     }
 }
 

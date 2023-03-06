@@ -559,6 +559,18 @@ async fn main() -> Result<(), AppError> {
     let raft = Arc::clone(&raft);
     let logger = logger.clone();
 
+    let guild_store =
+        guild::proposal::store::ProposalStore::new(guild::peer::PeerId::random(), vec![]);
+    let network = guild::network::Network::init("0.0.0.0:50051", vec![])
+        .await
+        .unwrap();
+    let guild = guild::guild::Guild::new(
+        guild::peer::PeerId::random(),
+        guild_store,
+        network,
+        logger.clone(),
+    );
+
     select!(
         res = server => { // TODO: check if err
             // res
@@ -568,6 +580,9 @@ async fn main() -> Result<(), AppError> {
         res = raft_handle => {
             error!(logger, "Raft server exited unexpectedly: {res:#?}");
             res?
+        },
+        _ = guild.run() => {
+            error!(logger, "Guild exited unexpectedly");
         },
         _ = tokio::signal::ctrl_c() => {
             match raft.clone().shutdown().await {

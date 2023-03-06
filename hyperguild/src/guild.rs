@@ -96,7 +96,7 @@ pub struct Guild<TStore, TNetwork> {
 impl<TStore, TNetwork> Guild<TStore, TNetwork>
 where
     TStore: Store + Send,
-    TNetwork: Network + Send,
+    TNetwork: Network,
 {
     pub fn new(
         local_peer_id: PeerId,
@@ -136,7 +136,7 @@ where
         self.send_all(&GuildEvent::AddPendingChange { changes });
     }
 
-    async fn run() {
+    pub async fn run(&self) {
         loop {
             sleep(Duration::from_secs(1)).await
         }
