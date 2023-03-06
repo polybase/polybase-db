@@ -8,9 +8,11 @@ use crate::proposal::proposal::ProposalAccept;
 use crate::proposal::register::ProposalRegister;
 use bincode::{deserialize, serialize};
 
+use futures::{Future, Stream};
 use slog::{crit, debug, info};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -39,9 +41,30 @@ pub struct SnapshotResp {
     data: Vec<u8>,
 }
 
-pub trait Network {
-    fn send(&self, peerId: &PeerId, data: Vec<u8>);
-    fn recv(&self) -> Vec<u8>;
+impl SnapshotResp {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+}
+
+pub trait Network: NetworkSender {
+    type EventStream: Stream<
+        Item = (
+            PeerId,
+            std::result::Result<crate::service::EventResponse, tonic::Status>,
+        ),
+    >;
+
+    fn events(&self) -> Arc<Self::EventStream>;
+    fn snapshot(
+        &mut self,
+        peer_id: PeerId,
+        from: Vec<u8>,
+    ) -> Box<dyn Future<Output = Result<SnapshotResp>> + '_>;
+}
+
+pub trait NetworkSender {
+    fn send(&self, peer_id: PeerId, data: Vec<u8>) -> Box<dyn Future<Output = ()> + '_>;
 }
 
 // Purpose of Guild is to create consensus among members
@@ -83,7 +106,7 @@ pub struct Guild<TStore, TNetwork> {
 impl<TStore, TNetwork> Guild<TStore, TNetwork>
 where
     TStore: Store + Send,
-    TNetwork: Network + Send,
+    TNetwork: Network,
 {
     pub fn new(
         local_peer_id: PeerId,
@@ -123,7 +146,7 @@ where
         self.send_all(&GuildEvent::AddPendingChange { changes });
     }
 
-    async fn run() {
+    pub async fn run(&self) {
         loop {
             sleep(Duration::from_secs(1)).await
         }
@@ -134,7 +157,7 @@ where
         let data = serialize(&event).unwrap();
 
         // Send event to all peers
-        self.network.send(&peer_id, data);
+        self.network.send(peer_id.clone(), data);
     }
 
     fn send_all(&self, event: &GuildEvent) {

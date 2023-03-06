@@ -14,10 +14,12 @@ use tokio::sync::Notify;
 use tokio::time::{sleep_until, Instant};
 use tokio_stream::Stream;
 
+#[derive(Debug)]
 pub struct ProposalRegister {
     shared: Arc<ProposalRegisterShared>,
 }
 
+#[derive(Debug)]
 pub struct ProposalRegisterShared {
     /// Notifies the background worker to wake up
     background_worker: Notify,
@@ -32,6 +34,7 @@ pub struct ProposalRegisterShared {
     state: Mutex<ProposalRegisterState>,
 }
 
+#[derive(Debug)]
 struct ProposalRegisterState {
     shutdown: bool,
 
@@ -161,6 +164,15 @@ impl ProposalRegister {
             }
             self.shared.send_event(event);
         }
+    }
+
+    pub fn poll(&self) -> Poll<ProposalEvent> {
+        let mut events = self.shared.events.lock().unwrap();
+        if let Some(event) = events.pop_front() {
+            return Poll::Ready(event);
+        }
+
+        Poll::Pending
     }
 
     fn shutdown_background_worker(&self) {

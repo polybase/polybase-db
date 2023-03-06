@@ -2610,6 +2610,7 @@ dependencies = [
  "futures",
  "futures-util",
  "gateway",
+ "guild",
  "hex",
  "indexer",
  "rand 0.8.5",
@@ -3861,6 +3862,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util 0.7.7",
 ]
 
 [[package]]
