@@ -110,7 +110,7 @@ mod test {
             last_proposal_hash: ProposalHash::new(vec![0u8]),
             skips: 0,
             height: 0,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
 
@@ -144,7 +144,7 @@ mod test {
                 last_proposal_hash: ProposalHash::new(vec![0u8]),
                 skips: 0,
                 height: 0,
-                peer_id: peer_1.clone(),
+                leader_id: peer_1.clone(),
                 changes: vec![],
             },
             &[

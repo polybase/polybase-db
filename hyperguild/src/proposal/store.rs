@@ -269,7 +269,7 @@ mod test {
             last_proposal_hash: "a".into(),
             skips: 0,
             height: 1,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         let m1_hash: ProposalHash = (&m1).into();
@@ -290,7 +290,7 @@ mod test {
             last_proposal_hash: m1_hash,
             skips: 0,
             height: 2,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         let m2_hash: ProposalHash = (&m2).into();
@@ -311,7 +311,7 @@ mod test {
             last_proposal_hash: m2_hash,
             skips: 0,
             height: 3,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         let m3_hash: ProposalHash = (&m3).into();
@@ -320,7 +320,7 @@ mod test {
             last_proposal_hash: m3_hash,
             skips: 0,
             height: 4,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         let m4_hash: ProposalHash = (&m4).into();
@@ -361,7 +361,7 @@ mod test {
             last_proposal_hash: "a".into(),
             skips: 0,
             height: 1,
-            peer_id: p1,
+            leader_id: p1,
             changes: vec![],
         };
         let m1_hash: ProposalHash = (&m1).into();
@@ -391,7 +391,7 @@ mod test {
                 last_proposal_hash: "a".into(),
                 skips: 1,
                 height: 10,
-                peer_id: p1.clone(),
+                leader_id: p1.clone(),
                 changes: vec![],
             },
             &store.peers,
@@ -403,7 +403,7 @@ mod test {
             last_proposal_hash: "a".into(),
             skips: 0,
             height: 10,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         store.next_height = Some(11);
@@ -415,7 +415,7 @@ mod test {
             last_proposal_hash: "e".into(),
             skips: 0,
             height: 12,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         store.add_pending_proposal(m4);
@@ -426,7 +426,7 @@ mod test {
             last_proposal_hash: "d".into(),
             skips: 0,
             height: 11,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         store.add_pending_proposal(m1);
@@ -435,7 +435,7 @@ mod test {
             last_proposal_hash: "d".into(),
             skips: 1,
             height: 11,
-            peer_id: p1.clone(),
+            leader_id: p1.clone(),
             changes: vec![],
         };
         let m3_hash: ProposalHash = (&m3).into();
@@ -465,7 +465,7 @@ mod test {
                 last_proposal_hash: "a".into(),
                 skips: 0,
                 height: 10,
-                peer_id: p1.clone(),
+                leader_id: p1.clone(),
                 changes: vec![],
             },
             &store.peers,
@@ -498,7 +498,7 @@ mod test {
                 last_proposal_hash: "a".into(),
                 skips: 1,
                 height: 10,
-                peer_id: p1.clone(),
+                leader_id: p1.clone(),
                 changes: vec![],
             },
             &store.peers,
@@ -526,7 +526,7 @@ mod test {
                 last_proposal_hash: "a".into(),
                 skips: 1,
                 height: 10,
-                peer_id: p1.clone(),
+                leader_id: p1.clone(),
                 changes: vec![],
             },
             &[Key::from(p1.clone())],
@@ -538,7 +538,7 @@ mod test {
                 last_proposal_hash: "x".into(),
                 skips: 0,
                 height: 10,
-                peer_id: p1.clone(),
+                leader_id: p1.clone(),
                 changes: vec![],
             },
             &store.peers,
@@ -550,7 +550,7 @@ mod test {
                 last_proposal_hash: "b".into(),
                 skips: 0,
                 height: 11,
-                peer_id: p1.clone(),
+                leader_id: p1.clone(),
                 changes: vec![],
             },
             &store.peers,

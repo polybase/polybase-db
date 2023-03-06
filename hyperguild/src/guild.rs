@@ -189,7 +189,7 @@ where
                     last_proposal_hash,
                     skips: 0,
                     height,
-                    peer_id: self.local_peer_id.clone(),
+                    leader_id: self.local_peer_id.clone(),
                     changes,
                 };
 
@@ -256,6 +256,12 @@ where
                         .or_insert_with(|| change);
                 }
             }
+
+            // TODO: catch up from state
+            GuildEvent::Status { height, max_height } => {
+                // TODO: update status
+            }
+
             _ => {
                 crit!(self.logger, "Received unknown event: {event:?}")
             }

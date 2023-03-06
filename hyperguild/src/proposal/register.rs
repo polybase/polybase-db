@@ -241,7 +241,7 @@ mod test {
             last_proposal_hash: ProposalHash::default(),
             height: 0,
             skips: 0,
-            peer_id: peer_1,
+            leader_id: peer_1,
             changes: vec![],
         };
 
@@ -265,7 +265,7 @@ mod test {
             last_proposal_hash: ProposalHash::default(),
             height: 0,
             skips: 0,
-            peer_id: peer_1.clone(),
+            leader_id: peer_1.clone(),
             changes: vec![],
         };
         let hash: ProposalHash = (&manifest).into();
