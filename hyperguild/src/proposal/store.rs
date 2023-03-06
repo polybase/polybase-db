@@ -521,7 +521,7 @@ mod test {
         store.confirm(&b_hash);
 
         assert_eq!(store.pending_proposals.len(), 0);
-        assert_eq!(store.confirmed_proposals[0].hash(), &b_hash);
+        assert_eq!(store.confirmed_proposals[1].hash(), &b_hash);
     }
 
     #[test]
