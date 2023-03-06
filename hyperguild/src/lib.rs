@@ -4,6 +4,7 @@ mod config;
 mod event;
 pub mod guild;
 mod key;
+mod network;
 mod peer;
 mod proposal;
 mod server;

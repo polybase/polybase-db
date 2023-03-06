@@ -1,5 +1,5 @@
-use futures::TryStreamExt;
-use libp2p_core::PeerId;
+use futures::{Future, TryStreamExt};
+use peer::PeerId;
 use std::{
     collections::{HashMap, HashSet},
     net::{SocketAddr, ToSocketAddrs},
@@ -8,10 +8,7 @@ use std::{
     task::Poll,
     time::Duration,
 };
-use tokio::sync::{
-    broadcast::{self, Receiver},
-    mpsc,
-};
+use tokio::sync::mpsc;
 use tokio_stream::{
     wrappers::{BroadcastStream, ReceiverStream},
     Stream, StreamExt,
@@ -19,6 +16,7 @@ use tokio_stream::{
 use tonic::{transport::Server, Request, Response, Status};
 
 use crate::{
+    guild::NetworkSender,
     peer,
     proposal::register::ProposalRegister,
     service::{EventResponse, RegisterStream, SnapshotRequest, SnapshotResponse},
@@ -32,13 +30,12 @@ type TonicResult<T> = Result<Response<T>, Status>;
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<EventResponse, Status>> + Send>>;
 
 #[derive(Debug)]
-struct GuildServer {
+pub struct GuildServer {
     timeout: Duration,
     addr: SocketAddr,
     peers: Arc<Mutex<HashSet<PeerId>>>,
-    proposal_register: Arc<ProposalRegister>,
-    event_sender: Arc<broadcast::Sender<EventResponse>>,
-    peer_to_receiver: Arc<RwLock<HashMap<PeerId, Receiver<EventResponse>>>>,
+    peer_to_sender: Arc<RwLock<HashMap<PeerId, mpsc::Sender<EventResponse>>>>,
+    peer_to_receiver: Arc<RwLock<HashMap<PeerId, mpsc::Receiver<EventResponse>>>>,
 }
 
 const BROADCAST_EVENTS_CAPACITY: usize = 128;
@@ -47,67 +44,29 @@ impl GuildServer {
     pub fn new<A: ToSocketAddrs>(timeout: Duration, addr: A) -> Self {
         let addr = addr.to_socket_addrs().unwrap().next().unwrap();
         let peer_id = peer::PeerId::random();
-        let proposal_register = ProposalRegister::new(peer_id, vec![]);
-
-        let (event_sender, _) = broadcast::channel(BROADCAST_EVENTS_CAPACITY);
 
         Self {
             timeout,
             addr,
             peers: Arc::new(Mutex::new(HashSet::new())),
-            proposal_register: Arc::new(proposal_register),
-            event_sender: Arc::new(event_sender),
+            peer_to_sender: Arc::new(RwLock::new(HashMap::new())),
             peer_to_receiver: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    pub async fn broadcaster(
-        proposal_register: Arc<ProposalRegister>,
-        event_sender: Arc<broadcast::Sender<EventResponse>>,
-    ) {
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
-
-        loop {
-            interval.tick().await;
-            let proposal = match proposal_register.poll() {
-                Poll::Ready(p) => p,
-                Poll::Pending => continue,
-            };
-
-            let proposal_serialized = bincode::serialize(&proposal).unwrap();
-
-            let event = EventResponse {
-                data: proposal_serialized,
-            };
-
-            #[allow(clippy::single_match)]
-            match event_sender.send(event) {
-                Ok(_) => {}
-                // Err means that there are no receivers, which is fine
-                Err(_) => {}
-            }
+    pub fn sender(&self) -> Sender {
+        Sender {
+            peer_to_sender: Arc::clone(&self.peer_to_sender),
         }
     }
 
     pub async fn run(self) {
-        let broadcaster = Self::broadcaster(
-            Arc::clone(&self.proposal_register),
-            Arc::clone(&self.event_sender),
-        );
-
         let addr = self.addr;
         let service = GuildServiceServer::new(self);
 
         let server = Server::builder().add_service(service).serve(addr);
 
-        tokio::select! {
-            _ = server => {
-                panic!("Server stopped");
-            }
-            _ = broadcaster => {
-                panic!("Broadcaster stopped");
-            }
-        }
+        server.await.unwrap()
     }
 }
 
@@ -119,58 +78,25 @@ impl GuildService for GuildServer {
         &self,
         req: Request<RegisterStream>,
     ) -> TonicResult<Self::EventStreamStream> {
-        let peer_id = PeerId::from_bytes(&req.into_inner().peer_id).unwrap();
+        let peer_id = PeerId::new(req.into_inner().peer_id);
 
         {
             let mut peers = self.peers.lock().unwrap();
-            if !peers.insert(peer_id) {
+            if !peers.insert(peer_id.clone()) {
                 return Err(Status::already_exists("Peer already listening to events"));
             }
         }
 
-        let mut events = match self.peer_to_receiver.write().unwrap().remove(&peer_id) {
-            // If events.len() was more than BROADCAST_EVENTS_CAPACITY, calling recv would return an error `Lagged`
-            Some(events) if events.len() < BROADCAST_EVENTS_CAPACITY => events,
-            _ => self.event_sender.subscribe(),
+        let rx = match self.peer_to_receiver.write().unwrap().remove(&peer_id) {
+            Some(rx) => rx,
+            None => {
+                let (tx, rx) = mpsc::channel(BROADCAST_EVENTS_CAPACITY);
+                self.peer_to_sender.write().unwrap().insert(peer_id, tx);
+                rx
+            }
         };
 
-        let (tx, rx) = mpsc::channel(128);
-        let peer_to_receiver = Arc::clone(&self.peer_to_receiver);
-        let peers = Arc::clone(&self.peers);
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    event = events.recv() => {
-                        match tx
-                            .send(event.map_err(|e| {
-                                Status::internal(format!("Broadcast Stream Recv Error: {:#?}", e))
-                            }))
-                            .await
-                        {
-                            Ok(_) => {
-                                // item (server response) was queued to be send to client
-                            }
-                            Err(_item) => {
-                                // TODO: how to handle this?
-                                // The events stream doesn't have the event anymore,
-                                // so we can't save the stream for reconnect
-                                break;
-                            }
-                        }
-                    }
-                    _ = tx.closed() => {
-                        // We store their receiver in case they reconnect
-                        peer_to_receiver.write().unwrap().insert(peer_id, events);
-                        break;
-                    }
-                };
-
-                peers.lock().unwrap().remove(&peer_id);
-                eprintln!("\tclient disconnected");
-            }
-        });
-
-        let rx = ReceiverStream::new(rx);
+        let rx = ReceiverStream::new(rx).map(Ok);
         Ok(Response::new(Box::pin(rx) as ResponseStream))
     }
 
@@ -180,5 +106,19 @@ impl GuildService for GuildServer {
         let reply = SnapshotResponse { data: Vec::new() };
 
         Ok(Response::new(reply))
+    }
+}
+
+pub struct Sender {
+    peer_to_sender: Arc<RwLock<HashMap<PeerId, mpsc::Sender<EventResponse>>>>,
+}
+
+impl NetworkSender for Sender {
+    fn send(&self, peer_id: PeerId, data: Vec<u8>) -> Box<dyn Future<Output = ()> + '_> {
+        Box::new(async move {
+            let peers = self.peer_to_sender.read().unwrap();
+            let sender = peers.get(&peer_id).unwrap();
+            sender.send(EventResponse { data }).await.unwrap();
+        })
     }
 }

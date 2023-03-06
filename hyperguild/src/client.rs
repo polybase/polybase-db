@@ -9,7 +9,7 @@ use crate::{
     service::{guild_service_client::GuildServiceClient, EventResponse},
 };
 
-struct Client {
+pub struct Client {
     peer_id: peer::PeerId,
     grpc_client: GuildServiceClient<Channel>,
 }
