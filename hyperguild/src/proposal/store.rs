@@ -39,9 +39,12 @@ pub struct ProposalStore {
     /// Max height seen across all received proposals
     max_height: Option<usize>,
 
+    /// Number of skips for the current height
+    skips: usize,
+
     /// Orphaned accepts are when we receive an accept for a proposal before we
     /// receive the propsal itself. We can then add these as soon as the proposal arrives.
-    orphan_accepts: HashMap<ProposalHash, Vec<PeerId>>,
+    orphan_accepts: HashMap<ProposalHash, Vec<(usize, PeerId)>>,
 }
 
 impl ProposalStore {
@@ -65,6 +68,7 @@ impl ProposalStore {
             max_height: None,
             next_height: None,
             orphan_accepts: HashMap::new(),
+            skips: 0,
         }
     }
 
@@ -82,8 +86,8 @@ impl ProposalStore {
 
         // Check if we have orphaned accepts
         if let Some(accepts) = self.orphan_accepts.remove(&hash) {
-            for peer_id in accepts {
-                proposal.add_accept(peer_id);
+            for (skips, peer_id) in accepts {
+                proposal.add_accept(&skips, peer_id);
             }
         }
 
@@ -98,10 +102,29 @@ impl ProposalStore {
 
     pub fn process_next(&mut self) -> Option<ProposalEvent> {
         let next_height = self.next_height();
-        let next_proposal = self.next_pending_proposal(next_height)?;
+        let next_proposal = match self.next_pending_proposal(next_height) {
+            Some(p) => p,
+            None => {
+                if !self.up_to_date() {
+                    return Some(ProposalEvent::OutOfSync {
+                        local_height: self.height().unwrap_or(0),
+                        max_seen_height: self.max_height.unwrap_or(0),
+                        skips: self.skips,
+                    });
+                }
+                return None;
+            }
+        };
+
         let next_proposal_height = next_proposal.height();
         let next_proposal_hash = next_proposal.hash().clone();
         let next_proposal_last_hash = next_proposal.last_hash().clone();
+
+        // Next proposal didn't arrive in time and we're waiting on a later skip
+        // proposal, we never accept proposals after we have skipped them
+        if self.skips > next_proposal.skips() {
+            return None;
+        }
 
         // We take next leader here - we now know that we are about to confirm another
         // txn, but in order to allow nodes that haven't received this next_proposal yet
@@ -120,6 +143,9 @@ impl ProposalStore {
 
         // Update the next height
         self.next_height = Some(next_proposal_height + 1);
+
+        // Reset skips, as we now have a valid proposal
+        self.skips = 0;
 
         // If out of sync
         if !self.up_to_date() {
@@ -163,8 +189,8 @@ impl ProposalStore {
                 if p.skips() != skips {
                     return None;
                 }
-                p.add_accept(from);
-                if p.majority_accept() {
+                p.add_accept(&skips, from);
+                if p.majority_accept(&skips) {
                     return Some(ProposalEvent::Propose {
                         last_proposal_hash: proposal_hash.clone(),
                         height: height + 1,
@@ -175,36 +201,45 @@ impl ProposalStore {
             None => {
                 // Get exisiting orphaned proposal list
                 if let Some(p) = self.orphan_accepts.get_mut(&proposal_hash) {
-                    p.push(leader_id);
+                    p.push((skips, leader_id));
                 } else {
                     self.orphan_accepts
-                        .insert(proposal_hash.clone(), vec![leader_id]);
+                        .insert(proposal_hash.clone(), vec![(skips, leader_id)]);
                 }
                 None
             }
         }
     }
 
-    pub fn skip(&self) -> Option<ProposalEvent> {
+    // TODO: update to result
+    pub fn skip(&mut self) -> Option<ProposalEvent> {
+        // Just in case we try to skip when we're still catching up
+        if !self.up_to_date() {
+            return None;
+        }
+
         // Current active proposal height
         let current_proposal_height = self.height().unwrap_or(0) + 1;
 
         // Get the next proposal
         let current_proposal = self.next_pending_proposal(current_proposal_height)?;
 
-        let new_skips = current_proposal.skips() + 1;
+        // New skip counter
+        let new_skips = self.skips + 1;
 
         let next_leader = self.last_confirmed_proposal().get_next_leader(&new_skips);
 
+        let accept = ProposalAccept {
+            height: current_proposal_height,
+            skips: new_skips,
+            leader_id: next_leader,
+            proposal_hash: current_proposal.hash().clone(),
+        };
+
+        self.skips = new_skips;
+
         // Send skip
-        Some(ProposalEvent::SendAccept {
-            accept: ProposalAccept {
-                height: current_proposal_height,
-                skips: new_skips,
-                leader_id: next_leader,
-                proposal_hash: current_proposal.hash().clone(),
-            },
-        })
+        Some(ProposalEvent::SendAccept { accept })
     }
 
     pub fn next_pending_proposal(&self, height: usize) -> Option<&Proposal> {
@@ -334,7 +369,14 @@ mod test {
         let m4_hash: ProposalHash = (&m4).into();
         store.add_pending_proposal(m4);
 
-        assert_eq!(store.process_next(), None);
+        assert_eq!(
+            store.process_next(),
+            Some(ProposalEvent::OutOfSync {
+                local_height: 1,
+                max_seen_height: 4,
+                skips: 0
+            })
+        );
 
         store.add_pending_proposal(m3);
 
@@ -365,13 +407,13 @@ mod test {
     #[test]
     fn test_skip() {
         let (p1, p2, p3) = create_peers();
-        let mut store = ProposalStore::new(p1.clone(), vec![p1.clone(), p2, p3.clone()]);
+        let mut store = ProposalStore::new(p1.clone(), vec![p1.clone(), p2.clone(), p3.clone()]);
 
         let m1 = ProposalManifest {
             last_proposal_hash: "a".into(),
             skips: 0,
             height: 1,
-            leader_id: p1,
+            leader_id: p1.clone(),
             changes: vec![],
         };
         let m1_hash: ProposalHash = (&m1).into();
@@ -383,11 +425,47 @@ mod test {
                 accept: ProposalAccept {
                     height: 1,
                     skips: 1,
+                    leader_id: p3.clone(),
+                    proposal_hash: m1_hash.clone(),
+                }
+            })
+        );
+
+        assert_eq!(
+            store.skip(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    height: 1,
+                    skips: 2,
+                    leader_id: p1,
+                    proposal_hash: m1_hash.clone(),
+                }
+            })
+        );
+
+        assert_eq!(
+            store.skip(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    height: 1,
+                    skips: 3,
+                    leader_id: p2,
+                    proposal_hash: m1_hash.clone(),
+                }
+            })
+        );
+
+        assert_eq!(
+            store.skip(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    height: 1,
+                    skips: 4,
                     leader_id: p3,
                     proposal_hash: m1_hash
                 }
             })
-        )
+        );
     }
 
     #[test]

@@ -152,6 +152,11 @@ impl ProposalRegister {
                     // Clear the timeout, as we're out of date, we don't want to send
                     // any skip messages to the network until we are.
                     self.clear_timeout();
+                    self.shared.send_event(event);
+                    return;
+                }
+                ProposalEvent::CatchingUp { .. } => {
+                    self.clear_timeout();
                 }
                 _ => {}
             }

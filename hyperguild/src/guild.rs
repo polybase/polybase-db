@@ -199,6 +199,7 @@ where
             ProposalEvent::OutOfSync {
                 local_height,
                 max_seen_height,
+                skips,
             } => {
                 // TODO: send request to other nodes for missing proposals
             }

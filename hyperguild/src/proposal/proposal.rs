@@ -3,12 +3,12 @@ use super::manifest::ProposalManifest;
 use crate::key::Key;
 use crate::peer::PeerId;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 pub struct Proposal {
     /// Accepts/votes for this proposal, only received by the leader node
-    accepts: HashSet<PeerId>,
+    accepts: HashMap<usize, HashSet<PeerId>>,
 
     /// Hash of the proposal state
     hash: Key<ProposalHash>,
@@ -48,7 +48,7 @@ impl Proposal {
         peers.sort_by_key(|a| a.distance(&hash));
 
         Self {
-            accepts: HashSet::new(),
+            accepts: HashMap::new(),
             hash,
             manifest,
             peers,
@@ -82,12 +82,16 @@ impl Proposal {
         peer.preimage().clone()
     }
 
-    pub fn add_accept(&mut self, peer_id: PeerId) {
-        self.accepts.insert(peer_id);
+    pub fn add_accept(&mut self, skips: &usize, peer_id: PeerId) {
+        if !self.accepts.contains_key(skips) {
+            self.accepts.insert(*skips, HashSet::new());
+        }
+        self.accepts.get_mut(skips).unwrap().insert(peer_id);
     }
 
-    pub fn majority_accept(&self) -> bool {
-        self.accepts.len() > (&self.peers.len() / 2)
+    pub fn majority_accept(&self, skips: &usize) -> bool {
+        let len = self.accepts.get(skips).map(|p| p.len()).unwrap_or(0);
+        len > (&self.peers.len() / 2)
     }
 }
 
@@ -154,12 +158,12 @@ mod test {
             ],
         );
 
-        proposal.add_accept(peer_1);
+        proposal.add_accept(&0, peer_1);
 
-        assert!(!proposal.majority_accept());
+        assert!(!proposal.majority_accept(&0));
 
-        proposal.add_accept(peer_2);
+        proposal.add_accept(&0, peer_2);
 
-        assert!(proposal.majority_accept());
+        assert!(proposal.majority_accept(&0));
     }
 }

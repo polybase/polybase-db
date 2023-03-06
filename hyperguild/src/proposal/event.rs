@@ -10,6 +10,7 @@ pub enum ProposalEvent {
         /// Height of the node
         local_height: usize,
         max_seen_height: usize,
+        skips: usize,
     },
 
     /// We are behind the network, but we are comitting
