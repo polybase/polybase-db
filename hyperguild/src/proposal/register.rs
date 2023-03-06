@@ -118,9 +118,13 @@ impl ProposalRegister {
         self.process_next()
     }
 
-    pub fn receive_accept(&mut self, accept: ProposalAccept) -> Option<ProposalEvent> {
+    pub fn receive_accept(
+        &mut self,
+        accept: ProposalAccept,
+        from: PeerId,
+    ) -> Option<ProposalEvent> {
         let mut state = self.shared.state.lock().unwrap();
-        state.store.add_accept(accept)
+        state.store.add_accept(accept, from)
     }
 
     fn reset_timeout(&self) {

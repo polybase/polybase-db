@@ -144,7 +144,7 @@ impl ProposalStore {
     /// Adds an accept to a proposal, we should only be receiving accepts if we are the
     /// designated leader. Returns whether a majority has been reached.
     // TODO: this should be a result
-    pub fn add_accept(&mut self, accept: ProposalAccept) -> Option<ProposalEvent> {
+    pub fn add_accept(&mut self, accept: ProposalAccept, from: PeerId) -> Option<ProposalEvent> {
         let ProposalAccept {
             proposal_hash,
             leader_id,
@@ -163,7 +163,7 @@ impl ProposalStore {
                 if p.skips() != skips {
                     return None;
                 }
-                p.add_accept(leader_id);
+                p.add_accept(from);
                 if p.majority_accept() {
                     return Some(ProposalEvent::Propose {
                         last_proposal_hash: proposal_hash.clone(),

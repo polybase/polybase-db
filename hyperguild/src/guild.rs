@@ -228,11 +228,13 @@ where
     fn on_incoming_event(&mut self, event: GuildEvent, peer_id: PeerId) {
         match event {
             // Incoming proposal from another peer
-            GuildEvent::Proposal { manifest, .. } => self.register.receive_proposal(manifest),
+            GuildEvent::Proposal { manifest, .. } => {
+                self.register.receive_proposal(manifest);
+            }
 
             // Incoming accept from another peer
             GuildEvent::Accept { accept } => {
-                if let Some(event) = self.register.receive_accept(accept) {
+                if let Some(event) = self.register.receive_accept(accept, peer_id) {
                     self.on_proposal_event(event);
                 }
             }
