@@ -6,7 +6,7 @@ use tonic::{
 
 use crate::{
     peer,
-    service::{guild_service_client::GuildServiceClient, EventResponse},
+    service::{self, guild_service_client::GuildServiceClient, EventResponse},
 };
 
 pub struct Client {
@@ -32,8 +32,23 @@ impl Client {
     ) -> Result<impl Stream<Item = Result<EventResponse, tonic::Status>>, tonic::Status> {
         let response = self
             .grpc_client
-            .event_stream(Request::new(crate::service::RegisterStream {
+            .event_stream(Request::new(service::RegisterStream {
                 peer_id: self.peer_id.to_bytes(),
+            }))
+            .await?;
+
+        Ok(response.into_inner())
+    }
+
+    pub async fn snapshot(
+        &mut self,
+        from: Vec<u8>,
+    ) -> Result<service::SnapshotResponse, tonic::Status> {
+        let response = self
+            .grpc_client
+            .snapshot(Request::new(service::SnapshotRequest {
+                peer_id: self.peer_id.to_bytes(),
+                from,
             }))
             .await?;
 

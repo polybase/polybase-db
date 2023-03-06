@@ -81,8 +81,21 @@ impl guild::Network for Network {
         Arc::clone(&self.listener)
     }
 
-    fn snapshot(&self, peer_id: &peer::PeerId) -> guild::Result<guild::SnapshotResp> {
-        // self.clients.get(peer_id).unwrap().snapshot()
-        todo!()
+    fn snapshot(
+        &mut self,
+        peer_id: peer::PeerId,
+        from: Vec<u8>,
+    ) -> Box<dyn Future<Output = guild::Result<guild::SnapshotResp>> + '_> {
+        Box::new(async move {
+            let resp = self
+                .clients
+                .get_mut(&peer_id)
+                .unwrap()
+                .snapshot(from)
+                .await
+                .unwrap();
+
+            Ok(guild::SnapshotResp::new(resp.data))
+        })
     }
 }

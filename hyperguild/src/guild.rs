@@ -41,6 +41,12 @@ pub struct SnapshotResp {
     data: Vec<u8>,
 }
 
+impl SnapshotResp {
+    pub fn new(data: Vec<u8>) -> Self {
+        Self { data }
+    }
+}
+
 pub trait Network: NetworkSender {
     type EventStream: Stream<
         Item = (
@@ -50,7 +56,11 @@ pub trait Network: NetworkSender {
     >;
 
     fn events(&self) -> Arc<Self::EventStream>;
-    fn snapshot(&self, peer_id: &PeerId) -> Result<SnapshotResp>;
+    fn snapshot(
+        &mut self,
+        peer_id: PeerId,
+        from: Vec<u8>,
+    ) -> Box<dyn Future<Output = Result<SnapshotResp>> + '_>;
 }
 
 pub trait NetworkSender {
