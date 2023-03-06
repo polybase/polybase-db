@@ -1,7 +1,7 @@
 use super::event::ProposalEvent;
 use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
-use super::proposal::Accept;
+use super::proposal::ProposalAccept;
 use super::store::ProposalStore;
 use crate::peer::PeerId;
 use futures::stream::StreamExt;
@@ -118,7 +118,7 @@ impl ProposalRegister {
         self.process_next()
     }
 
-    pub fn receive_accept(&mut self, accept: Accept) -> Option<ProposalEvent> {
+    pub fn receive_accept(&mut self, accept: ProposalAccept) -> Option<ProposalEvent> {
         let mut state = self.shared.state.lock().unwrap();
         state.store.add_accept(accept)
     }
@@ -227,7 +227,7 @@ async fn background_worker(shared: Arc<ProposalRegisterShared>) {
 
 #[cfg(test)]
 mod test {
-    use crate::proposal::proposal::Accept;
+    use crate::proposal::proposal::ProposalAccept;
 
     use super::*;
 
@@ -277,10 +277,12 @@ mod test {
         assert_eq!(
             next,
             ProposalEvent::SendAccept {
-                proposal_hash: hash,
-                leader_id: peer_1,
-                height: 0,
-                skips: 0,
+                accept: ProposalAccept {
+                    proposal_hash: hash,
+                    leader_id: peer_1,
+                    height: 0,
+                    skips: 0,
+                }
             }
         )
     }

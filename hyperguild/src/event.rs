@@ -1,7 +1,8 @@
+use crate::change::Change;
 use crate::peer::PeerId;
 use crate::proposal::hash::ProposalHash;
 use crate::proposal::manifest::ProposalManifest;
-use crate::{change::Change, proposal::proposal::Accept};
+use crate::proposal::proposal::ProposalAccept;
 use serde::{de, Deserialize, Deserializer, Serialize};
 
 pub enum NetworkEvent {
@@ -20,7 +21,7 @@ pub enum GuildEvent {
 
     /// Accept a proposal, this is a vote this node
     /// to become the next leader (and create a proposal)
-    Accept { accept: Accept },
+    Accept { accept: ProposalAccept },
 
     /// Add a set of pending txns to the queue
     AddPendingChange { changes: Vec<Change> },

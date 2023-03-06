@@ -21,7 +21,7 @@ pub struct Proposal {
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Accept {
+pub struct ProposalAccept {
     /// Peer that sent the accept
     pub leader_id: PeerId,
 

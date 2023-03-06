@@ -4,7 +4,7 @@ use crate::key::Key;
 use crate::peer::PeerId;
 use crate::proposal::event::ProposalEvent;
 use crate::proposal::manifest::{self, ProposalManifest};
-use crate::proposal::proposal::Accept;
+use crate::proposal::proposal::ProposalAccept;
 use crate::proposal::register::ProposalRegister;
 use bincode::{deserialize, serialize};
 
@@ -154,25 +154,14 @@ where
         match event {
             // Node should send accept for an active proposal
             // to another peer
-            ProposalEvent::SendAccept {
-                leader_id,
-                height,
-                proposal_hash,
-                skips,
-            } => {
+            ProposalEvent::SendAccept { accept } => {
                 // TODO: send proposal hash and peer_id
-                info!(self.logger, "Send accept"; "height" => height, "skips" => skips);
+                let leader = &accept.leader_id.clone();
+                info!(self.logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips);
                 self.send(
                     // TODO: Accept should not have optional peer
-                    &leader_id,
-                    &GuildEvent::Accept {
-                        accept: Accept {
-                            leader_id: self.local_peer_id.clone(),
-                            proposal_hash,
-                            height,
-                            skips,
-                        },
-                    },
+                    leader,
+                    &GuildEvent::Accept { accept },
                 );
             }
 

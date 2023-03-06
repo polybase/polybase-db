@@ -1,7 +1,7 @@
 use super::event::ProposalEvent;
 use super::hash::ProposalHash;
 use super::manifest::ProposalManifest;
-use super::proposal::{Accept, Proposal};
+use super::proposal::{Proposal, ProposalAccept};
 use crate::key::Key;
 use crate::peer::PeerId;
 use std::collections::{HashMap, VecDeque};
@@ -132,18 +132,20 @@ impl ProposalStore {
 
         // In sync, so we should send accept to the next leader
         Some(ProposalEvent::SendAccept {
-            proposal_hash: next_proposal_hash,
-            leader_id: next_leader,
-            height: next_proposal_height,
-            skips: 0,
+            accept: ProposalAccept {
+                proposal_hash: next_proposal_hash,
+                leader_id: next_leader,
+                height: next_proposal_height,
+                skips: 0,
+            },
         })
     }
 
     /// Adds an accept to a proposal, we should only be receiving accepts if we are the
     /// designated leader. Returns whether a majority has been reached.
     // TODO: this should be a result
-    pub fn add_accept(&mut self, accept: Accept) -> Option<ProposalEvent> {
-        let Accept {
+    pub fn add_accept(&mut self, accept: ProposalAccept) -> Option<ProposalEvent> {
+        let ProposalAccept {
             proposal_hash,
             leader_id,
             height,
@@ -196,10 +198,12 @@ impl ProposalStore {
 
         // Send skip
         Some(ProposalEvent::SendAccept {
-            height: current_proposal_height,
-            skips: new_skips,
-            leader_id: next_leader,
-            proposal_hash: current_proposal.hash().clone(),
+            accept: ProposalAccept {
+                height: current_proposal_height,
+                skips: new_skips,
+                leader_id: next_leader,
+                proposal_hash: current_proposal.hash().clone(),
+            },
         })
     }
 
@@ -278,10 +282,12 @@ mod test {
         assert_eq!(
             store.process_next(),
             Some(ProposalEvent::SendAccept {
-                proposal_hash: m1_hash.clone(),
-                height: 1,
-                leader_id: p2.clone(),
-                skips: 0,
+                accept: ProposalAccept {
+                    proposal_hash: m1_hash.clone(),
+                    height: 1,
+                    leader_id: p2.clone(),
+                    skips: 0,
+                }
             })
         );
         assert_eq!(store.confirmed_proposals.len(), 1);
@@ -299,10 +305,12 @@ mod test {
         assert_eq!(
             store.process_next(),
             Some(ProposalEvent::SendAccept {
-                proposal_hash: m2_hash.clone(),
-                leader_id: p2.clone(),
-                height: 2,
-                skips: 0,
+                accept: ProposalAccept {
+                    proposal_hash: m2_hash.clone(),
+                    leader_id: p2.clone(),
+                    height: 2,
+                    skips: 0,
+                }
             })
         );
         assert_eq!(store.confirmed_proposals.len(), 2);
@@ -342,10 +350,12 @@ mod test {
         assert_eq!(
             store.process_next(),
             Some(ProposalEvent::SendAccept {
-                proposal_hash: m4_hash,
-                leader_id: p2,
-                height: 4,
-                skips: 0,
+                accept: ProposalAccept {
+                    proposal_hash: m4_hash,
+                    leader_id: p2,
+                    height: 4,
+                    skips: 0,
+                }
             })
         );
 
@@ -370,10 +380,12 @@ mod test {
         assert_eq!(
             store.skip(),
             Some(ProposalEvent::SendAccept {
-                height: 1,
-                skips: 1,
-                leader_id: p3,
-                proposal_hash: m1_hash
+                accept: ProposalAccept {
+                    height: 1,
+                    skips: 1,
+                    leader_id: p3,
+                    proposal_hash: m1_hash
+                }
             })
         )
     }
