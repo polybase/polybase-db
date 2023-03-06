@@ -317,6 +317,35 @@ mod test {
     }
 
     #[test]
+    fn test_skip() {
+        let mut store = ProposalStore::new();
+        let p1 = PeerId::new(vec![1u8]);
+        let p2 = PeerId::new(vec![2u8]);
+        let p3 = PeerId::new(vec![3u8]);
+        let peers = [Key::from(p1.clone()), Key::from(p2.clone()), Key::from(p3)];
+
+        let m1 = ProposalManifest {
+            last_proposal_hash: "a".into(),
+            skips: 0,
+            height: 1,
+            peer_id: p1.clone(),
+            changes: vec![],
+        };
+        let m1_hash: ProposalHash = (&m1).into();
+        store.add_pending_proposal(m1, &peers);
+
+        assert_eq!(
+            store.skip(),
+            Some(ProposalEvent::SendAccept {
+                height: 1,
+                skips: 1,
+                peer_id: None,
+                proposal_hash: m1_hash
+            })
+        )
+    }
+
+    #[test]
     fn test_next_pending_propsal() {
         let mut store = ProposalStore::new();
         let peer_id = PeerId::random();
