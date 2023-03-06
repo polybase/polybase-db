@@ -124,8 +124,9 @@ impl ProposalStore {
         let next_proposal_last_hash = next_proposal.last_hash().clone();
 
         // Next proposal didn't arrive in time and we're waiting on a later skip
-        // proposal, we never accept proposals after we have skipped them
-        if self.skips > next_proposal.skips() {
+        // proposal, we only accept earlier skipped proposals if the network tells us
+        if self.skips > next_proposal.skips() && self.max_height == next_proposal.height() {
+            // let next = self.next_pending_proposal(height)
             return None;
         }
 
@@ -245,7 +246,16 @@ impl ProposalStore {
         Some(ProposalEvent::SendAccept { accept })
     }
 
-    pub fn next_pending_proposal(&self, height: usize) -> Option<&Proposal> {
+    fn next_pending_proposal(&self, height: usize) -> Option<&Proposal> {
+        let next_proposal = self
+            .pending_proposals
+            .values()
+            .filter(|proposal| proposal.height() == height)
+            .max_by(|a, b| a.skips().cmp(&b.skips()));
+        next_proposal
+    }
+
+    fn next_pending_proposal_2(&self, height: usize) -> Option<&Proposal> {
         let next_proposal = self
             .pending_proposals
             .values()
@@ -400,6 +410,177 @@ mod test {
         );
 
         // assert_eq!(store.process_next(), None);
+    }
+
+    /// Node skips, network skips
+    #[test]
+    fn test_skip_one_network_skip() {
+        let (p1, p2, p3) = create_peers();
+        let mut store = ProposalStore::new(p1.clone(), vec![p1.clone(), p2.clone(), p3.clone()]);
+
+        assert!(store.process_next().is_none());
+
+        let m1 = ProposalManifest {
+            last_proposal_hash: store.confirmed_proposals[0].hash().clone(),
+            skips: 0,
+            height: 1,
+            leader_id: p1.clone(),
+            changes: vec![],
+        };
+        let m1_hash: ProposalHash = (&m1).into();
+        store.add_pending_proposal(m1);
+
+        // Send accept for m1
+        assert_eq!(
+            store.process_next(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    proposal_hash: m1_hash.clone(),
+                    leader_id: p2.clone(),
+                    height: 1,
+                    skips: 0,
+                }
+            })
+        );
+
+        // Send skip after timeout
+        assert_eq!(
+            store.skip(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    proposal_hash: m1_hash.clone(),
+                    leader_id: p3.clone(),
+                    height: 1,
+                    skips: 1,
+                }
+            })
+        );
+
+        // Proposal arrives late (but is now invalid)
+        let m2 = ProposalManifest {
+            last_proposal_hash: m1_hash.clone(),
+            skips: 0,
+            height: 2,
+            leader_id: p2.clone(),
+            changes: vec![],
+        };
+        store.add_pending_proposal(m2);
+        assert_eq!(store.process_next(), None);
+
+        // Proposal (+1 skip) now arrives
+        let m3 = ProposalManifest {
+            last_proposal_hash: m1_hash,
+            skips: 1,
+            height: 2,
+            leader_id: p2,
+            changes: vec![],
+        };
+        let m3_hash: ProposalHash = (&m3).into();
+        store.add_pending_proposal(m3);
+
+        assert_eq!(
+            store.process_next(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    leader_id: p3,
+                    proposal_hash: m3_hash,
+                    height: 2,
+                    skips: 0,
+                }
+            })
+        );
+
+        assert_eq!(store.skips, 0);
+    }
+
+    /// Node skips, network no skip
+    #[test]
+    fn test_skip_one_no_network_skip() {
+        let (p1, p2, p3) = create_peers();
+        let mut store = ProposalStore::new(p1.clone(), vec![p1.clone(), p2.clone(), p3.clone()]);
+
+        assert!(store.process_next().is_none());
+
+        let m1 = ProposalManifest {
+            last_proposal_hash: store.confirmed_proposals[0].hash().clone(),
+            skips: 0,
+            height: 1,
+            leader_id: p1.clone(),
+            changes: vec![],
+        };
+        let m1_hash: ProposalHash = (&m1).into();
+        store.add_pending_proposal(m1);
+
+        // Send accept for m1
+        assert_eq!(
+            store.process_next(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    proposal_hash: m1_hash.clone(),
+                    leader_id: p2.clone(),
+                    height: 1,
+                    skips: 0,
+                }
+            })
+        );
+
+        // Send skip after timeout
+        assert_eq!(
+            store.skip(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    proposal_hash: m1_hash.clone(),
+                    leader_id: p3.clone(),
+                    height: 1,
+                    skips: 1,
+                }
+            })
+        );
+
+        let m2 = ProposalManifest {
+            last_proposal_hash: m1_hash,
+            skips: 0,
+            height: 2,
+            leader_id: p1.clone(),
+            changes: vec![],
+        };
+        let m2_hash: ProposalHash = (&m2).into();
+        store.add_pending_proposal(m2);
+
+        // We ignore m2 as we've skipped
+        assert_eq!(store.process_next(), None);
+
+        // Next node
+        let m3 = ProposalManifest {
+            last_proposal_hash: m2_hash.clone(),
+            skips: 0,
+            height: 3,
+            leader_id: p1.clone(),
+            changes: vec![],
+        };
+        let m3_hash: ProposalHash = (&m3).into();
+        store.add_pending_proposal(m3);
+
+        assert_eq!(
+            store.process_next(),
+            Some(ProposalEvent::CatchingUp {
+                local_height: 1,
+                proposal_height: 2,
+                max_seen_height: 3,
+            })
+        );
+
+        assert_eq!(
+            store.process_next(),
+            Some(ProposalEvent::SendAccept {
+                accept: ProposalAccept {
+                    leader_id: p2,
+                    height: 3,
+                    proposal_hash: m3_hash,
+                    skips: 0,
+                }
+            })
+        );
     }
 
     #[test]

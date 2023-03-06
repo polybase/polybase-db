@@ -247,7 +247,7 @@ mod test {
         let mut register = ProposalRegister::new(peer_1.clone(), vec![]);
         let manifest = ProposalManifest {
             last_proposal_hash: ProposalHash::default(),
-            height: 0,
+            height: 1,
             skips: 0,
             leader_id: peer_1,
             changes: vec![],
