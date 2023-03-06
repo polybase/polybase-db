@@ -114,8 +114,8 @@ pub struct Sender {
 }
 
 impl NetworkSender for Sender {
-    fn send(&self, peer_id: PeerId, data: Vec<u8>) -> Box<dyn Future<Output = ()> + '_> {
-        Box::new(async move {
+    fn send(&self, peer_id: PeerId, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + '_>> {
+        Box::pin(async move {
             let peers = self.peer_to_sender.read().unwrap();
             let sender = peers.get(&peer_id).unwrap();
             sender.send(EventResponse { data }).await.unwrap();

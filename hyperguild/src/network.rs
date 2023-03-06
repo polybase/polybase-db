@@ -69,7 +69,7 @@ impl Stream for Listener {
 }
 
 impl guild::NetworkSender for Network {
-    fn send(&self, peer_id: peer::PeerId, data: Vec<u8>) -> Box<dyn Future<Output = ()> + '_> {
+    fn send(&self, peer_id: peer::PeerId, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + '_>> {
         self.sender.send(peer_id, data)
     }
 }

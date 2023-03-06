@@ -4,17 +4,16 @@ use crate::key::Key;
 use crate::peer::PeerId;
 use crate::proposal::event::ProposalEvent;
 use crate::proposal::manifest::{self, ProposalManifest};
-use crate::proposal::proposal::ProposalAccept;
 use crate::proposal::register::ProposalRegister;
 use bincode::{deserialize, serialize};
-
-use futures::{Future, Stream};
+use futures::pin_mut;
+use futures::{Future, Stream, StreamExt};
 use slog::{crit, debug, info};
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::sleep;
+use tokio::select;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -49,11 +48,11 @@ impl SnapshotResp {
 
 pub trait Network: NetworkSender {
     type EventStream: Stream<
-        Item = (
-            PeerId,
-            std::result::Result<crate::service::EventResponse, tonic::Status>,
-        ),
-    >;
+            Item = (
+                PeerId,
+                std::result::Result<crate::service::EventResponse, tonic::Status>,
+            ),
+        > + Unpin;
 
     fn events(&self) -> Arc<Self::EventStream>;
     fn snapshot(
@@ -64,7 +63,7 @@ pub trait Network: NetworkSender {
 }
 
 pub trait NetworkSender {
-    fn send(&self, peer_id: PeerId, data: Vec<u8>) -> Box<dyn Future<Output = ()> + '_>;
+    fn send(&self, peer_id: PeerId, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + '_>>;
 }
 
 // Purpose of Guild is to create consensus among members
@@ -146,18 +145,30 @@ where
         self.send_all(&GuildEvent::AddPendingChange { changes });
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&mut self) {
+        let events = self.network.events().clone();
+        // pin_mut!(events);
         loop {
-            sleep(Duration::from_secs(1)).await
+            select! {
+                // network_event = events.next() => {
+                //     debug!(self.logger, "network_event")
+                // }
+                proposal_event = self.register.next() => {
+                    if let Some(event) = proposal_event {
+                        debug!(self.logger, "proposal event: {:?}", event);
+                        self.on_proposal_event(event).await;
+                    }
+                }
+            };
         }
     }
 
-    fn send(&self, peer_id: &PeerId, event: &GuildEvent) {
+    async fn send(&self, peer_id: &PeerId, event: &GuildEvent) {
         // Serialize the data
         let data = serialize(&event).unwrap();
 
         // Send event to all peers
-        self.network.send(peer_id.clone(), data);
+        self.network.send(peer_id.clone(), data).await;
     }
 
     fn send_all(&self, event: &GuildEvent) {
@@ -173,7 +184,7 @@ where
 
     /// Events from the proposal state machine, which notify of new
     /// actions that should be taken
-    fn on_proposal_event(&mut self, event: ProposalEvent) {
+    async fn on_proposal_event(&mut self, event: ProposalEvent) {
         match event {
             // Node should send accept for an active proposal
             // to another peer
@@ -185,7 +196,8 @@ where
                     // TODO: Accept should not have optional peer
                     leader,
                     &GuildEvent::Accept { accept },
-                );
+                )
+                .await;
             }
 
             // Node should create and send a new proposal

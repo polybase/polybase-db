@@ -5,6 +5,7 @@ use super::proposal::ProposalAccept;
 use super::store::ProposalStore;
 use crate::peer::PeerId;
 use futures::stream::StreamExt;
+use futures::task::Waker;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -39,6 +40,8 @@ struct ProposalRegisterState {
     shutdown: bool,
 
     store: ProposalStore,
+
+    waker: Option<Waker>,
 }
 
 impl Drop for ProposalRegister {
@@ -56,6 +59,7 @@ impl ProposalRegister {
             state: Mutex::new(ProposalRegisterState {
                 shutdown: false,
                 store: ProposalStore::new(local_peer_id, peers),
+                waker: None,
             }),
             background_worker: Notify::new(),
         });
@@ -166,14 +170,13 @@ impl ProposalRegister {
         }
     }
 
-    pub fn poll(&self) -> Poll<ProposalEvent> {
-        let mut events = self.shared.events.lock().unwrap();
-        if let Some(event) = events.pop_front() {
-            return Poll::Ready(event);
-        }
-
-        Poll::Pending
-    }
+    // pub fn poll(&self) -> Poll<ProposalEvent> {
+    //     let mut events = self.shared.events.lock().unwrap();
+    //     if let Some(event) = events.pop_front() {
+    //         return Poll::Ready(event);
+    //     }
+    //     Poll::Pending
+    // }
 
     fn shutdown_background_worker(&self) {
         // The background task must be signaled to shut down. This is done by
@@ -194,11 +197,11 @@ impl Stream for ProposalRegister {
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<ProposalEvent>> {
         let mut events = self.shared.events.lock().unwrap();
-        // self.shared = cx.waker().wake_by_ref();
         if let Some(event) = events.pop_front() {
             return Poll::Ready(Some(event));
         }
-        //  cx.waker().wake_by_ref()
+        let mut state = self.shared.state.lock().unwrap();
+        state.waker = Some(cx.waker().clone());
         Poll::Pending
     }
 }
@@ -209,7 +212,13 @@ impl ProposalRegisterShared {
     }
 
     fn send_event(&self, event: ProposalEvent) {
-        self.events.lock().unwrap().push_back(event)
+        let mut events = self.events.lock().unwrap();
+        events.push_back(event);
+        drop(events);
+        let mut state = self.state.lock().unwrap();
+        if let Some(waker) = state.waker.take() {
+            waker.wake()
+        }
     }
 
     fn timeout(&self) -> Option<Instant> {

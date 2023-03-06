@@ -564,7 +564,7 @@ async fn main() -> Result<(), AppError> {
     let network = guild::network::Network::init("0.0.0.0:50051", vec![])
         .await
         .unwrap();
-    let guild = guild::guild::Guild::new(
+    let mut guild = guild::guild::Guild::new(
         guild::peer::PeerId::random(),
         guild_store,
         network,
