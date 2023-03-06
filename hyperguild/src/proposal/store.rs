@@ -72,8 +72,11 @@ impl ProposalStore {
         }
     }
 
-    pub fn height(&self) -> Option<usize> {
-        self.confirmed_proposals.back().map(|p| p.height())
+    pub fn height(&self) -> usize {
+        self.confirmed_proposals
+            .back()
+            .map(|p| p.height())
+            .unwrap_or(0)
     }
 
     pub fn exists(&self, hash: &ProposalHash) -> bool {
@@ -107,7 +110,7 @@ impl ProposalStore {
             None => {
                 if !self.up_to_date() {
                     return Some(ProposalEvent::OutOfSync {
-                        local_height: self.height().unwrap_or(0),
+                        local_height: self.height(),
                         max_seen_height: self.max_height,
                         skips: self.skips,
                     });
@@ -150,7 +153,7 @@ impl ProposalStore {
         // If out of sync
         if !self.up_to_date() {
             return Some(ProposalEvent::CatchingUp {
-                local_height: self.height().unwrap_or(0),
+                local_height: self.height(),
                 proposal_height: next_proposal_height,
                 max_seen_height: self.max_height,
             });
@@ -179,7 +182,7 @@ impl ProposalStore {
         } = accept;
 
         // Accept is out of date
-        if self.height().unwrap_or(0) >= height {
+        if self.height() >= height {
             return None;
         }
 
@@ -219,7 +222,7 @@ impl ProposalStore {
         }
 
         // Current active proposal height
-        let current_proposal_height = self.height().unwrap_or(0) + 1;
+        let current_proposal_height = self.height() + 1;
 
         // Get the next proposal
         let current_proposal = self.next_pending_proposal(current_proposal_height)?;
@@ -262,8 +265,7 @@ impl ProposalStore {
     }
 
     fn up_to_date(&self) -> bool {
-        let height = self.height().unwrap_or(0);
-        height + 1 >= self.max_height
+        self.height() + 1 >= self.max_height
     }
 
     fn confirm(&mut self, proposal_hash: &ProposalHash) {
@@ -276,10 +278,7 @@ impl ProposalStore {
     /// Purges skipped proposals from the pending proposal state
     fn purge_skipped_proposals(&mut self) {
         let height = self.height();
-
-        if let Some(h) = height {
-            self.pending_proposals.retain(|_, p| p.height() > h);
-        }
+        self.pending_proposals.retain(|_, p| p.height() > height);
     }
 }
 

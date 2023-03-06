@@ -69,7 +69,7 @@ impl ProposalRegister {
     }
 
     /// Gets the highest confirmed height for this reigster
-    pub fn height(&self) -> Option<usize> {
+    pub fn height(&self) -> usize {
         self.shared.state.lock().unwrap().store.height()
     }
 
@@ -90,17 +90,16 @@ impl ProposalRegister {
         }
 
         // If we have existing height, check for out of date proposal
-        if let Some(height) = self.height() {
-            let manifest_height = manifest.height;
+        let manifest_height = manifest.height;
 
-            // Check that the height of this proposal > confirmed
-            if height >= manifest_height {
-                self.shared.send_event(ProposalEvent::OutOfDate {
-                    local_height: height,
-                    proposal_height: manifest.height,
-                });
-                return;
-            }
+        // Check that the height of this proposal > confirmed
+        let height = self.height();
+        if height >= manifest_height {
+            self.shared.send_event(ProposalEvent::OutOfDate {
+                local_height: height,
+                proposal_height: manifest.height,
+            });
+            return;
         }
 
         // Add proposal to the store
@@ -272,7 +271,7 @@ mod test {
         let mut register = ProposalRegister::new(peer_1.clone(), vec![]);
         let manifest = ProposalManifest {
             last_proposal_hash: ProposalHash::default(),
-            height: 0,
+            height: 1,
             skips: 0,
             leader_id: peer_1.clone(),
             changes: vec![],
@@ -289,7 +288,7 @@ mod test {
                 accept: ProposalAccept {
                     proposal_hash: hash,
                     leader_id: peer_1,
-                    height: 0,
+                    height: 1,
                     skips: 0,
                 }
             }
