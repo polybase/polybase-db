@@ -6,7 +6,7 @@ use crate::{guild, peer, server};
 
 pub struct Network {
     clients: HashMap<peer::PeerId, crate::client::Client>,
-    listener: Arc<Listener>,
+    listener: Listener,
     sender: server::Sender,
 }
 
@@ -35,7 +35,7 @@ impl Network {
 
         Ok(Self {
             clients,
-            listener: Arc::new(Listener { client_streams }),
+            listener: Listener { client_streams },
             sender,
         })
     }
@@ -77,8 +77,8 @@ impl guild::NetworkSender for Network {
 impl guild::Network for Network {
     type EventStream = Listener;
 
-    fn events(&self) -> Arc<Self::EventStream> {
-        Arc::clone(&self.listener)
+    fn events(&mut self) -> &mut Self::EventStream {
+        &mut self.listener
     }
 
     fn snapshot(

@@ -3,16 +3,14 @@ use crate::event::GuildEvent;
 use crate::key::Key;
 use crate::peer::PeerId;
 use crate::proposal::event::ProposalEvent;
-use crate::proposal::manifest::{self, ProposalManifest};
+use crate::proposal::manifest::ProposalManifest;
 use crate::proposal::register::ProposalRegister;
 use bincode::{deserialize, serialize};
-use futures::pin_mut;
 use futures::{Future, Stream, StreamExt};
 use slog::{crit, debug, info};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::sync::Arc;
 use tokio::select;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -54,7 +52,7 @@ pub trait Network: NetworkSender {
             ),
         > + Unpin;
 
-    fn events(&self) -> Arc<Self::EventStream>;
+    fn events(&mut self) -> &mut Self::EventStream;
     fn snapshot(
         &mut self,
         peer_id: PeerId,
@@ -92,9 +90,6 @@ pub struct Guild<TStore, TNetwork> {
     /// Network for sending and receiving events
     network: TNetwork,
 
-    /// Flag to indicate if this node is up to date with the leader
-    up_to_date: bool,
-
     /// Logger
     logger: slog::Logger,
 
@@ -122,14 +117,12 @@ where
             pending_changes: HashMap::new(),
             store,
             network,
-            up_to_date: false,
             logger,
             root_hash: None,
         }
     }
 
-    // TODO: have a promise that can be used
-    pub fn add_pending_changes(&mut self, changes: Vec<Change>) {
+    pub async fn add_pending_changes(&mut self, changes: Vec<Change>) {
         for change in changes.iter() {
             self.pending_changes
                 .entry(change.id.clone())
@@ -137,22 +130,26 @@ where
         }
 
         // Send new txns to other members
-        self.send_all(&GuildEvent::AddPendingChange { changes });
+        self.send_all(&GuildEvent::AddPendingChange { changes })
+            .await;
     }
 
-    pub fn send_pending_change(&mut self, changes: Vec<Change>) {
+    pub async fn send_pending_change(&mut self, changes: Vec<Change>) {
         // Send new txns to other members
-        self.send_all(&GuildEvent::AddPendingChange { changes });
+        self.send_all(&GuildEvent::AddPendingChange { changes })
+            .await;
     }
 
     pub async fn run(&mut self) {
-        let events = self.network.events().clone();
-        // pin_mut!(events);
         loop {
             select! {
-                // network_event = events.next() => {
-                //     debug!(self.logger, "network_event")
-                // }
+                network_event =  self.network.events().next() => {
+                    if let Some((peer_id, Ok(event))) = network_event {
+                        let event: GuildEvent = deserialize(event.data.as_slice()).unwrap();
+                        debug!(self.logger, "network_event {:?}", event);
+                        self.on_network_event(event, peer_id).await;
+                    }
+                }
                 proposal_event = self.register.next() => {
                     if let Some(event) = proposal_event {
                         debug!(self.logger, "proposal event: {:?}", event);
@@ -171,9 +168,9 @@ where
         self.network.send(peer_id.clone(), data).await;
     }
 
-    fn send_all(&self, event: &GuildEvent) {
+    async fn send_all(&self, event: &GuildEvent) {
         for peer in self.connected_members.iter() {
-            self.send(peer.preimage(), &event);
+            self.send(peer.preimage(), event).await;
         }
     }
 
@@ -261,7 +258,7 @@ where
     }
 
     /// Events sent by other peers to this node
-    fn on_incoming_event(&mut self, event: GuildEvent, peer_id: PeerId) {
+    async fn on_network_event(&mut self, event: GuildEvent, peer_id: PeerId) {
         match event {
             // Incoming proposal from another peer
             GuildEvent::Proposal { manifest, .. } => {
@@ -271,7 +268,7 @@ where
             // Incoming accept from another peer
             GuildEvent::Accept { accept } => {
                 if let Some(event) = self.register.receive_accept(accept, peer_id) {
-                    self.on_proposal_event(event);
+                    self.on_proposal_event(event).await;
                 }
             }
 
