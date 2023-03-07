@@ -25,6 +25,9 @@ pub enum GatewayError {
     #[error("failed to create a v8 string")]
     FailedToCreateV8String,
 
+    #[error("failed to compile script")]
+    FailedToCompileScript,
+
     #[error("indexer error")]
     IndexerError(#[from] indexer::IndexerError),
 
@@ -809,7 +812,15 @@ impl Gateway {
                                 return;
                             }
                         };
-                        let json = serde_json::to_string(&stable_ast).unwrap();
+                        let json = match serde_json::to_string(&stable_ast) {
+                            Ok(json) => json,
+                            Err(e) => {
+                                let error_msg = v8::String::new(scope, &format!("{e:?}")).unwrap();
+                                let exception = v8::Exception::error(scope, error_msg);
+                                scope.throw_exception(exception);
+                                return;
+                            }
+                        };
 
                         retval.set(v8::String::new(scope, &json).unwrap().into());
                     },
@@ -834,13 +845,21 @@ impl Gateway {
                         .to_rust_string_lossy(scope);
 
                     let public_key =
-                        serde_json::from_str::<indexer::PublicKey>(&public_key_json).unwrap();
+                        match serde_json::from_str::<indexer::PublicKey>(&public_key_json) {
+                            Ok(pk) => pk,
+                            Err(e) => {
+                                let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
+                                let exception = v8::Exception::error(scope, error);
+                                scope.throw_exception(exception);
+                                return;
+                            }
+                        };
 
                     let hex = match public_key.to_hex() {
                         Ok(hex) => hex,
                         Err(e) => {
                             let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
-                            let exception = v8::Exception::type_error(scope, error);
+                            let exception = v8::Exception::error(scope, error);
                             scope.throw_exception(exception);
                             return;
                         }
@@ -854,7 +873,7 @@ impl Gateway {
 
         global.set(
             v8::String::new(&mut scope, "instanceJSON").unwrap().into(),
-            v8::String::new(&mut scope, &serde_json::to_string(instance).unwrap())
+            v8::String::new(&mut scope, &serde_json::to_string(instance)?)
                 .unwrap()
                 .into(),
         );
@@ -988,7 +1007,8 @@ impl Gateway {
         };
 
         let mut try_catch = v8::TryCatch::new(&mut scope);
-        let script = v8::Script::compile(&mut try_catch, code, None).unwrap();
+        let script = v8::Script::compile(&mut try_catch, code, None)
+            .ok_or(GatewayError::FailedToCompileScript)?;
         let result = script.run(&mut try_catch);
 
         match (result, try_catch.exception()) {
