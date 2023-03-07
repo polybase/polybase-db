@@ -9,7 +9,7 @@ edition = "2021"
 
 reqwest = { version = "0.11", features = ["json"] }
 indexer = { path = "../indexer" }
-polylang = { git = "https://github.com/polybase/polylang", ref = "fd7613f6ac3a758685ea894332db200bfb2c0642" }
+polylang = { git = "https://github.com/polybase/polylang", branch = "main" }
 serde = "1.0.152"
 tokio = { version = "1", features = ["full"] }
 url = "2.3.1"
