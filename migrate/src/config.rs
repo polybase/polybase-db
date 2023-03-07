@@ -10,6 +10,14 @@ pub struct Config {
     /// Root directory where application data is stored
     #[arg(short, long, env = "ROOT_DIR", default_value = "~/.polybase")]
     pub root_dir: String,
+
+    /// Root directory where application data is stored
+    #[arg(
+        long,
+        env = "MIGRATION_URL",
+        default_value = "https://testnet.polybase.xyz"
+    )]
+    pub migration_url: String,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
