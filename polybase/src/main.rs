@@ -112,7 +112,7 @@ async fn get_record(
     let (collection, id) = path.into_inner();
     let auth = body.auth;
 
-    let collection = state.indexer.collection(collection).await.unwrap();
+    let collection = state.indexer.collection(collection).await?;
 
     if let Some(since) = query.since {
         enum UpdateCheckResult {
@@ -128,7 +128,7 @@ async fn get_record(
 
             let mut record_exists = false;
             while wait_until > SystemTime::now() {
-                if let Some(metadata) = collection.get_record_metadata(&id).await.unwrap() {
+                if let Some(metadata) = collection.get_record_metadata(&id).await? {
                     record_exists = true;
                     if metadata.updated_at > since {
                         return Ok(UpdateCheckResult::Updated);
@@ -274,7 +274,7 @@ async fn get_records(
 ) -> Result<impl Responder, HTTPError> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let collection = state.indexer.collection(collection).await.unwrap();
+    let collection = state.indexer.collection(collection).await?;
 
     let sort_indexes = query
         .sort
@@ -358,11 +358,14 @@ async fn get_records(
             },
             data: records
                 .into_iter()
-                .map(|(_, r)| GetRecordResponse {
-                    data: indexer::record_to_json(r).unwrap(),
-                    block: Default::default(),
+                .map(|(_, r)| {
+                    Ok(GetRecordResponse {
+                        data: indexer::record_to_json(r)?,
+                        block: Default::default(),
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, indexer::RecordError>>()
+                .map_err(indexer::IndexerError::from)?,
         })
     }
     .await;
@@ -403,7 +406,12 @@ async fn post_record(
         )
         .await?;
 
-    let record = state.db.get(collection_id, record_id).await?.unwrap();
+    let Some(record) = state.db.get(collection_id, record_id).await? else {
+        return Err(HTTPError::new(
+            ReasonCode::RecordNotFound,
+            None,
+        ));
+    };
 
     Ok(web::Json(FunctionResponse {
         data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
@@ -458,7 +466,7 @@ struct StatusResponse {
 async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
     Ok(web::Json(StatusResponse {
         status: "OK".to_string(),
-        root: hex::encode(state.db.rollup.root().unwrap()),
+        root: hex::encode(state.db.rollup.root()?),
         peers: 23,
         leader: 12,
     }))
