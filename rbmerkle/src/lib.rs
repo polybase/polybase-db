@@ -1,3 +1,5 @@
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 use std::fmt::Debug;
 use winter_crypto::{hashers::Rp64_256, Hasher};
 

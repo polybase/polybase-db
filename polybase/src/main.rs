@@ -1,3 +1,5 @@
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 #[macro_use]
 extern crate slog;
 extern crate slog_async;
