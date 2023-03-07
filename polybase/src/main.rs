@@ -112,7 +112,7 @@ async fn get_record(
     let (collection, id) = path.into_inner();
     let auth = body.auth;
 
-    let collection = state.indexer.collection(collection).await.unwrap();
+    let collection = state.indexer.collection(collection).await?;
 
     if let Some(since) = query.since {
         enum UpdateCheckResult {
