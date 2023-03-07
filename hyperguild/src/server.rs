@@ -178,18 +178,29 @@ mod test {
 
     #[tokio::test]
     async fn test_recoverable_stream() {
+        let peer = PeerId::random();
+
+        let sender = Sender {
+            peer_to_sender: Arc::new(RwLock::new(HashMap::new())),
+        };
         let (tx, rx) = mpsc::channel(1);
+
+        sender
+            .peer_to_sender
+            .write()
+            .unwrap()
+            .insert(peer.clone(), tx);
 
         let stream = Box::pin(ReceiverStream::new(rx).map(Ok));
 
         let peer_to_stream = Arc::new(RwLock::new(HashMap::new()));
         let mut recoverable_stream = RecoverableResponseStream {
-            peer_id: PeerId::new(vec![]),
+            peer_id: peer.clone(),
             stream,
             peer_to_stream: Arc::clone(&peer_to_stream),
         };
 
-        tx.send(EventResponse { data: vec![0] }).await.unwrap();
+        sender.send(peer.clone(), vec![0]).await;
         assert_eq!(
             recoverable_stream.next().await.unwrap().unwrap().data,
             vec![0]
@@ -197,13 +208,9 @@ mod test {
 
         assert!(peer_to_stream.read().unwrap().is_empty());
         drop(recoverable_stream);
-        tx.send(EventResponse { data: vec![1] }).await.unwrap();
+        sender.send(peer.clone(), vec![1]).await;
 
-        let mut stream = peer_to_stream
-            .write()
-            .unwrap()
-            .remove(&PeerId::new(vec![]))
-            .unwrap();
+        let mut stream = peer_to_stream.write().unwrap().remove(&peer).unwrap();
         assert_eq!(stream.next().await.unwrap().unwrap().data, vec![1]);
     }
 }
