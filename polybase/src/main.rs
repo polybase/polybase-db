@@ -94,6 +94,7 @@ struct GetRecordQuery {
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
     wait_for: Seconds,
+    format: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -158,10 +159,18 @@ async fn get_record(
     let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await?;
 
     match record {
-        Some(record) => Ok(HttpResponse::Ok().json(GetRecordResponse {
-            data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
-            block: Default::default(),
-        })),
+        Some(record) => {
+            let data = indexer::record_to_json(record).map_err(indexer::IndexerError::from)?;
+            if let Some(f) = &query.format {
+                if f == "nft" {
+                    return Ok(HttpResponse::Ok().json(data));
+                }
+            }
+            Ok(HttpResponse::Ok().json(GetRecordResponse {
+                data,
+                block: Default::default(),
+            }))
+        }
         None => Err(HTTPError::new(ReasonCode::RecordNotFound, None)),
     }
 }
