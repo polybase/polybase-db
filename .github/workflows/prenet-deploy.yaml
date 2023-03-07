@@ -83,4 +83,4 @@ jobs:
       - name: Deploy
         run: |-
           cd ./helm/
-          helm upgrade --install --set image.tag=sha-${{ steps.vars.outputs.sha_short }} polybase . -f prenet-values.yaml -n polybase
+          helm upgrade --install --set image.tag=sha-${{ steps.vars.outputs.sha_short }} polybase-rust . -f prenet-values.yaml -n polybase
