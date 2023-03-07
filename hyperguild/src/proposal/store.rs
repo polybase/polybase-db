@@ -7,17 +7,6 @@ use crate::key::Key;
 use crate::peer::PeerId;
 use std::collections::{HashMap, VecDeque};
 
-type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    // #[error("Missing proposal for accept")]
-    // MissingProposalForAccept {
-    //     proposal_hash: ProposalHash,
-    //     peer_id: PeerId,
-    // },
-}
-
 #[derive(Debug)]
 pub struct ProposalStore {
     /// Local peer, required so we can determine if we are the leader
@@ -162,21 +151,21 @@ impl ProposalStore {
             });
         }
 
+        let accept = ProposalAccept {
+            proposal_hash: next_proposal_hash,
+            leader_id: next_leader,
+            height: next_proposal_height,
+            skips: 0,
+        };
+
         // In sync, so we should send accept to the next leader
-        Some(ProposalEvent::SendAccept {
-            accept: ProposalAccept {
-                proposal_hash: next_proposal_hash,
-                leader_id: next_leader,
-                height: next_proposal_height,
-                skips: 0,
-            },
-        })
+        Some(ProposalEvent::SendAccept { accept })
     }
 
     /// Adds an accept to a proposal, we should only be receiving accepts if we are the
     /// designated leader. Returns whether a majority has been reached.
     // TODO: this should be a result
-    pub fn add_accept(&mut self, accept: ProposalAccept, from: PeerId) -> Option<ProposalEvent> {
+    pub fn add_accept(&mut self, accept: &ProposalAccept, from: PeerId) -> Option<ProposalEvent> {
         let ProposalAccept {
             proposal_hash,
             leader_id,
@@ -185,18 +174,18 @@ impl ProposalStore {
         } = accept;
 
         // Accept is out of date
-        if self.height() >= height {
+        if self.height() >= *height {
             return None;
         }
 
-        match self.pending_proposals.get_mut(&proposal_hash) {
+        match self.pending_proposals.get_mut(proposal_hash) {
             Some(p) => {
                 // Skip if skips is not valid
-                if p.skips() != skips {
+                if p.skips() != *skips {
                     return None;
                 }
-                p.add_accept(&skips, from);
-                if p.majority_accept(&skips) {
+                p.add_accept(skips, from);
+                if p.majority_accept(skips) {
                     return Some(ProposalEvent::Propose {
                         last_proposal_hash: proposal_hash.clone(),
                         height: height + 1,
@@ -206,11 +195,11 @@ impl ProposalStore {
             }
             None => {
                 // Get exisiting orphaned proposal list
-                if let Some(p) = self.orphan_accepts.get_mut(&proposal_hash) {
-                    p.push((skips, leader_id));
+                if let Some(p) = self.orphan_accepts.get_mut(proposal_hash) {
+                    p.push((*skips, leader_id.clone()));
                 } else {
                     self.orphan_accepts
-                        .insert(proposal_hash.clone(), vec![(skips, leader_id)]);
+                        .insert(proposal_hash.clone(), vec![(*skips, leader_id.clone())]);
                 }
                 None
             }
@@ -249,15 +238,6 @@ impl ProposalStore {
     }
 
     fn next_pending_proposal(&self, height: usize) -> Option<&Proposal> {
-        let next_proposal = self
-            .pending_proposals
-            .values()
-            .filter(|proposal| proposal.height() == height)
-            .max_by(|a, b| a.skips().cmp(&b.skips()));
-        next_proposal
-    }
-
-    fn next_pending_proposal_2(&self, height: usize) -> Option<&Proposal> {
         let next_proposal = self
             .pending_proposals
             .values()

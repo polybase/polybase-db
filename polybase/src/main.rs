@@ -561,9 +561,13 @@ async fn main() -> Result<(), AppError> {
 
     let guild_store =
         guild::proposal::store::ProposalStore::new(guild::peer::PeerId::random(), vec![]);
-    let network = guild::network::Network::init("0.0.0.0:50051", vec![])
+
+    // Get peers from network
+
+    let network = guild::network::Network::init(config.network_laddr, vec![])
         .await
         .unwrap();
+
     let mut guild = guild::guild::Guild::new(
         guild::peer::PeerId::random(),
         guild_store,

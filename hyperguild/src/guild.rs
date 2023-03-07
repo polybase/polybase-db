@@ -72,9 +72,6 @@ pub trait NetworkSender {
 pub struct Guild<TStore, TNetwork> {
     local_peer_id: PeerId,
 
-    /// List of other peers sockets (for connecting)
-    members: Vec<SocketAddr>,
-
     /// Connected members
     connected_members: Vec<Key<PeerId>>,
 
@@ -110,7 +107,6 @@ where
     ) -> Self {
         Self {
             local_peer_id: local_peer_id.clone(),
-            members: Vec::new(),
             connected_members: Vec::new(),
             // TODO: add peers
             register: ProposalRegister::new(local_peer_id, vec![]),
@@ -141,6 +137,7 @@ where
     }
 
     pub async fn run(&mut self) {
+        debug!(self.logger, "init guild");
         loop {
             select! {
                 network_event =  self.network.events().next() => {
@@ -161,6 +158,11 @@ where
     }
 
     async fn send(&self, peer_id: &PeerId, event: &GuildEvent) {
+        debug!(
+            self.logger,
+            "sending event to peer: {:?} {:?}", peer_id, event
+        );
+
         // Serialize the data
         let data = serialize(&event).unwrap();
 
@@ -172,11 +174,6 @@ where
         for peer in self.connected_members.iter() {
             self.send(peer.preimage(), event).await;
         }
-    }
-
-    fn join() {
-        // Attempt to dial other peers
-        // Send state to other peers on
     }
 
     /// Events from the proposal state machine, which notify of new
@@ -214,8 +211,7 @@ where
                     changes,
                 };
 
-                //
-                self.register.receive_proposal(manifest)
+                self.register.receive_proposal(manifest);
             }
 
             // Commit a confirmed proposal changes
@@ -267,7 +263,7 @@ where
 
             // Incoming accept from another peer
             GuildEvent::Accept { accept } => {
-                if let Some(event) = self.register.receive_accept(accept, peer_id) {
+                if let Some(event) = self.register.receive_accept(&accept, peer_id) {
                     self.on_proposal_event(event).await;
                 }
             }

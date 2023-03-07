@@ -4,7 +4,7 @@ use super::manifest::ProposalManifest;
 use super::proposal::ProposalAccept;
 use super::store::ProposalStore;
 use crate::peer::PeerId;
-use futures::stream::StreamExt;
+use futures::stream::{Next, StreamExt};
 use futures::task::Waker;
 use std::collections::VecDeque;
 use std::pin::Pin;
@@ -21,7 +21,25 @@ pub struct ProposalRegister {
 }
 
 #[derive(Debug)]
+pub struct ProposalRegisterConfig {
+    timeout: Duration,
+    interval: Duration,
+}
+
+impl Default for ProposalRegisterConfig {
+    fn default() -> Self {
+        ProposalRegisterConfig {
+            interval: Duration::from_secs(1),
+            timeout: Duration::from_secs(5),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct ProposalRegisterShared {
+    /// Local peer, required so we can determine if we are the leader
+    local_peer_id: PeerId,
+
     /// Notifies the background worker to wake up
     background_worker: Notify,
 
@@ -33,15 +51,26 @@ pub struct ProposalRegisterShared {
 
     /// Shared proposal state, must be updated together
     state: Mutex<ProposalRegisterState>,
+
+    config: ProposalRegisterConfig,
 }
 
 #[derive(Debug)]
 struct ProposalRegisterState {
     shutdown: bool,
 
+    next_proposal: Option<NextProposal>,
+
     store: ProposalStore,
 
     waker: Option<Waker>,
+}
+
+#[derive(Debug)]
+struct NextProposal {
+    timer: Instant,
+    height: usize,
+    last_proposal_hash: ProposalHash,
 }
 
 impl Drop for ProposalRegister {
@@ -54,13 +83,16 @@ impl Drop for ProposalRegister {
 impl ProposalRegister {
     pub fn new(local_peer_id: PeerId, peers: Vec<PeerId>) -> Self {
         let shared = Arc::new(ProposalRegisterShared {
+            local_peer_id: local_peer_id.clone(),
             events: Mutex::new(VecDeque::new()),
             timeout: Mutex::new(None),
             state: Mutex::new(ProposalRegisterState {
                 shutdown: false,
                 store: ProposalStore::new(local_peer_id, peers),
                 waker: None,
+                next_proposal: None,
             }),
+            config: ProposalRegisterConfig::default(),
             background_worker: Notify::new(),
         });
 
@@ -122,11 +154,13 @@ impl ProposalRegister {
         // Process next rounds with the newly added proposal state, and keep
         // processing until nothing is left
         self.process_next()
+
+        // TODO: wait 1 second before next update?
     }
 
     pub fn receive_accept(
         &mut self,
-        accept: ProposalAccept,
+        accept: &ProposalAccept,
         from: PeerId,
     ) -> Option<ProposalEvent> {
         let mut state = self.shared.state.lock().unwrap();
@@ -135,7 +169,7 @@ impl ProposalRegister {
 
     fn reset_timeout(&self) {
         let mut timeout = self.shared.timeout.lock().unwrap();
-        *timeout = Some(Instant::now() + Duration::from_secs(1));
+        *timeout = Some(Instant::now() + self.shared.config.timeout);
         self.shared.background_worker.notify_one();
     }
 
@@ -151,9 +185,6 @@ impl ProposalRegister {
         let mut state = self.shared.state.lock().unwrap();
         while let Some(event) = state.store.process_next() {
             match event {
-                ProposalEvent::SendAccept { .. } => {
-                    self.reset_timeout();
-                }
                 ProposalEvent::OutOfSync { .. } => {
                     // Clear the timeout, as we're out of date, we don't want to send
                     // any skip messages to the network until we are.
@@ -161,22 +192,44 @@ impl ProposalRegister {
                     self.shared.send_event(event);
                     return;
                 }
+                ProposalEvent::Propose {
+                    height,
+                    last_proposal_hash,
+                } => {
+                    // Don't send proposal immedietely, as we only want one proposal
+                    // per interval period
+                    state.next_proposal = Some(NextProposal {
+                        last_proposal_hash,
+                        height,
+                        timer: Instant::now() + self.shared.config.interval,
+                    });
+
+                    // So we wait on the right moment
+                    self.shared.background_worker.notify_one();
+
+                    return;
+                }
                 ProposalEvent::CatchingUp { .. } => {
                     self.clear_timeout();
                 }
                 _ => {}
             }
+
+            // For accept, we should pass it back in
+            if let ProposalEvent::SendAccept { accept } = &event {
+                self.reset_timeout();
+                // Accept our own proposals
+                if let Some(event) = state
+                    .store
+                    .add_accept(accept, self.shared.local_peer_id.clone())
+                {
+                    self.shared.send_event(event);
+                }
+            }
+
             self.shared.send_event(event);
         }
     }
-
-    // pub fn poll(&self) -> Poll<ProposalEvent> {
-    //     let mut events = self.shared.events.lock().unwrap();
-    //     if let Some(event) = events.pop_front() {
-    //         return Poll::Ready(event);
-    //     }
-    //     Poll::Pending
-    // }
 
     fn shutdown_background_worker(&self) {
         // The background task must be signaled to shut down. This is done by
@@ -221,7 +274,26 @@ impl ProposalRegisterShared {
         }
     }
 
-    fn timeout(&self) -> Option<Instant> {
+    fn tick(&self) -> Option<Instant> {
+        // Do we have a proposal to send?
+        let mut state = self.state.lock().unwrap();
+        if let Some(next) = &state.next_proposal {
+            if next.timer > Instant::now() {
+                return Some(next.timer);
+            }
+            let NextProposal {
+                height,
+                last_proposal_hash,
+                ..
+            } = state.next_proposal.take().unwrap();
+            self.send_event(ProposalEvent::Propose {
+                last_proposal_hash,
+                height,
+            });
+
+            return None;
+        }
+
         let mut timeout = self.timeout.lock().unwrap();
 
         // Check if we have an expiry time
@@ -231,7 +303,7 @@ impl ProposalRegisterShared {
 
         if let Some(event) = self.state.lock().unwrap().store.skip() {
             self.events.lock().unwrap().push_back(event);
-            *timeout = Some(Instant::now() + Duration::from_secs(1));
+            *timeout = Some(Instant::now() + self.config.timeout);
         }
 
         *timeout
@@ -242,7 +314,7 @@ async fn background_worker(shared: Arc<ProposalRegisterShared>) {
     // If the shutdown flag is set, then the task should exit.
     while !shared.is_shutdown() {
         // Check timeout
-        if let Some(when) = shared.timeout() {
+        if let Some(when) = shared.tick() {
             tokio::select! {
                 _ = sleep_until(when) => {}
                 _ = shared.background_worker.notified() => {}

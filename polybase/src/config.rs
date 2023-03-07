@@ -23,6 +23,14 @@ pub struct Config {
     #[arg(long, env = "RPC_LADDR", default_value = "0.0.0.0:8080")]
     pub rpc_laddr: String,
 
+    /// Peer listen address
+    #[arg(long, env = "NETWORK_LADDR", default_value = "0.0.0.0:6000")]
+    pub network_laddr: String,
+
+    /// Peer listen address
+    #[arg(long, env = "PEERS", default_value = "")]
+    pub peers: String,
+
     /// RAFT listen address
     #[arg(long, env = "RAFT_LADDR", default_value = "0.0.0.0:5001")]
     pub raft_laddr: String,
