@@ -1,7 +1,7 @@
 apiVersion: networking.gke.io/v1
 kind: ManagedCertificate
 metadata:
-  name: {{ .Values.env }}-cert
+  name: {{ .Release.Name }}-cert
 spec:
   domains:
     - {{ .Values.env }}.polybase.xyz

@@ -288,7 +288,7 @@ service:
   ## ref: https://kubernetes.io/docs/concepts/services-networking/service/#internal-load-balancer
   ##
   annotations:
-    cloud.google.com/backend-config: '{"default": "polybase"}'
+    cloud.google.com/backend-config: '{"default": "polybase-rust"}'
     cloud.google.com/neg: '{"ingress": true}'
   ## @param service.sessionAffinity Session Affinity for Kubernetes service, can be "None" or "ClientIP"
   ## If "ClientIP", consecutive client requests will be directed to the same Pod
