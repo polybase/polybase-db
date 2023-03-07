@@ -59,6 +59,8 @@ async fn main() -> Result<()> {
 
     let config = Config::parse();
 
+    println!("Migration URL: {}", config.migration_url);
+
     let indexer_dir = get_indexer_dir(&config.root_dir);
     println!("Indexer store path: {}", indexer_dir.display());
 
