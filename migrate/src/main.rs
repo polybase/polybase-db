@@ -59,13 +59,21 @@ async fn main() -> Result<()> {
 
     let config = Config::parse();
 
+    println!("Migration URL: {}", config.migration_url);
+
     let indexer_dir = get_indexer_dir(&config.root_dir);
     println!("Indexer store path: {}", indexer_dir.display());
-    let indexer = indexer::Indexer::new(logger, indexer_dir).unwrap();
+
+    let indexer = indexer::Indexer::new(logger.clone(), indexer_dir.clone()).unwrap();
+    indexer.destroy().unwrap();
+
+    println!("Database reset");
+
+    let indexer = indexer::Indexer::new(logger.clone(), indexer_dir).unwrap();
     let collection_collection = indexer.collection("Collection".into()).await?;
 
     // Get list of all collections data
-    let collections = get_records::<CollectionData>("Collection").await?;
+    let collections = get_records::<CollectionData>(&config.migration_url, "Collection").await?;
 
     println!("Migrating {} collections", collections.len());
 
@@ -117,7 +125,8 @@ async fn main() -> Result<()> {
         // Get the indexer collection instance so we can insert records
         let collection = indexer.collection(collection_id.clone()).await?;
 
-        let records = get_records::<serde_json::Value>(collection_id.as_str()).await?;
+        let records =
+            get_records::<serde_json::Value>(&config.migration_url, collection_id.as_str()).await?;
         let records_len = records.len();
         let col_ast =
             indexer::collection::collection_ast_from_json(&ast, name(collection_id).as_str())?;
@@ -190,18 +199,15 @@ fn migrate_code_for_ast(code: &str) -> String {
         .to_string()
 }
 
-async fn get_records<T>(collection_name: &str) -> Result<Vec<ListResponseItem<T>>>
+async fn get_records<T>(url: &str, collection_name: &str) -> Result<Vec<ListResponseItem<T>>>
 where
     T: serde::de::DeserializeOwned,
 {
     let mut records: Vec<ListResponseItem<T>> = vec![];
     let mut cursor: Option<String> = None;
 
-    let base_url = format!(
-        "https://testnet.polybase.xyz/v0/collections/{}/records",
-        encode(collection_name)
-    )
-    .to_string();
+    let base_url =
+        format!("{}/v0/collections/{}/records", url, encode(collection_name)).to_string();
 
     loop {
         let mut url = base_url.clone();

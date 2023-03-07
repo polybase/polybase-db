@@ -155,6 +155,10 @@ impl Raft {
         (Self { shared }, handle)
     }
 
+    pub async fn shutdown(&self) -> Result<()> {
+        Ok(self.shared.mailbox.leave().await?)
+    }
+
     pub async fn status(&self) -> Result<rmqtt_raft::Status> {
         match self.shared.mailbox.status().await {
             Ok(status) => Ok(status),

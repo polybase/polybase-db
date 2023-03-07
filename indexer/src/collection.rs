@@ -88,9 +88,6 @@ pub enum CollectionUserError {
     #[error("collection {name} not found")]
     CollectionNotFound { name: String },
 
-    #[error("cannot change type of field {path:?} to PublicKey. First, delete the field and then add it back with the new type.")]
-    CannotChangeFieldTypeToPublicKey { path: Vec<String> },
-
     #[error("no index found matching the query")]
     NoIndexFoundMatchingTheQuery,
 
@@ -172,7 +169,11 @@ collection Collection {
 }
 "#;
 
-    hm.insert("code".to_string(), RecordValue::String(code.to_string()));
+    hm.insert(
+        "code".to_string(),
+        // The replaces are for clients <=0.3.23
+        RecordValue::String(code.replace("@public", "").replace("PublicKey", "string")),
+    );
 
     let mut program = None;
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
@@ -310,35 +311,12 @@ pub fn validate_schema_change(
     old_ast: stableast::Root,
     new_ast: stableast::Root,
 ) -> Result<()> {
-    let Some(old_ast) = collection_ast_from_root(old_ast, collection_name) else {
+    let Some(_old_ast) = collection_ast_from_root(old_ast, collection_name) else {
         return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
     };
-    let Some(new_ast) = collection_ast_from_root(new_ast, collection_name) else {
+    let Some(_new_ast) = collection_ast_from_root(new_ast, collection_name) else {
         return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
     };
-
-    // You cannot change the type of a field to PublicKey
-    let mut public_key_in_new = vec![];
-    new_ast.walk_fields(&mut vec![], &mut |path, field| {
-        if let stableast::Type::PublicKey(_) = field.type_() {
-            public_key_in_new.push(path.to_vec())
-        }
-    });
-
-    for path in public_key_in_new {
-        let Some(old_field) = old_ast.find_field(&path) else {
-            // Adding a new PublicKey field is fine
-            continue;
-        };
-
-        if let stableast::Type::PublicKey(_) = old_field.type_() {
-            continue;
-        }
-
-        return Err(CollectionUserError::CannotChangeFieldTypeToPublicKey {
-            path: path.iter().map(|s| (*s).to_owned()).collect(),
-        })?;
-    }
 
     Ok(())
 }
@@ -555,7 +533,12 @@ impl<'a> Collection<'a> {
             .collect::<Vec<_>>();
 
         collection_ast.walk_fields(&mut vec![], &mut |path, field| {
-            if let stableast::Type::Primitive(_) = field.type_() {
+            let indexable = matches!(
+                field.type_(),
+                stableast::Type::Primitive(_) | stableast::Type::PublicKey(_)
+            );
+
+            if indexable {
                 let new_index = |direction| {
                     index::CollectionIndex::new(vec![index::CollectionIndexField::new(
                         path.iter().map(|p| Cow::Owned(p.to_string())).collect(),
@@ -617,6 +600,28 @@ impl<'a> Collection<'a> {
                 })
             },
         })
+    }
+
+    async fn ast<'ast>(
+        &self,
+        ast_json_holder: &'ast mut Option<String>,
+    ) -> Result<stableast::Collection<'ast>> {
+        let record = Self::load(self.logger.clone(), self.store, "Collection".to_owned())
+            .await?
+            .get(self.collection_id.clone(), None)
+            .await?
+            .unwrap();
+
+        let ast_json = match record.get("ast") {
+            Some(RecordValue::String(ast_json)) => ast_json,
+            Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
+            None => return Err(CollectionError::CollectionRecordMissingAST),
+        };
+
+        *ast_json_holder = Some(ast_json.clone());
+        let ast_json = ast_json_holder.as_ref().unwrap();
+
+        collection_ast_from_json(ast_json, self.name().as_str())
     }
 
     pub fn id(&self) -> &str {
@@ -926,9 +931,9 @@ impl<'a> Collection<'a> {
         self.update_record_metadata(id.clone(), &SystemTime::now())
             .await?;
 
-        if let Some(old_value) = old_value {
+        if let Some(old_value) = &old_value {
             // delete the indexes for the old values
-            self.delete_indexes(&id, &old_value).await;
+            self.delete_indexes(&id, old_value).await;
         }
 
         self.add_indexes(&id, &data_key, value).await;
@@ -937,7 +942,9 @@ impl<'a> Collection<'a> {
             if let Some(collection_before) = collection_before {
                 let target_col = Collection::load(self.logger.clone(), self.store, id).await?;
 
-                target_col.rebuild(collection_before, value).await?;
+                target_col
+                    .rebuild(collection_before, &old_value.unwrap())
+                    .await?;
             }
         }
 
@@ -1069,8 +1076,11 @@ impl<'a> Collection<'a> {
             return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
         };
 
-        let where_query = where_query;
+        let mut ast_holder = None;
+        let ast = self.ast(&mut ast_holder).await?;
+
         let key_range = where_query.key_range(
+            &ast,
             self.collection_id.clone(),
             &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
             &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
@@ -1398,24 +1408,71 @@ mod tests {
     #[tokio::test]
     async fn test_collection_set_list() {
         let store = TestStore::default();
-        let collection = Collection::new(
-            logger(),
-            &store,
-            "test".to_string(),
-            vec![index::CollectionIndex {
-                fields: vec![
-                    index::CollectionIndexField {
-                        path: vec!["name".into()],
-                        direction: keys::Direction::Ascending,
-                    },
-                    index::CollectionIndexField {
-                        path: vec!["id".into()],
-                        direction: keys::Direction::Ascending,
-                    },
-                ],
-            }],
-            Authorization::Public,
-        );
+
+        {
+            let collection = Collection::load(logger(), &store, "Collection".to_owned())
+                .await
+                .unwrap();
+            collection
+                .set(
+                    "test/test".to_owned(),
+                    &RecordRoot::from([
+                        ("id".to_owned(), RecordValue::String("test/test".to_owned())),
+                        (
+                            "ast".to_owned(),
+                            RecordValue::String(
+                                serde_json::to_string_pretty(&stableast::Root(vec![
+                                    stableast::RootNode::Collection(stableast::Collection {
+                                        namespace: stableast::Namespace {
+                                            value: "test".into(),
+                                        },
+                                        name: "test".into(),
+                                        attributes: vec![
+                                            stableast::CollectionAttribute::Directive(
+                                                polylang::stableast::Directive {
+                                                    name: "public".into(),
+                                                    arguments: vec![],
+                                                },
+                                            ),
+                                            stableast::CollectionAttribute::Property(
+                                                stableast::Property {
+                                                    name: "id".into(),
+                                                    type_: stableast::Type::Primitive(
+                                                        stableast::Primitive {
+                                                            value: stableast::PrimitiveType::String,
+                                                        },
+                                                    ),
+                                                    directives: vec![],
+                                                    required: true,
+                                                },
+                                            ),
+                                            stableast::CollectionAttribute::Property(
+                                                stableast::Property {
+                                                    name: "name".into(),
+                                                    type_: stableast::Type::Primitive(
+                                                        stableast::Primitive {
+                                                            value: stableast::PrimitiveType::String,
+                                                        },
+                                                    ),
+                                                    directives: vec![],
+                                                    required: true,
+                                                },
+                                            ),
+                                        ],
+                                    }),
+                                ]))
+                                .unwrap(),
+                            ),
+                        ),
+                    ]),
+                )
+                .await
+                .unwrap();
+        }
+
+        let collection = Collection::load(logger(), &store, "test/test".to_owned())
+            .await
+            .unwrap();
 
         let value_1 = HashMap::from([
             ("id".to_string(), RecordValue::String("1".into())),
@@ -1436,7 +1493,7 @@ mod tests {
                     where_query: where_query::WhereQuery(
                         [(
                             where_query::FieldPath(vec!["name".into()]),
-                            where_query::WhereNode::Equality(where_query::WhereValue::String(
+                            where_query::WhereNode::Equality(where_query::WhereValue(
                                 "test".into(),
                             )),
                         )]

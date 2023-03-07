@@ -12,6 +12,8 @@ mod pending;
 mod raft;
 mod rollup;
 
+use actix_cors::Cors;
+use actix_web::http::header;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use futures::TryStreamExt;
@@ -40,6 +42,21 @@ struct RouteState {
     db: Arc<Db>,
     indexer: Arc<Indexer>,
     raft: Arc<Raft>,
+}
+
+#[derive(Debug, thiserror::Error)]
+enum AppError {
+    #[error("failed to join task")]
+    JoinError(#[from] tokio::task::JoinError),
+
+    #[error("raft failed unexpectedly")]
+    Raft(#[from] raft::RaftError),
+
+    #[error("server failed unexpectedly")]
+    HttpServer(#[from] actix_web::Error),
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 #[get("/")]
@@ -304,7 +321,7 @@ async fn get_records(
         let records = collection
             .list(
                 indexer::ListQuery {
-                    limit: Some(min(1000, query.limit.unwrap_or(1000))),
+                    limit: Some(min(1000, query.limit.unwrap_or(100))),
                     where_query: query.where_query.clone(),
                     order_by: &sort_indexes,
                     cursor_after: query.after.0.clone(),
@@ -429,16 +446,34 @@ async fn health() -> impl Responder {
     HttpResponse::Ok()
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StatusResponse {
+    status: String,
+    root: String,
+    peers: usize,
+    leader: usize,
+}
+
+#[get("/v0/status")]
+async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
+    Ok(web::Json(StatusResponse {
+        status: "OK".to_string(),
+        root: hex::encode(state.db.rollup.root().unwrap()),
+        peers: 23,
+        leader: 12,
+    }))
+}
+
 #[get("/v0/raft/status")]
 async fn raft_status(
     state: web::Data<RouteState>,
 ) -> Result<web::Json<rmqtt_raft::Status>, HTTPError> {
-    let status = state.raft.status().await?;
-    Ok(web::Json(status))
+    let raft_status = state.raft.status().await?;
+    Ok(web::Json(raft_status))
 }
 
 #[tokio::main]
-async fn main() -> std::io::Result<()> {
+async fn main() -> Result<(), AppError> {
     let _guard = sentry::init((
         "https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376",
         sentry::ClientOptions {
@@ -459,6 +494,8 @@ async fn main() -> std::io::Result<()> {
     let drain = slog_term::FullFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
     let logger = slog::Logger::root(drain, slog_o!("version" => env!("CARGO_PKG_VERSION")));
+    // let _guard = slog_scope::set_global_logger(logger.clone());
+    // let _log_guard = slog_stdlog::init().unwrap();
 
     let indexer_dir = get_indexer_dir(&config.root_dir);
     let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).unwrap());
@@ -490,18 +527,24 @@ async fn main() -> std::io::Result<()> {
     );
 
     let raft = Arc::new(raft);
+    let server_raft = Arc::clone(&raft);
+    let server_logger = logger.clone();
 
     let server = HttpServer::new(move || {
+        let cors = Cors::permissive();
+
         App::new()
             .app_data(web::Data::new(RouteState {
                 db: Arc::clone(&db),
                 indexer: Arc::clone(&indexer),
-                raft: Arc::clone(&raft),
+                raft: Arc::clone(&server_raft),
             }))
-            .wrap(SlogMiddleware::new(logger.clone()))
+            .wrap(SlogMiddleware::new(server_logger.clone()))
+            .wrap(cors)
             .service(root)
             .service(health)
             .service(raft_status)
+            .service(status)
             .service(
                 web::scope("/v0/collections")
                     .service(get_record)
@@ -513,10 +556,25 @@ async fn main() -> std::io::Result<()> {
     .bind(config.rpc_laddr)?
     .run();
 
+    let raft = Arc::clone(&raft);
+    let logger = logger.clone();
+
     select!(
-        _ = server => (),
-        _ = raft_handle => (),
-        _ = tokio::signal::ctrl_c() => (),
+        res = server => { // TODO: check if err
+            // res
+            error!(logger, "HTTP server exited unexpectedly {res:#?}");
+            res?
+        }
+        res = raft_handle => {
+            error!(logger, "Raft server exited unexpectedly: {res:#?}");
+            res?
+        },
+        _ = tokio::signal::ctrl_c() => {
+            match raft.clone().shutdown().await {
+                Ok(_) => info!(logger, "Raft shutdown successfully"),
+                Err(e) => error!(logger, "Error shutting down raft"; "error" => ?e),
+            }
+        },
     );
 
     Ok(())
