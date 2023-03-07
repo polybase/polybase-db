@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "polybase.fullname" . }}
+  name: {{ .Release.Name }}
   namespace: {{ .Release.Namespace | quote }}
   labels: {{- include "polybase.labels" . | nindent 4 }}
     {{- if .Values.commonLabels }}

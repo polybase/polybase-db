@@ -1,7 +1,7 @@
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: {{ include "polybase.name" . }}
+  name: {{ .Release.Name | quote }}
   namespace: {{ .Release.Namespace | quote }}
   labels: {{- include "polybase.labels" . | nindent 4 }}
   {{- if .Values.commonAnnotations }}
@@ -60,18 +60,41 @@ spec:
       {{- if .Values.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- end }}
-      initContainers:
-        - name: migration
-          image: {{ include "polybase.main_image" . }}
-          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
-          {{- if .Values.containerSecurityContext.enabled }}
-          securityContext: {{- omit .Values.containerSecurityContext "enabled" | toYaml | nindent 12 }}
-          {{- end }}
-          command:
-          - polybase-migrate
-          volumeMounts:
-          - name: data
-            mountPath: /polybase
+      # initContainers:
+      # - name: init-set
+      #   image: alpine:latest
+      #   command:
+      #   - /mnt/scripts/run.sh
+      #   volumeMounts:
+      #   - name: data
+      #     mountPath: /polybase
+      #   - name: genesis
+      #     mountPath: /mnt/tendermint_files/genesis.json
+      #     subPath: genesis.json
+      #   {{- range $i := until (.Values.replicaCount | int) }}
+      #   - name: node-key{{$i}}
+      #     mountPath: /mnt/tendermint_files/node_key{{$i}}.json
+      #     subPath: node_key{{$i}}.json
+      #   - name: priv-validator-key{{$i}}
+      #     mountPath: /mnt/tendermint_files/priv_validator_key{{$i}}.json
+      #     subPath: priv_validator_key{{$i}}.json
+      #   {{- end }}
+      #   - name: scripts-vol
+      #     mountPath: /mnt/scripts
+      # - name: migration
+      #   image: {{ include "polybase.main_image" . }}
+      #   command:
+      #   - polybase-migrate
+      #   securityContext:
+      #     runAsUser: 1001
+      #     runAsGroup: 1001
+      #     runAsNonRoot: true
+      #   volumeMounts:
+      #   - name: data
+      #     mountPath: /polybase
+      #   env:
+      #   - name: MIGRATION_URL
+      #     value: "http://polybase-0.polybase-headless.polybase.svc.cluster.local:8080"
       containers:
         - name: polybase
           command:
@@ -99,8 +122,6 @@ spec:
             value: "/polybase/config/node_key.json"
           - name: VALIDATOR_KEY
             value: "/polybase/config/priv_validator_key.json"
-          - name: RAFT_PEERS
-            value: {{ .Values.peerList | quote }}
           - name: LOG_LEVEL
             value: "DEBUG"
           - name: LOG_FORMAT
@@ -170,23 +191,23 @@ spec:
             {{- include "polybase.render" (dict "value" .Values.extraVolumeMounts "context" $) | nindent 12 }}
             {{- end }}
       volumes:
-      - name: scripts-vol
-        configMap:
-          name: validator-keys
-          defaultMode: 0555
-        {{- if .Values.extraVolumes }}
-        {{- include "polybase.render" (dict "value" .Values.extraVolumes "context" $) | nindent 8 }}
-        {{- end }}
-      - name: genesis
-        secret:
-          secretName: genesis
-      {{- range $i := until (.Values.replicaCount | int) }}
-      - name: node-key{{$i}}
-        secret: 
-          secretName: node-key{{$i}}
-      - name: priv-validator-key{{$i}}
-        secret:
-          secretName: priv-validator-key{{$i}}
+      # - name: scripts-vol
+      #   configMap:
+      #     name: validator-keys
+      #     defaultMode: 0555
+      #   {{- if .Values.extraVolumes }}
+      #   {{- include "polybase.render" (dict "value" .Values.extraVolumes "context" $) | nindent 8 }}
+      #   {{- end }}
+      # - name: genesis
+      #   secret:
+      #     secretName: genesis
+      # {{- range $i := until (.Values.replicaCount | int) }}
+      # - name: node-key{{$i}}
+      #   secret: 
+      #     secretName: node-key{{$i}}
+      # - name: priv-validator-key{{$i}}
+      #   secret:
+      #     secretName: priv-validator-key{{$i}}
       {{- end }}
   {{- if not .Values.persistence.enabled }}
         - name: data

@@ -1,13 +1,13 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: polybase-ingress
+  name: {{ .Release.Name }}-ingress
   annotations:
     kubernetes.io/ingress.class: "gce"
-    kubernetes.io/ingress.global-static-ip-name: "polybase-ip"
-    networking.gke.io/managed-certificates: "{{ $.Values.env }}-cert"
+    kubernetes.io/ingress.global-static-ip-name: "polybase-rust-ip"
+    networking.gke.io/managed-certificates: "{{ $.Release.Name }}-cert"
     kubernetes.io/ingress.allow-http: "false"
-    networking.gke.io/v1beta1.FrontendConfig: lb-http-to-https
+    networking.gke.io/v1beta1.FrontendConfig: "polybase-rust"
 spec:
   rules:
   - http:
@@ -16,6 +16,6 @@ spec:
         pathType: ImplementationSpecific
         backend:
           service:
-            name: polybase
+            name: {{ .Release.Name }}
             port:
               number: 8080
