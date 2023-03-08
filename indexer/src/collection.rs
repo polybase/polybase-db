@@ -687,6 +687,24 @@ impl<'a> Collection<'a> {
                             RecordValue::RecordReference(r) => {
                                 record_references.push(r.clone());
                             }
+                            RecordValue::Array(arr) => {
+                                for value in arr {
+                                    match value {
+                                        RecordValue::PublicKey(record_pk)
+                                            if record_pk == &user.public_key =>
+                                        {
+                                            authorized = true;
+                                        }
+                                        RecordValue::ForeignRecordReference(fr) => {
+                                            foreign_record_references.push(fr.clone());
+                                        }
+                                        RecordValue::RecordReference(r) => {
+                                            record_references.push(r.clone());
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
                             _ => {}
                         }
 
@@ -760,41 +778,64 @@ impl<'a> Collection<'a> {
                 continue;
             };
 
-            match delegate_value {
-                RecordValue::PublicKey(pk) if pk == &user.public_key => {
-                    return Ok(true);
-                }
-                RecordValue::RecordReference(r) => {
-                    let Some(record) = self.get(r.id.clone(), Some(user)).await? else {
-                        continue;
-                    };
-
-                    if self
-                        .has_delegate_access(&record, &Some(user))
-                        .await
-                        .unwrap_or(false)
-                    {
+            #[async_recursion]
+            async fn check_delegate_value(
+                self_col: &Collection<'_>,
+                delegate_value: &RecordValue,
+                user: &AuthUser,
+            ) -> Result<bool> {
+                match delegate_value {
+                    RecordValue::PublicKey(pk) if pk == &user.public_key => {
                         return Ok(true);
                     }
-                }
-                RecordValue::ForeignRecordReference(fr) => {
-                    let collection =
-                        Collection::load(self.logger.clone(), self.store, fr.collection_id.clone())
-                            .await?;
+                    RecordValue::RecordReference(r) => {
+                        let Some(record) = self_col.get(r.id.clone(), Some(user)).await? else {
+                            return Ok(false);
+                        };
 
-                    let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
-                        continue;
-                    };
-
-                    if collection
-                        .has_delegate_access(&record, &Some(user))
-                        .await
-                        .unwrap_or(false)
-                    {
-                        return Ok(true);
+                        if self_col
+                            .has_delegate_access(&record, &Some(user))
+                            .await
+                            .unwrap_or(false)
+                        {
+                            return Ok(true);
+                        }
                     }
+                    RecordValue::ForeignRecordReference(fr) => {
+                        let collection = Collection::load(
+                            self_col.logger.clone(),
+                            self_col.store,
+                            fr.collection_id.clone(),
+                        )
+                        .await?;
+
+                        let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
+                            return Ok(false);
+                        };
+
+                        if collection
+                            .has_delegate_access(&record, &Some(user))
+                            .await
+                            .unwrap_or(false)
+                        {
+                            return Ok(true);
+                        }
+                    }
+                    RecordValue::Array(arr) => {
+                        for item in arr {
+                            if check_delegate_value(self_col, item, user).await? {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+
+                Ok(false)
+            }
+
+            if check_delegate_value(self, delegate_value, user).await? {
+                return Ok(true);
             }
         }
 
