@@ -602,9 +602,9 @@ impl Gateway {
         output.instance = reference_records(&collection, &collection_ast, output.instance)?;
         let instance = indexer::json_to_record(&collection_ast, output.instance, false).map_err(
             |e| match e {
-                indexer::RecordError::MissingField { field }
-                    if field == "id" && function_name == "constructor" =>
-                {
+                indexer::RecordError::UserError(indexer::RecordUserError::MissingField {
+                    field,
+                }) if field == "id" && function_name == "constructor" => {
                     GatewayError::UserError(GatewayUserError::ConstructorMustAssignId)
                 }
                 e => GatewayError::IndexerError(IndexerError::from(e)),
