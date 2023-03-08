@@ -16,7 +16,7 @@ pub use keys::Direction;
 pub use publickey::PublicKey;
 pub use record::{
     json_to_record, record_to_json, Converter, ForeignRecordReference, IndexValue, PathFinder,
-    RecordError, RecordRoot, RecordValue,
+    RecordError, RecordRoot, RecordUserError, RecordValue,
 };
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;

@@ -137,6 +137,12 @@ impl From<indexer::where_query::WhereQueryUserError> for HTTPError {
     }
 }
 
+impl From<indexer::RecordUserError> for HTTPError {
+    fn from(err: indexer::RecordUserError) -> Self {
+        HTTPError::new(ReasonCode::from_record_error(&err), Some(Box::new(err)))
+    }
+}
+
 impl From<indexer::IndexerError> for HTTPError {
     fn from(err: indexer::IndexerError) -> Self {
         match err {
@@ -148,6 +154,11 @@ impl From<indexer::IndexerError> for HTTPError {
             // WhereQuery
             indexer::IndexerError::WhereQuery(e) => match e {
                 indexer::where_query::WhereQueryError::UserError(e) => e.into(),
+                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            },
+            // Record
+            indexer::IndexerError::Record(e) => match e {
+                indexer::RecordError::UserError(e) => e.into(),
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
             // Other errors are internal
