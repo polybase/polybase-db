@@ -474,20 +474,23 @@ async fn raft_status(
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    let _guard = sentry::init((
-        "https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376",
-        sentry::ClientOptions {
-            release: sentry::release_name!(),
-            environment: Some(
-                std::env::var("ENV_NAME")
-                    .unwrap_or("dev".to_string())
-                    .into(),
-            ),
-            ..Default::default()
-        },
-    ));
-
     let config = Config::parse();
+
+    let _guard;
+    if let Some(dsn) = config.sentry_dsn {
+        _guard = sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                environment: Some(
+                    std::env::var("ENV_NAME")
+                        .unwrap_or("dev".to_string())
+                        .into(),
+                ),
+                ..Default::default()
+            },
+        ));
+    }
 
     // Logs
     let decorator = slog_term::TermDecorator::new().build();
