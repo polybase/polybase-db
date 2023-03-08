@@ -15,6 +15,7 @@ v8 = "0.62.2"
 thiserror = "1.0"
 slog = "2"
 slog-term = "2"
+async-recursion = "1.0.2"
 
 [dev-dependencies]
 rand = "0.8.5"

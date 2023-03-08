@@ -1,3 +1,4 @@
+use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 
@@ -363,52 +364,73 @@ async fn has_permission_to_call(
             continue;
         };
 
-        match value {
-            RecordValue::PublicKey(pk) if pk == auth.public_key() => {
-                return Ok(true);
-            }
-            RecordValue::RecordReference(r) => {
-                let record = collection
-                    .get(r.id.clone(), Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                    .ok_or_else(|| GatewayUserError::RecordNotFound {
-                        record_id: r.id.clone(),
-                        collection_id: collection.id().to_string(),
-                    })?;
-
-                if collection
-                    .has_delegate_access(&record, &Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                {
+        #[async_recursion]
+        async fn can_call(
+            indexer: &Indexer,
+            collection: &indexer::Collection<'_>,
+            value: &RecordValue,
+            auth: &indexer::AuthUser,
+        ) -> Result<bool> {
+            match value {
+                RecordValue::PublicKey(pk) if pk == auth.public_key() => {
                     return Ok(true);
                 }
-            }
-            RecordValue::ForeignRecordReference(fr) => {
-                let collection = indexer
-                    .collection(fr.collection_id.clone())
-                    .await
-                    .map_err(IndexerError::from)?;
+                RecordValue::RecordReference(r) => {
+                    let record = collection
+                        .get(r.id.clone(), Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                        .ok_or_else(|| GatewayUserError::RecordNotFound {
+                            record_id: r.id.clone(),
+                            collection_id: collection.id().to_string(),
+                        })?;
 
-                let record = collection
-                    .get(fr.id.clone(), Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                    .ok_or_else(|| GatewayUserError::RecordNotFound {
-                        record_id: fr.id.clone(),
-                        collection_id: collection.id().to_string(),
-                    })?;
-
-                if collection
-                    .has_delegate_access(&record, &Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                {
-                    return Ok(true);
+                    if collection
+                        .has_delegate_access(&record, &Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                    {
+                        return Ok(true);
+                    }
                 }
+                RecordValue::ForeignRecordReference(fr) => {
+                    let collection = indexer
+                        .collection(fr.collection_id.clone())
+                        .await
+                        .map_err(IndexerError::from)?;
+
+                    let record = collection
+                        .get(fr.id.clone(), Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                        .ok_or_else(|| GatewayUserError::RecordNotFound {
+                            record_id: fr.id.clone(),
+                            collection_id: collection.id().to_string(),
+                        })?;
+
+                    if collection
+                        .has_delegate_access(&record, &Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                    {
+                        return Ok(true);
+                    }
+                }
+                RecordValue::Array(arr) => {
+                    for v in arr {
+                        if can_call(indexer, collection, v, auth).await? {
+                            return Ok(true);
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
+
+            Ok(false)
+        }
+
+        if can_call(indexer, collection, value, auth).await? {
+            return Ok(true);
         }
     }
 
