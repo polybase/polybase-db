@@ -733,7 +733,7 @@ impl Gateway {
 
         if function_name == "constructor" {
             if collection
-                .get(output_instance_id.to_string(), None)
+                .get_without_auth_check(output_instance_id.to_string())
                 .await
                 .map_err(IndexerError::from)?
                 .is_some()
