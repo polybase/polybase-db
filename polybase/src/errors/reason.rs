@@ -226,6 +226,12 @@ impl ReasonCode {
             indexer::collection::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
+            indexer::collection::CollectionUserError::CollectionDirectiveCannotHaveArguments {
+                ..
+            } => ReasonCode::CollectionInvalidSchema,
+            indexer::collection::CollectionUserError::UnknownCollectionDirectives { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
         }
     }
 
