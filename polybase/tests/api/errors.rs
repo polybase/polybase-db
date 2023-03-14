@@ -269,6 +269,62 @@ collection test {
     ",
 );
 
+create_collection_test!(
+    Error {
+        error: ErrorData {
+            code: "invalid-argument".to_string(),
+            reason: "collection/invalid-schema".to_string(),
+            message: r#"collection directive "read" cannot have arguments"#.to_string(),
+        }
+    },
+    collection_with_read_directive_with_arguments,
+    "ns/test",
+    "
+@read(creator)
+collection test {
+    id: string;
+}
+    ",
+);
+
+create_collection_test!(
+    Error {
+        error: ErrorData {
+            code: "invalid-argument".to_string(),
+            reason: "collection/invalid-schema".to_string(),
+            message: r#"collection directive "call" cannot have arguments"#.to_string(),
+        }
+    },
+    collection_with_call_directive_with_arguments,
+    "ns/test",
+    "
+@call(creator)
+collection test {
+    id: string;
+}
+    ",
+);
+
+create_collection_test!(
+    Error {
+        error: ErrorData {
+            code: "failed-precondition".to_string(),
+            reason: "function/javascript-exception".to_string(),
+            message: r#"JavaScript exception error: Error found at line 2, column 1: Unknown decorator: unknown
+@unknown
+ ^"#.to_string(),
+        }
+    },
+    collection_with_unknown_directive_with_arguments,
+    "ns/test",
+    "
+@unknown
+collection test {
+    id: string;
+}
+    ",
+);
+
 #[tokio::test]
 async fn function_not_found() {
     let server = Server::setup_and_wait().await;

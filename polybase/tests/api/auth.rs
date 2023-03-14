@@ -644,3 +644,289 @@ collection User {
         account_id1_0_user_id1
     );
 }
+
+#[tokio::test]
+async fn collection_read_any_auth() {
+    let server = Server::setup_and_wait().await;
+
+    let schema = r#"
+// Anyone can read this collection, but not call it's methods
+@read
+collection Account {
+    id: string;
+
+    constructor (id: string) {
+        this.id = id;
+    }
+
+    reset () {
+        this.balance = 0;
+    }
+}
+    "#;
+
+    #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Account {
+        id: String,
+    }
+
+    let account_collection = server
+        .create_collection::<Account>("test/Account", schema, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        account_collection
+            .create(json!(["id1"]), None)
+            .await
+            .unwrap(),
+        Account {
+            id: "id1".to_string(),
+        }
+    );
+
+    assert_eq!(
+        account_collection.get("id1", None).await.unwrap(),
+        Account {
+            id: "id1".to_string(),
+        }
+    );
+
+    assert_eq!(
+        account_collection
+            .call("id1", "reset", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "you do not have permission to call this function".to_string(),
+            }
+        }
+    );
+}
+
+#[tokio::test]
+async fn collection_call_any_auth() {
+    let server = Server::setup_and_wait().await;
+
+    let schema = r#"
+// Anyone can call this collection's methods, but not read it
+// In practice, this allows anyone with @read access to call any method in the collection,
+// unless the method has a @call directive
+@call
+collection Account {
+    id: string;
+    balance: number;
+    @read
+    owner: PublicKey;
+    @read
+    manager: PublicKey;
+
+    constructor (id: string, balance: number, manager: PublicKey) {
+        this.id = id;
+        this.balance = balance;
+        this.owner = ctx.publicKey;
+        this.manager = manager;
+    }
+
+    // Only manager can call this method
+    @call(manager)
+    reset() {
+        this.balance = 0;
+    }
+
+    // Both manager and owner can call this method,
+    // because they have @read access to the record,
+    // and the method has no @call directive
+    setBalanceToOne() {
+        this.balance = 1;
+    }
+}
+    "#;
+
+    #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Account {
+        id: String,
+        balance: f64,
+        owner: indexer::PublicKey,
+        manager: indexer::PublicKey,
+    }
+
+    let account_collection = server
+        .create_collection::<Account>("test/Account", schema, None)
+        .await
+        .unwrap();
+
+    let (owner_private_key, owner_public_key) =
+        secp256k1::generate_keypair(&mut rand::thread_rng());
+    let owner_public_key = indexer::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
+    let owner_signer = Signer::from(move |body: &str| {
+        Signature::create(&owner_private_key, SystemTime::now(), body)
+    });
+
+    let (manager_private_key, manager_public_key) =
+        secp256k1::generate_keypair(&mut rand::thread_rng());
+    let manager_public_key = indexer::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
+    let manager_signer = Signer::from(move |body: &str| {
+        Signature::create(&manager_private_key, SystemTime::now(), body)
+    });
+
+    let account_id1_10 = account_collection
+        .create(
+            json!(["id1", 10, manager_public_key.clone()]),
+            Some(&owner_signer),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        account_id1_10,
+        Account {
+            id: "id1".to_string(),
+            balance: 10.0,
+            owner: owner_public_key.clone(),
+            manager: manager_public_key.clone(),
+        }
+    );
+
+    assert_eq!(
+        account_collection
+            .get("id1", Some(&owner_signer))
+            .await
+            .unwrap(),
+        account_id1_10
+    );
+
+    // reset call fails without read permission to the record (no auth)
+    assert_eq!(
+        account_collection
+            .call("id1", "reset", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
+    );
+
+    // reset call fails with a non-manager (owner) key
+    assert_eq!(
+        account_collection
+            .call("id1", "reset", json!([]), Some(&owner_signer))
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "you do not have permission to call this function".to_string(),
+            }
+        }
+    );
+
+    // Make sure record is unchanged
+    assert_eq!(
+        account_collection
+            .get("id1", Some(&owner_signer))
+            .await
+            .unwrap(),
+        account_id1_10
+    );
+
+    // reset call succeeds with a manager key
+    let account_id1_0 = Account {
+        id: "id1".to_string(),
+        balance: 0.0,
+        owner: owner_public_key.clone(),
+        manager: manager_public_key.clone(),
+    };
+    assert_eq!(
+        account_collection
+            .call("id1", "reset", json!([]), Some(&manager_signer))
+            .await
+            .unwrap()
+            .unwrap(),
+        account_id1_0
+    );
+
+    assert_eq!(
+        account_collection
+            .get("id1", Some(&owner_signer))
+            .await
+            .unwrap(),
+        account_id1_0
+    );
+
+    // setBalanceToOne call fails without read permission to the record (no auth)
+    assert_eq!(
+        account_collection
+            .call("id1", "setBalanceToOne", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        account_collection
+            .get("id1", Some(&owner_signer))
+            .await
+            .unwrap(),
+        account_id1_0
+    );
+
+    // setBalanceToOne call succeeds with a manager key
+    let account_id1_1 = Account {
+        id: "id1".to_string(),
+        balance: 1.0,
+        owner: owner_public_key.clone(),
+        manager: manager_public_key.clone(),
+    };
+
+    assert_eq!(
+        account_collection
+            .call("id1", "setBalanceToOne", json!([]), Some(&manager_signer))
+            .await
+            .unwrap()
+            .unwrap(),
+        account_id1_1
+    );
+
+    assert_eq!(
+        account_collection
+            .get("id1", Some(&owner_signer))
+            .await
+            .unwrap(),
+        account_id1_1
+    );
+
+    // setBalanceToOne call succeeds with an owner key
+    assert_eq!(
+        account_collection
+            .call("id1", "setBalanceToOne", json!([]), Some(&owner_signer))
+            .await
+            .unwrap()
+            .unwrap(),
+        account_id1_1
+    );
+
+    assert_eq!(
+        account_collection
+            .get("id1", Some(&owner_signer))
+            .await
+            .unwrap(),
+        account_id1_1
+    );
+}
