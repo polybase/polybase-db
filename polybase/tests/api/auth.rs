@@ -1,5 +1,6 @@
 use std::time::SystemTime;
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::api::{Error, ErrorData, ForeignRecordReference, ListQuery, Signature, Signer};
@@ -928,5 +929,173 @@ collection Account {
             .await
             .unwrap(),
         account_id1_1
+    );
+}
+
+#[tokio::test]
+async fn array_of_records_auth() {
+    let server = Server::setup_and_wait().await;
+
+    let schema = r#"
+collection Account {
+    id: string;
+    @read
+    managers: Manager[];
+
+    constructor (id: string, managers: Manager[]) {
+        this.id = id;
+        this.managers = managers;
+    }
+}
+
+@read
+collection Manager {
+    id: string;
+    @delegate
+    publicKey: PublicKey;
+
+    constructor (id: string) {
+        this.id = id;
+        this.publicKey = ctx.publicKey;
+    }
+}    
+    "#;
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Account {
+        id: String,
+        managers: Vec<ForeignRecordReference>,
+    }
+
+    #[derive(Debug, PartialEq, Serialize, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Manager {
+        id: String,
+        public_key: indexer::PublicKey,
+    }
+
+    let account_collection = server
+        .create_collection::<Account>("test/Account", schema, None)
+        .await
+        .unwrap();
+
+    let manager_collection = server
+        .create_collection::<Manager>("test/Manager", schema, None)
+        .await
+        .unwrap();
+
+    let (manager_1_private_key, manager_1_public_key) =
+        secp256k1::generate_keypair(&mut rand::thread_rng());
+    let (manager_2_private_key, manager_2_public_key) =
+        secp256k1::generate_keypair(&mut rand::thread_rng());
+    let (manager_3_private_key, manager_3_public_key) =
+        secp256k1::generate_keypair(&mut rand::thread_rng());
+
+    let manager_1_signer = Signer::from(move |body: &str| {
+        Signature::create(&manager_1_private_key, SystemTime::now(), body)
+    });
+    let manager_2_signer = Signer::from(move |body: &str| {
+        Signature::create(&manager_2_private_key, SystemTime::now(), body)
+    });
+    let manager_3_signer = Signer::from(move |body: &str| {
+        Signature::create(&manager_3_private_key, SystemTime::now(), body)
+    });
+
+    manager_collection
+        .create(json!(["manager1"]), Some(&manager_1_signer))
+        .await
+        .unwrap();
+
+    manager_collection
+        .create(json!(["manager2"]), Some(&manager_2_signer))
+        .await
+        .unwrap();
+
+    manager_collection
+        .create(json!(["manager3"]), Some(&manager_3_signer))
+        .await
+        .unwrap();
+
+    let account_1 = account_collection
+        .create(
+            json!([
+                "account1",
+                [
+                    ForeignRecordReference {
+                        collection_id: manager_collection.id.clone(),
+                        id: "manager1".to_string(),
+                    },
+                    ForeignRecordReference {
+                        collection_id: manager_collection.id.clone(),
+                        id: "manager2".to_string(),
+                    },
+                ]
+            ]),
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        account_1,
+        Account {
+            id: "account1".to_string(),
+            managers: vec![
+                ForeignRecordReference {
+                    collection_id: manager_collection.id.clone(),
+                    id: "manager1".to_string(),
+                },
+                ForeignRecordReference {
+                    collection_id: manager_collection.id.clone(),
+                    id: "manager2".to_string(),
+                },
+            ]
+        }
+    );
+
+    // get succeeds with manager key 1
+    assert_eq!(
+        account_collection
+            .get("account1", Some(&manager_1_signer))
+            .await
+            .unwrap(),
+        account_1
+    );
+
+    // get succeeds with manager key 2
+    assert_eq!(
+        account_collection
+            .get("account1", Some(&manager_2_signer))
+            .await
+            .unwrap(),
+        account_1
+    );
+
+    // get fails with manager key 3
+    assert_eq!(
+        account_collection
+            .get("account1", Some(&manager_3_signer))
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
+    );
+
+    // get fails with no key
+    assert_eq!(
+        account_collection.get("account1", None).await.unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
     );
 }
