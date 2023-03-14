@@ -330,30 +330,37 @@ async fn has_permission_to_call(
     auth: Option<&indexer::AuthUser>,
 ) -> Result<bool> {
     let is_col_public = collection_ast.attributes.iter().any(|attr| matches!(attr, polylang::stableast::CollectionAttribute::Directive(d) if d.name == "public"));
-    if is_col_public {
-        return Ok(true);
-    }
+    // a @public collection is the same as a @read + @call collection
+    let is_col_call_any = is_col_public || collection_ast.attributes.iter().any(|attr| matches!(attr, polylang::stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
     if method_ast.name == "constructor" {
         return Ok(true);
     }
 
-    let Some(callers) = method_ast.attributes.iter().find_map(|attr| match attr {
-        polylang::stableast::MethodAttribute::Directive(d) if d.name == "call" => Some(
-            d.arguments
-                .iter()
-                .filter_map(|a| match a {
-                    polylang::stableast::DirectiveArgument::FieldReference(fr) => {
-                        Some(fr.path.clone())
-                    }
-                    polylang::stableast::DirectiveArgument::Unknown => None,
-                })
-                .collect::<Vec<_>>(),
-        ),
-        _ => None,
-    }) else {
-        return Ok(false);
-    };
+    let Some(method_call_directive) = method_ast
+        .attributes
+        .iter()
+        .find_map(|attr| match attr {
+            polylang::stableast::MethodAttribute::Directive(d) if d.name == "call" => Some(d),
+            _ => None,
+        }) else {
+            // Method doesn't have a @call directive
+            return Ok(is_col_call_any);
+        };
+
+    // An empty @call directive with no arguments means that the method can be called by anyone.
+    if method_call_directive.arguments.is_empty() {
+        return Ok(true);
+    }
+
+    let callers = method_call_directive
+        .arguments
+        .iter()
+        .filter_map(|a| match a {
+            polylang::stableast::DirectiveArgument::FieldReference(fr) => Some(fr.path.clone()),
+            polylang::stableast::DirectiveArgument::Unknown => None,
+        })
+        .collect::<Vec<_>>();
 
     let Some(auth) = auth else {
         return Ok(false);
@@ -733,7 +740,7 @@ impl Gateway {
 
         if function_name == "constructor" {
             if collection
-                .get(output_instance_id.to_string(), None)
+                .get_without_auth_check(output_instance_id.to_string())
                 .await
                 .map_err(IndexerError::from)?
                 .is_some()
