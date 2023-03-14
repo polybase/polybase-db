@@ -985,11 +985,11 @@ collection Manager {
         .await
         .unwrap();
 
-    let (manager_1_private_key, manager_1_public_key) =
+    let (manager_1_private_key, _manager_1_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
-    let (manager_2_private_key, manager_2_public_key) =
+    let (manager_2_private_key, _manager_2_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
-    let (manager_3_private_key, manager_3_public_key) =
+    let (manager_3_private_key, _manager_3_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
 
     let manager_1_signer = Signer::from(move |body: &str| {
