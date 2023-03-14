@@ -421,3 +421,43 @@ collection test {
         }
     );
 }
+
+#[tokio::test]
+async fn record_already_exists() {
+    let server = Server::setup_and_wait().await;
+
+    let collection = server
+        .create_collection_untyped(
+            "ns/test",
+            "
+collection test {
+    id: string;
+
+    constructor (id: string) {
+        this.id = id;
+    }
+}
+            ",
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        collection.create(json!(["id4"]), None).await.unwrap(),
+        json!({
+            "id": "id4"
+        }),
+    );
+
+    assert_eq!(
+        collection.create(json!(["id4"]), None).await.unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "already-exists".to_string(),
+                reason: "collection/id-exists".to_string(),
+                message: "record id already exists in collection".to_string(),
+            }
+        }
+    );
+}

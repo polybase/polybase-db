@@ -13,8 +13,6 @@ mod other_collection_fns;
 mod start_stop;
 mod store_other_collection_records;
 
-// TODO: https://discord.com/channels/989985926434394192/1083768541263695982/1083790365301153802
-
 use std::{
     collections::HashSet,
     path::PathBuf,
