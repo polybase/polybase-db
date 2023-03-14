@@ -2291,8 +2291,10 @@ dependencies = [
  "gateway",
  "hex",
  "indexer",
+ "once_cell",
  "rand",
  "rbmerkle",
+ "reqwest",
  "rmqtt-raft",
  "secp256k1",
  "sentry",
@@ -2305,16 +2307,18 @@ dependencies = [
  "slog-scope",
  "slog-stdlog",
  "slog-term",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-test",
+ "url",
+ "urlencoding",
  "winter-crypto",
 ]
 
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=main#9bdb1eeb7d02015fb9414ed9250faed106e856d9"
 dependencies = [
  "base64 0.21.0",
  "console_error_panic_hook",
@@ -2328,7 +2332,6 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=main#9bdb1eeb7d02015fb9414ed9250faed106e856d9"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
@@ -3672,6 +3675,12 @@ dependencies = [
  "percent-encoding",
  "serde",
 ]
+
+[[package]]
+name = "urlencoding"
+version = "2.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8db7427f936968176eaa7cdf81b7f98b980b18495ec28f1b5791ac3bfe3eea9"
 
 [[package]]
 name = "uuid"
