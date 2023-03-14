@@ -6,10 +6,13 @@ use serde::Serialize;
 use std::{error::Error, fmt::Display};
 
 use super::reason::ReasonCode;
-use crate::raft::{self};
 use crate::{
     auth,
     db::{self},
+};
+use crate::{
+    raft::{self},
+    rollup,
 };
 
 #[derive(Debug)]
@@ -134,6 +137,12 @@ impl From<indexer::where_query::WhereQueryUserError> for HTTPError {
     }
 }
 
+impl From<indexer::RecordUserError> for HTTPError {
+    fn from(err: indexer::RecordUserError) -> Self {
+        HTTPError::new(ReasonCode::from_record_error(&err), Some(Box::new(err)))
+    }
+}
+
 impl From<indexer::IndexerError> for HTTPError {
     fn from(err: indexer::IndexerError) -> Self {
         match err {
@@ -145,6 +154,11 @@ impl From<indexer::IndexerError> for HTTPError {
             // WhereQuery
             indexer::IndexerError::WhereQuery(e) => match e {
                 indexer::where_query::WhereQueryError::UserError(e) => e.into(),
+                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            },
+            // Record
+            indexer::IndexerError::Record(e) => match e {
+                indexer::RecordError::UserError(e) => e.into(),
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
             // Other errors are internal
@@ -165,5 +179,11 @@ impl From<auth::AuthError> for HTTPError {
 impl From<auth::AuthUserError> for HTTPError {
     fn from(err: auth::AuthUserError) -> Self {
         HTTPError::new(ReasonCode::from_auth_error(&err), Some(Box::new(err)))
+    }
+}
+
+impl From<rollup::RollupError> for HTTPError {
+    fn from(err: rollup::RollupError) -> Self {
+        HTTPError::new(ReasonCode::Internal, Some(Box::new(err)))
     }
 }

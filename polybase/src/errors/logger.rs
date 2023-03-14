@@ -78,7 +78,10 @@ where
                                 error = source;
                             }
                             if err.reason == ReasonCode::Internal {
-                                sentry::capture_error(&error.source().unwrap_or(&err));
+                                let mut e = sentry::event_from_error(err);
+                                // Reverse the errors (Sentry seems to have a bug)
+                                e.exception.values.reverse();
+                                sentry::capture_event(e);
                                 crit!(logger, "Error: {output}");
                             } else {
                                 error!(logger, "Error: {output}");

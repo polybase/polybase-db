@@ -1,5 +1,6 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
+use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 
@@ -26,6 +27,9 @@ pub enum GatewayError {
 
     #[error("failed to create a v8 string")]
     FailedToCreateV8String,
+
+    #[error("failed to compile script")]
+    FailedToCompileScript,
 
     #[error("indexer error")]
     IndexerError(#[from] indexer::IndexerError),
@@ -328,30 +332,37 @@ async fn has_permission_to_call(
     auth: Option<&indexer::AuthUser>,
 ) -> Result<bool> {
     let is_col_public = collection_ast.attributes.iter().any(|attr| matches!(attr, polylang::stableast::CollectionAttribute::Directive(d) if d.name == "public"));
-    if is_col_public {
-        return Ok(true);
-    }
+    // a @public collection is the same as a @read + @call collection
+    let is_col_call_any = is_col_public || collection_ast.attributes.iter().any(|attr| matches!(attr, polylang::stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
     if method_ast.name == "constructor" {
         return Ok(true);
     }
 
-    let Some(callers) = method_ast.attributes.iter().find_map(|attr| match attr {
-        polylang::stableast::MethodAttribute::Directive(d) if d.name == "call" => Some(
-            d.arguments
-                .iter()
-                .filter_map(|a| match a {
-                    polylang::stableast::DirectiveArgument::FieldReference(fr) => {
-                        Some(fr.path.clone())
-                    }
-                    polylang::stableast::DirectiveArgument::Unknown => None,
-                })
-                .collect::<Vec<_>>(),
-        ),
-        _ => None,
-    }) else {
-        return Ok(false);
-    };
+    let Some(method_call_directive) = method_ast
+        .attributes
+        .iter()
+        .find_map(|attr| match attr {
+            polylang::stableast::MethodAttribute::Directive(d) if d.name == "call" => Some(d),
+            _ => None,
+        }) else {
+            // Method doesn't have a @call directive
+            return Ok(is_col_call_any);
+        };
+
+    // An empty @call directive with no arguments means that the method can be called by anyone.
+    if method_call_directive.arguments.is_empty() {
+        return Ok(true);
+    }
+
+    let callers = method_call_directive
+        .arguments
+        .iter()
+        .filter_map(|a| match a {
+            polylang::stableast::DirectiveArgument::FieldReference(fr) => Some(fr.path.clone()),
+            polylang::stableast::DirectiveArgument::Unknown => None,
+        })
+        .collect::<Vec<_>>();
 
     let Some(auth) = auth else {
         return Ok(false);
@@ -362,52 +373,73 @@ async fn has_permission_to_call(
             continue;
         };
 
-        match value {
-            RecordValue::PublicKey(pk) if pk == auth.public_key() => {
-                return Ok(true);
-            }
-            RecordValue::RecordReference(r) => {
-                let record = collection
-                    .get(r.id.clone(), Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                    .ok_or_else(|| GatewayUserError::RecordNotFound {
-                        record_id: r.id.clone(),
-                        collection_id: collection.id().to_string(),
-                    })?;
-
-                if collection
-                    .has_delegate_access(&record, &Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                {
+        #[async_recursion]
+        async fn can_call(
+            indexer: &Indexer,
+            collection: &indexer::Collection<'_>,
+            value: &RecordValue,
+            auth: &indexer::AuthUser,
+        ) -> Result<bool> {
+            match value {
+                RecordValue::PublicKey(pk) if pk == auth.public_key() => {
                     return Ok(true);
                 }
-            }
-            RecordValue::ForeignRecordReference(fr) => {
-                let collection = indexer
-                    .collection(fr.collection_id.clone())
-                    .await
-                    .map_err(IndexerError::from)?;
+                RecordValue::RecordReference(r) => {
+                    let record = collection
+                        .get(r.id.clone(), Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                        .ok_or_else(|| GatewayUserError::RecordNotFound {
+                            record_id: r.id.clone(),
+                            collection_id: collection.id().to_string(),
+                        })?;
 
-                let record = collection
-                    .get(fr.id.clone(), Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                    .ok_or_else(|| GatewayUserError::RecordNotFound {
-                        record_id: fr.id.clone(),
-                        collection_id: collection.id().to_string(),
-                    })?;
-
-                if collection
-                    .has_delegate_access(&record, &Some(auth))
-                    .await
-                    .map_err(IndexerError::from)?
-                {
-                    return Ok(true);
+                    if collection
+                        .has_delegate_access(&record, &Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                    {
+                        return Ok(true);
+                    }
                 }
+                RecordValue::ForeignRecordReference(fr) => {
+                    let collection = indexer
+                        .collection(fr.collection_id.clone())
+                        .await
+                        .map_err(IndexerError::from)?;
+
+                    let record = collection
+                        .get(fr.id.clone(), Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                        .ok_or_else(|| GatewayUserError::RecordNotFound {
+                            record_id: fr.id.clone(),
+                            collection_id: collection.id().to_string(),
+                        })?;
+
+                    if collection
+                        .has_delegate_access(&record, &Some(auth))
+                        .await
+                        .map_err(IndexerError::from)?
+                    {
+                        return Ok(true);
+                    }
+                }
+                RecordValue::Array(arr) => {
+                    for v in arr {
+                        if can_call(indexer, collection, v, auth).await? {
+                            return Ok(true);
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
+
+            Ok(false)
+        }
+
+        if can_call(indexer, collection, value, auth).await? {
+            return Ok(true);
         }
     }
 
@@ -601,9 +633,9 @@ impl Gateway {
         output.instance = reference_records(&collection, &collection_ast, output.instance)?;
         let instance = indexer::json_to_record(&collection_ast, output.instance, false).map_err(
             |e| match e {
-                indexer::RecordError::MissingField { field }
-                    if field == "id" && function_name == "constructor" =>
-                {
+                indexer::RecordError::UserError(indexer::RecordUserError::MissingField {
+                    field,
+                }) if field == "id" && function_name == "constructor" => {
                     GatewayError::UserError(GatewayUserError::ConstructorMustAssignId)
                 }
                 e => GatewayError::IndexerError(IndexerError::from(e)),
@@ -710,7 +742,7 @@ impl Gateway {
 
         if function_name == "constructor" {
             if collection
-                .get(output_instance_id.to_string(), None)
+                .get_without_auth_check(output_instance_id.to_string())
                 .await
                 .map_err(IndexerError::from)?
                 .is_some()
@@ -811,7 +843,15 @@ impl Gateway {
                                 return;
                             }
                         };
-                        let json = serde_json::to_string(&stable_ast).unwrap();
+                        let json = match serde_json::to_string(&stable_ast) {
+                            Ok(json) => json,
+                            Err(e) => {
+                                let error_msg = v8::String::new(scope, &format!("{e:?}")).unwrap();
+                                let exception = v8::Exception::error(scope, error_msg);
+                                scope.throw_exception(exception);
+                                return;
+                            }
+                        };
 
                         retval.set(v8::String::new(scope, &json).unwrap().into());
                     },
@@ -836,13 +876,21 @@ impl Gateway {
                         .to_rust_string_lossy(scope);
 
                     let public_key =
-                        serde_json::from_str::<indexer::PublicKey>(&public_key_json).unwrap();
+                        match serde_json::from_str::<indexer::PublicKey>(&public_key_json) {
+                            Ok(pk) => pk,
+                            Err(e) => {
+                                let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
+                                let exception = v8::Exception::error(scope, error);
+                                scope.throw_exception(exception);
+                                return;
+                            }
+                        };
 
                     let hex = match public_key.to_hex() {
                         Ok(hex) => hex,
                         Err(e) => {
                             let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
-                            let exception = v8::Exception::type_error(scope, error);
+                            let exception = v8::Exception::error(scope, error);
                             scope.throw_exception(exception);
                             return;
                         }
@@ -856,7 +904,7 @@ impl Gateway {
 
         global.set(
             v8::String::new(&mut scope, "instanceJSON").unwrap().into(),
-            v8::String::new(&mut scope, &serde_json::to_string(instance).unwrap())
+            v8::String::new(&mut scope, &serde_json::to_string(instance)?)
                 .unwrap()
                 .into(),
         );
@@ -990,7 +1038,8 @@ impl Gateway {
         };
 
         let mut try_catch = v8::TryCatch::new(&mut scope);
-        let script = v8::Script::compile(&mut try_catch, code, None).unwrap();
+        let script = v8::Script::compile(&mut try_catch, code, None)
+            .ok_or(GatewayError::FailedToCompileScript)?;
         let result = script.run(&mut try_catch);
 
         match (result, try_catch.exception()) {

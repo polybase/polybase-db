@@ -111,9 +111,9 @@ spec:
           {{- end }}
           env:
           - name: ENV
-            value: "polybase-test"
+            value: "production"
           - name: ENV_NAME
-            value: "test"
+            value: {{ .Values.env | quote }}
           - name: RELEASE
             value: "latest"
           - name: GENESIS
@@ -126,8 +126,8 @@ spec:
             value: "DEBUG"
           - name: LOG_FORMAT
             value: "JSON"
-          - name: P2P_SRV
-            value: "false"
+          - name: SENTRY_DSN
+            value: https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376
             {{- if .Values.extraEnvVars }}
             {{- include "polybase.render" (dict "value" .Values.extraEnvVars "context" $) | nindent 12 }}
             {{- end }}

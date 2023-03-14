@@ -9,6 +9,9 @@ pub type Result<T> = std::result::Result<T, RecordError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordError {
+    #[error(transparent)]
+    UserError(#[from] RecordUserError),
+
     #[error("invalid boolean byte {b}")]
     InvalidBooleanByte { b: u8 },
 
@@ -20,9 +23,6 @@ pub enum RecordError {
         value: serde_json::Value,
         field: Option<String>,
     },
-
-    #[error("missing field {field:?}")]
-    MissingField { field: String },
 
     #[error("unexpected fields {fields:?}")]
     UnexpectedFields { fields: Vec<String> },
@@ -64,6 +64,12 @@ pub enum RecordError {
     SerdeJSONError(#[from] serde_json::Error),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum RecordUserError {
+    #[error("record is missing field {field:?}")]
+    MissingField { field: String },
+}
+
 pub type RecordRoot = HashMap<String, RecordValue>;
 
 pub fn json_to_record(
@@ -90,7 +96,7 @@ pub fn json_to_record(
                     continue;
                 }
 
-                return Err(RecordError::MissingField { field: field.to_string() });
+                return Err(RecordUserError::MissingField { field: field.to_string() }.into());
             } else {
                 continue;
             }
@@ -343,7 +349,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                                     continue;
                                 }
 
-                                return Err(RecordError::MissingField { field: field.name.to_string() });
+                                return Err(RecordUserError::MissingField { field: field.name.to_string() }.into());
                             } else {
                                 continue;
                             }
@@ -642,9 +648,10 @@ impl TryFrom<serde_json::Value> for RecordReference {
                         })
                     }
                     None => {
-                        return Err(RecordError::MissingField {
+                        return Err(RecordUserError::MissingField {
                             field: "id".to_string(),
-                        })
+                        }
+                        .into())
                     }
                 };
 
@@ -690,9 +697,10 @@ impl TryFrom<serde_json::Value> for ForeignRecordReference {
                         })
                     }
                     _ => {
-                        return Err(RecordError::MissingField {
+                        return Err(RecordUserError::MissingField {
                             field: "id".to_string(),
-                        })
+                        }
+                        .into())
                     }
                 };
 
@@ -705,9 +713,10 @@ impl TryFrom<serde_json::Value> for ForeignRecordReference {
                         })
                     }
                     None => {
-                        return Err(RecordError::MissingField {
+                        return Err(RecordUserError::MissingField {
                             field: "collectionId".to_string(),
-                        })
+                        }
+                        .into())
                     }
                 };
 

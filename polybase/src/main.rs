@@ -96,6 +96,7 @@ struct GetRecordQuery {
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
     wait_for: Seconds,
+    format: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -114,7 +115,7 @@ async fn get_record(
     let (collection, id) = path.into_inner();
     let auth = body.auth;
 
-    let collection = state.indexer.collection(collection).await.unwrap();
+    let collection = state.indexer.collection(collection).await?;
 
     if let Some(since) = query.since {
         enum UpdateCheckResult {
@@ -130,7 +131,7 @@ async fn get_record(
 
             let mut record_exists = false;
             while wait_until > SystemTime::now() {
-                if let Some(metadata) = collection.get_record_metadata(&id).await.unwrap() {
+                if let Some(metadata) = collection.get_record_metadata(&id).await? {
                     record_exists = true;
                     if metadata.updated_at > since {
                         return Ok(UpdateCheckResult::Updated);
@@ -160,10 +161,18 @@ async fn get_record(
     let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await?;
 
     match record {
-        Some(record) => Ok(HttpResponse::Ok().json(GetRecordResponse {
-            data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
-            block: Default::default(),
-        })),
+        Some(record) => {
+            let data = indexer::record_to_json(record).map_err(indexer::IndexerError::from)?;
+            if let Some(f) = &query.format {
+                if f == "nft" {
+                    return Ok(HttpResponse::Ok().json(data));
+                }
+            }
+            Ok(HttpResponse::Ok().json(GetRecordResponse {
+                data,
+                block: Default::default(),
+            }))
+        }
         None => Err(HTTPError::new(ReasonCode::RecordNotFound, None)),
     }
 }
@@ -276,7 +285,7 @@ async fn get_records(
 ) -> Result<impl Responder, HTTPError> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let collection = state.indexer.collection(collection).await.unwrap();
+    let collection = state.indexer.collection(collection).await?;
 
     let sort_indexes = query
         .sort
@@ -360,11 +369,14 @@ async fn get_records(
             },
             data: records
                 .into_iter()
-                .map(|(_, r)| GetRecordResponse {
-                    data: indexer::record_to_json(r).unwrap(),
-                    block: Default::default(),
+                .map(|(_, r)| {
+                    Ok(GetRecordResponse {
+                        data: indexer::record_to_json(r)?,
+                        block: Default::default(),
+                    })
                 })
-                .collect(),
+                .collect::<Result<_, indexer::RecordError>>()
+                .map_err(indexer::IndexerError::from)?,
         })
     }
     .await;
@@ -405,7 +417,12 @@ async fn post_record(
         )
         .await?;
 
-    let record = state.db.get(collection_id, record_id).await?.unwrap();
+    let Some(record) = state.db.get(collection_id, record_id).await? else {
+        return Err(HTTPError::new(
+            ReasonCode::RecordNotFound,
+            None,
+        ));
+    };
 
     Ok(web::Json(FunctionResponse {
         data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
@@ -460,7 +477,7 @@ struct StatusResponse {
 async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
     Ok(web::Json(StatusResponse {
         status: "OK".to_string(),
-        root: hex::encode(state.db.rollup.root().unwrap()),
+        root: hex::encode(state.db.rollup.root()?),
         peers: 23,
         leader: 12,
     }))
@@ -476,20 +493,23 @@ async fn raft_status(
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    let _guard = sentry::init((
-        "https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376",
-        sentry::ClientOptions {
-            release: sentry::release_name!(),
-            environment: Some(
-                std::env::var("ENV_NAME")
-                    .unwrap_or("dev".to_string())
-                    .into(),
-            ),
-            ..Default::default()
-        },
-    ));
-
     let config = Config::parse();
+
+    let _guard;
+    if let Some(dsn) = config.sentry_dsn {
+        _guard = sentry::init((
+            dsn,
+            sentry::ClientOptions {
+                release: sentry::release_name!(),
+                environment: Some(
+                    std::env::var("ENV_NAME")
+                        .unwrap_or("dev".to_string())
+                        .into(),
+                ),
+                ..Default::default()
+            },
+        ));
+    }
 
     // Logs
     let decorator = slog_term::TermDecorator::new().build();

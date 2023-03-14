@@ -129,6 +129,12 @@ pub enum CollectionUserError {
 
     #[error("cannot index field {field:?} of type bytes")]
     IndexFieldCannotBeBytes { field: String },
+
+    #[error("collection directive {directive:?} cannot have arguments")]
+    CollectionDirectiveCannotHaveArguments { directive: &'static str },
+
+    #[error("unknown collection directives {directives:?}")]
+    UnknownCollectionDirectives { directives: Vec<String> },
 }
 
 static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
@@ -186,15 +192,28 @@ collection Collection {
 });
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Authorization {
-    Public,
-    Private(PrivateAuthorization),
+pub(crate) struct Authorization {
+    /// Anyone can read the collection.
+    pub(crate) read_all: bool,
+    /// Anyone can call the collection functions.
+    pub(crate) call_all: bool,
+    /// PublicKeys/Delegates in this list can read the collection.
+    pub(crate) read_fields: Vec<where_query::FieldPath>,
+    /// PublicKeys/Delegates in this list have delegate permissions,
+    /// i.e. if someone @read's a field with a record from this collection,
+    /// anyone in the delegate list can read that record.
+    pub(crate) delegate_fields: Vec<where_query::FieldPath>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PrivateAuthorization {
-    pub(crate) read_fields: Vec<where_query::FieldPath>,
-    pub(crate) delegate_fields: Vec<where_query::FieldPath>,
+impl Authorization {
+    fn public() -> Self {
+        Self {
+            read_all: true,
+            call_all: true,
+            read_fields: vec![],
+            delegate_fields: vec![],
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -430,6 +449,54 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
         }
     }
 
+    let directives = collection
+        .attributes
+        .iter()
+        .filter_map(|a| match a {
+            stableast::CollectionAttribute::Directive(d) => Some(d),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if let Some(public_directive) = directives.iter().find(|d| d.name == "public") {
+        if !public_directive.arguments.is_empty() {
+            return Err(
+                CollectionUserError::CollectionDirectiveCannotHaveArguments {
+                    directive: "public",
+                }
+                .into(),
+            );
+        }
+    }
+    if let Some(read_directive) = directives.iter().find(|d| d.name == "read") {
+        if !read_directive.arguments.is_empty() {
+            return Err(
+                CollectionUserError::CollectionDirectiveCannotHaveArguments { directive: "read" }
+                    .into(),
+            );
+        }
+    }
+    if let Some(call_directive) = directives.iter().find(|d| d.name == "call") {
+        if !call_directive.arguments.is_empty() {
+            return Err(
+                CollectionUserError::CollectionDirectiveCannotHaveArguments { directive: "call" }
+                    .into(),
+            );
+        }
+    }
+
+    const VALID_COLLECTION_DIRECTIVES: &[&str] = &["public", "read", "call"];
+    let unknown_directives = directives
+        .iter()
+        .filter(|d| !VALID_COLLECTION_DIRECTIVES.contains(&d.name.as_ref()))
+        .map(|d| d.name.as_ref().to_owned())
+        .collect::<Vec<_>>();
+    if !unknown_directives.is_empty() {
+        return Err(CollectionUserError::UnknownCollectionDirectives {
+            directives: unknown_directives,
+        }
+        .into());
+    }
+
     Ok(())
 }
 
@@ -477,7 +544,7 @@ impl<'a> Collection<'a> {
                     keys::Direction::Ascending,
                 )]),
             ],
-            Authorization::Public,
+            Authorization::public(),
         );
 
         if id == "Collection" {
@@ -558,6 +625,8 @@ impl<'a> Collection<'a> {
         indexes.sort_by(|a, b| a.fields.len().cmp(&b.fields.len()));
 
         let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
+        let is_read_all = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "read" && d.arguments.is_empty()));
+        let is_call_all = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
         Ok(Self {
             logger: logger.clone(),
@@ -565,9 +634,11 @@ impl<'a> Collection<'a> {
             collection_id: id.to_string(),
             indexes,
             authorization: if is_public {
-                Authorization::Public
+                Authorization::public()
             } else {
-                Authorization::Private(PrivateAuthorization {
+                Authorization {
+                    read_all: is_read_all,
+                    call_all: is_call_all,
                     read_fields: collection_ast
                         .attributes
                         .iter()
@@ -597,7 +668,7 @@ impl<'a> Collection<'a> {
 
                         delegate_fields
                     },
-                })
+                }
             },
         })
     }
@@ -655,10 +726,11 @@ impl<'a> Collection<'a> {
         record: &RecordRoot,
         user: &Option<&AuthUser>,
     ) -> Result<bool> {
-        let read_fields = match &self.authorization {
-            Authorization::Public => return Ok(true),
-            Authorization::Private(pa) => &pa.read_fields,
-        };
+        if self.authorization.read_all {
+            return Ok(true);
+        }
+
+        let read_fields = &self.authorization.read_fields;
 
         let Some(user) = user else {
             return Ok(false);
@@ -686,6 +758,24 @@ impl<'a> Collection<'a> {
                             }
                             RecordValue::RecordReference(r) => {
                                 record_references.push(r.clone());
+                            }
+                            RecordValue::Array(arr) => {
+                                for value in arr {
+                                    match value {
+                                        RecordValue::PublicKey(record_pk)
+                                            if record_pk == &user.public_key =>
+                                        {
+                                            authorized = true;
+                                        }
+                                        RecordValue::ForeignRecordReference(fr) => {
+                                            foreign_record_references.push(fr.clone());
+                                        }
+                                        RecordValue::RecordReference(r) => {
+                                            record_references.push(r.clone());
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
                             _ => {}
                         }
@@ -748,10 +838,7 @@ impl<'a> Collection<'a> {
         record: &(impl PathFinder + Sync),
         user: &Option<&AuthUser>,
     ) -> Result<bool> {
-        let delegate_fields = match &self.authorization {
-            Authorization::Public => return Ok(true),
-            Authorization::Private(pa) => &pa.delegate_fields,
-        };
+        let delegate_fields = &self.authorization.delegate_fields;
 
         let Some(user) = user else { return Ok(false) };
 
@@ -760,41 +847,64 @@ impl<'a> Collection<'a> {
                 continue;
             };
 
-            match delegate_value {
-                RecordValue::PublicKey(pk) if pk == &user.public_key => {
-                    return Ok(true);
-                }
-                RecordValue::RecordReference(r) => {
-                    let Some(record) = self.get(r.id.clone(), Some(user)).await? else {
-                        continue;
-                    };
-
-                    if self
-                        .has_delegate_access(&record, &Some(user))
-                        .await
-                        .unwrap_or(false)
-                    {
+            #[async_recursion]
+            async fn check_delegate_value(
+                self_col: &Collection<'_>,
+                delegate_value: &RecordValue,
+                user: &AuthUser,
+            ) -> Result<bool> {
+                match delegate_value {
+                    RecordValue::PublicKey(pk) if pk == &user.public_key => {
                         return Ok(true);
                     }
-                }
-                RecordValue::ForeignRecordReference(fr) => {
-                    let collection =
-                        Collection::load(self.logger.clone(), self.store, fr.collection_id.clone())
-                            .await?;
+                    RecordValue::RecordReference(r) => {
+                        let Some(record) = self_col.get(r.id.clone(), Some(user)).await? else {
+                            return Ok(false);
+                        };
 
-                    let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
-                        continue;
-                    };
-
-                    if collection
-                        .has_delegate_access(&record, &Some(user))
-                        .await
-                        .unwrap_or(false)
-                    {
-                        return Ok(true);
+                        if self_col
+                            .has_delegate_access(&record, &Some(user))
+                            .await
+                            .unwrap_or(false)
+                        {
+                            return Ok(true);
+                        }
                     }
+                    RecordValue::ForeignRecordReference(fr) => {
+                        let collection = Collection::load(
+                            self_col.logger.clone(),
+                            self_col.store,
+                            fr.collection_id.clone(),
+                        )
+                        .await?;
+
+                        let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
+                            return Ok(false);
+                        };
+
+                        if collection
+                            .has_delegate_access(&record, &Some(user))
+                            .await
+                            .unwrap_or(false)
+                        {
+                            return Ok(true);
+                        }
+                    }
+                    RecordValue::Array(arr) => {
+                        for item in arr {
+                            if check_delegate_value(self_col, item, user).await? {
+                                return Ok(true);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
+
+                Ok(false)
+            }
+
+            if check_delegate_value(self, delegate_value, user).await? {
+                return Ok(true);
             }
         }
 
@@ -1246,7 +1356,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(collection.collection_id, "Collection");
-        assert_eq!(collection.authorization, Authorization::Public);
+        assert_eq!(collection.authorization, Authorization::public());
         assert_eq!(collection.indexes.len(), 4);
         assert_eq!(
             collection.indexes[0],
@@ -1350,10 +1460,12 @@ mod tests {
         assert_eq!(collection_account.collection_id, "ns/Account");
         assert_eq!(
             collection_account.authorization,
-            Authorization::Private(PrivateAuthorization {
+            Authorization {
+                read_all: false,
+                call_all: false,
                 read_fields: vec![],
                 delegate_fields: vec![],
-            })
+            }
         );
         assert_eq!(collection_account.indexes.len(), 3);
         assert_eq!(
@@ -1387,7 +1499,7 @@ mod tests {
             &store,
             "test".to_string(),
             vec![],
-            Authorization::Public,
+            Authorization::public(),
         );
 
         let value = HashMap::from([

@@ -19,6 +19,9 @@ pub enum ReasonCode {
     #[display(fmt = "record/id-modified")]
     RecordIDModified,
 
+    #[display(fmt = "record/missing-field")]
+    RecordMissingField,
+
     #[display(fmt = "index/missing-index")]
     IndexesMissingIndex,
 
@@ -91,6 +94,7 @@ impl ReasonCode {
             ReasonCode::RecordCollectionIdNotFound => ErrorCode::NotFound,
             ReasonCode::RecordFieldNotObject => ErrorCode::InvalidArgument,
             ReasonCode::RecordIDModified => ErrorCode::FailedPrecondition,
+            ReasonCode::RecordMissingField => ErrorCode::InvalidArgument,
             ReasonCode::IndexesMissingIndex => ErrorCode::FailedPrecondition,
             ReasonCode::FunctionInvalidatedId => ErrorCode::FailedPrecondition,
             ReasonCode::FunctionNotFound => ErrorCode::NotFound,
@@ -222,6 +226,18 @@ impl ReasonCode {
             indexer::collection::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
+            indexer::collection::CollectionUserError::CollectionDirectiveCannotHaveArguments {
+                ..
+            } => ReasonCode::CollectionInvalidSchema,
+            indexer::collection::CollectionUserError::UnknownCollectionDirectives { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+        }
+    }
+
+    pub fn from_record_error(err: &indexer::RecordUserError) -> Self {
+        match err {
+            indexer::RecordUserError::MissingField { .. } => ReasonCode::RecordMissingField,
         }
     }
 
