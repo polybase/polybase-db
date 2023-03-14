@@ -607,6 +607,8 @@ fn get_indexer_dir(dir: &str) -> PathBuf {
             path_buf.push(home_dir);
             path_buf.push(dir.strip_prefix("~/").unwrap());
         }
+    } else {
+        path_buf.push(dir);
     }
     path_buf.push("data/indexer.db");
     path_buf

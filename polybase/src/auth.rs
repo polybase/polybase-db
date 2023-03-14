@@ -290,7 +290,9 @@ impl<T: DeserializeOwned + 'static> FromRequest for SignedJSON<T> {
                     .map_err(AuthError::from)?,
                 auth: sig
                     .map(|sig| {
-                        if std::option_env!("DEV_SKIP_SIGNATURE_VERIFICATION") == Some("1") {
+                        if std::option_env!("DEV_SKIP_SIGNATURE_VERIFICATION") == Some("1")
+                            && sig.public_key.is_some()
+                        {
                             return Ok(Auth {
                                 public_key: sig.public_key.unwrap(),
                             });
