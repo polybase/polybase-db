@@ -2279,6 +2279,7 @@ dependencies = [
  "actix-cors",
  "actix-web",
  "async-trait",
+ "base64 0.21.0",
  "bincode",
  "bytes",
  "cid",

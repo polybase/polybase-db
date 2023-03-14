@@ -1,6 +1,7 @@
 mod array_field;
 mod auth;
 mod boolean_field;
+mod bytes_field;
 mod call;
 mod collection_collection;
 mod errors;

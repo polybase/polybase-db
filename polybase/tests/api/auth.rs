@@ -615,7 +615,7 @@ collection User {
             error: ErrorData {
                 code: "permission-denied".to_string(),
                 reason: "unauthorized".to_string(),
-                message: "unauthorized read".to_string(),
+                message: "you do not have permission to call this function".to_string(),
             }
         }
     );
@@ -626,4 +626,21 @@ collection User {
         account_id1_10_user_id1.balance = 0.0;
         account_id1_10_user_id1
     };
+
+    assert_eq!(
+        account_collection
+            .call("id1", "reset", json!([]), Some(&owner_signer))
+            .await
+            .unwrap()
+            .unwrap(),
+        account_id1_0_user_id1
+    );
+
+    assert_eq!(
+        account_collection
+            .get("id1", Some(&owner_signer))
+            .await
+            .unwrap(),
+        account_id1_0_user_id1
+    );
 }
