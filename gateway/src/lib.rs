@@ -817,7 +817,7 @@ impl Gateway {
                             let Some(arg) = args
                                 .get(i)
                                 .to_string(scope) else {
-                                #[allow(clippy::unwrap_used)] // we can't recover from this
+                                // #[allow(clippy::unwrap_used)] // we can't recover from this
                                 let error_msg = v8::String::new(scope, "Argument is not a string").unwrap();
                                 let exception = v8::Exception::error(scope, error_msg);
                                 scope.throw_exception(exception);
