@@ -397,6 +397,7 @@ where
 
     let mut found_values = vec![];
     for (k, v) in record {
+        #[allow(clippy::unwrap_used)]
         v.walk::<std::convert::Infallible>(&mut vec![Cow::Borrowed(k)], &mut |path, value| {
             if let Some(found) = paths.iter().find(|p| {
                 p.len() == path.len()

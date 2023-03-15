@@ -100,7 +100,8 @@ struct RaftState {
 impl Drop for Raft {
     fn drop(&mut self) {
         // Cancel the commit loop
-        let mut state = self.shared.shared.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let mut state = self.shared.shared.state.lock().expect("Mutex was poisoned");
         state.shutdown = true;
 
         // TODO: cancel the timer (maybe overkill as it will be max 1 second)
@@ -108,13 +109,14 @@ impl Drop for Raft {
 }
 
 impl Raft {
+    /// Returns (_, raft_handle, commit_internval_handle)
     pub fn new(
         id: u64,
         laddr: String,
         peers: Vec<String>,
         db: Arc<Db>,
         logger: slog::Logger,
-    ) -> (Self, JoinHandle<()>) {
+    ) -> (Self, JoinHandle<Result<()>>, JoinHandle<Result<()>>) {
         let mut cfg = RaftConfig {
             ..Default::default()
         };
@@ -150,9 +152,9 @@ impl Raft {
         let handle = tokio::spawn(raft_init_setup(id, raft, peers, logger.clone()));
 
         // Start the loop to commit every ~1 second
-        tokio::spawn(commit_interval(Arc::clone(&shared)));
+        let commit_interval_handle = tokio::spawn(commit_interval(Arc::clone(&shared)));
 
-        (Self { shared }, handle)
+        (Self { shared }, handle, commit_interval_handle)
     }
 
     pub async fn shutdown(&self) -> Result<()> {
@@ -216,7 +218,7 @@ impl RaftShared {
     // Determine if we should send a commit message to the cluster. Any node
     // in the cluster can send a commit message to the cluster, and out of
     // date commit messages (commit_id <= highest seen) will be ignored.
-    async fn send_commit(&self) {
+    async fn send_commit(&self) -> Result<()> {
         let current_commit_id = self.shared.commit_id();
 
         if let Some(dur) = self.shared.get_next_interval() {
@@ -225,13 +227,13 @@ impl RaftShared {
 
             // In case we shutdown during sleep
             if self.shared.is_shutdown() {
-                return;
+                return Ok(());
             }
         }
 
         // Check if an external commit has been received during the sleep
         if current_commit_id != self.shared.commit_id() {
-            return;
+            return Ok(());
         }
 
         // Only send a commit if we've received a txn since the last commit
@@ -239,7 +241,7 @@ impl RaftShared {
             let message = RaftMessage::Commit {
                 commit_id: current_commit_id + 1,
             };
-            let message = serde_json::to_vec(&message).unwrap();
+            let message = serde_json::to_vec(&message)?;
             match self.mailbox.send(message).await {
                 Ok(_) => {}
                 Err(e) => {
@@ -247,12 +249,15 @@ impl RaftShared {
                 }
             }
         }
+
+        Ok(())
     }
 }
 
 impl RaftSharedState {
     fn start_commit(&self, commit_id: usize) -> bool {
-        let mut state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let mut state = self.state.lock().expect("Mutex was poisoned");
 
         // Last commit exists and has been invalidated
         if let Some(state_next_commit_id) = state.next_commit_id {
@@ -274,7 +279,8 @@ impl RaftSharedState {
     }
 
     fn end_commit(&self) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let mut state = self.state.lock().expect("Mutex was poisoned");
         // Finalise the commit_id with the pending one
         state.commit_id = state.next_commit_id;
         let tx = &state.watcher.0;
@@ -283,7 +289,8 @@ impl RaftSharedState {
     }
 
     fn get_next_interval(&self) -> Option<Duration> {
-        let mut state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let mut state = self.state.lock().expect("Mutex was poisoned");
 
         // Time since last interval
         let elapsed = state.timer.elapsed();
@@ -300,12 +307,14 @@ impl RaftSharedState {
     }
 
     fn commit_id(&self) -> usize {
-        let state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let state = self.state.lock().expect("Mutex was poisoned");
         state.commit_id.unwrap_or(0)
     }
 
     fn receiver(&self) -> watch::Receiver<usize> {
-        let state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let state = self.state.lock().expect("Mutex was poisoned");
         state.watcher.1.clone()
     }
 
@@ -330,7 +339,8 @@ impl RaftSharedState {
     }
 
     fn is_shutdown(&self) -> bool {
-        let state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let state = self.state.lock().expect("Mutex was poisoned");
         state.shutdown
     }
 }
@@ -342,7 +352,9 @@ impl RmqttRaftStore for RaftConnector {
     // node and if it succeeds, it is called on all other nodes.
     async fn apply(&mut self, message: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
         let db = self.db.clone();
-        let message: RaftMessage = serde_json::from_slice(message).unwrap();
+        let message: RaftMessage = serde_json::from_slice(message)
+            .map_err(RaftError::from)
+            .map_err(|e| rmqtt_raft::Error::Other(Box::new(e)))?;
         match message {
             RaftMessage::Call {
                 collection_id,
@@ -367,7 +379,8 @@ impl RmqttRaftStore for RaftConnector {
                     commit_id,
                     record_id,
                 })
-                .unwrap();
+                .map_err(RaftError::from)
+                .map_err(|e| rmqtt_raft::Error::Other(Box::new(e)))?;
 
                 Ok(resp)
             }
@@ -380,7 +393,7 @@ impl RmqttRaftStore for RaftConnector {
                     return Ok(Vec::new());
                 }
 
-                // Now safe to unwrap the key
+                #[allow(clippy::unwrap_used)] // Now safe to unwrap the key
                 let key = key.unwrap();
 
                 if !self.shared.start_commit(commit_id) {
@@ -409,7 +422,7 @@ impl RmqttRaftStore for RaftConnector {
     }
 
     // TODO
-    async fn query(&self, query: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
+    async fn query(&self, _query: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
         Ok(Vec::new())
     }
 
@@ -434,7 +447,7 @@ async fn raft_init_setup(
     raft: RmqttRaft<RaftConnector>,
     peers: Vec<String>,
     logger: slog::Logger,
-) {
+) -> Result<()> {
     let mut peers: Vec<String> = peers.clone();
 
     // TEMP FIX: remove own hostname
@@ -444,20 +457,22 @@ async fn raft_init_setup(
 
     info!(logger, "peers: {:?}", peers);
 
-    let leader_info = raft.find_leader_info(peers).await.unwrap();
+    let leader_info = raft.find_leader_info(peers).await?;
 
     info!(logger, "leader_info: {:?}", leader_info);
 
     match leader_info {
         Some((leader_id, leader_addr)) => {
             info!(logger, "running in follower mode");
-            raft.join(id, Some(leader_id), leader_addr).await.unwrap();
+            raft.join(id, Some(leader_id), leader_addr).await?;
         }
         None => {
             info!(logger, "running in leader mode");
-            raft.lead(id).await.unwrap();
+            raft.lead(id).await?;
         }
     }
+
+    Ok(())
 }
 
 // async fn find_leader_info(
@@ -510,10 +525,12 @@ async fn raft_init_setup(
 //     Ok(leader_info)
 // }
 
-async fn commit_interval(shared: Arc<RaftShared>) {
+async fn commit_interval(shared: Arc<RaftShared>) -> Result<()> {
     while !shared.shared.is_shutdown() {
-        shared.send_commit().await;
+        shared.send_commit().await?;
     }
+
+    Ok(())
 }
 
 impl From<db::DbError> for rmqtt_raft::Error {
@@ -534,7 +551,10 @@ impl From<rmqtt_raft::Error> for RaftError {
             // Unwrap Other error, as it may contain a RaftError (because we are forced to wrap the
             // error in RmqttRaftStore)
             rmqtt_raft::Error::Other(e) => match e.downcast_ref::<RaftError>() {
-                Some(_) => *e.downcast::<RaftError>().unwrap(),
+                Some(_) => {
+                    #[allow(clippy::unwrap_used)] // We know this is a RaftError
+                    *e.downcast::<RaftError>().unwrap()
+                }
                 None => Self::Raft(rmqtt_raft::Error::Other(e)),
             },
 

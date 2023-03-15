@@ -65,6 +65,7 @@ impl actix_web::error::ResponseError for HTTPError {
                     .unwrap_or_default(),
             },
         };
+        #[allow(clippy::unwrap_used)]
         HttpResponse::build(self.status_code())
             .insert_header(ContentType::json())
             .body(serde_json::to_string(&error).unwrap())

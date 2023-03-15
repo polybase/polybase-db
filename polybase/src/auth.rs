@@ -240,6 +240,7 @@ impl Signature {
 
         let signature = Signature::deserialize(signature)?;
 
+        #[allow(clippy::unwrap_used)] // this should never error
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -293,6 +294,8 @@ impl<T: DeserializeOwned + 'static> FromRequest for SignedJSON<T> {
                         if std::option_env!("DEV_SKIP_SIGNATURE_VERIFICATION") == Some("1")
                             && sig.public_key.is_some()
                         {
+                            #[allow(clippy::unwrap_used)]
+                            // we know public_key is Some, and this is a dev-only feature
                             return Ok(Auth {
                                 public_key: sig.public_key.unwrap(),
                             });

@@ -15,11 +15,10 @@ mod raft;
 mod rollup;
 
 use actix_cors::Cors;
-use actix_web::http::header;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
 use clap::Parser;
 use futures::TryStreamExt;
-use indexer::Indexer;
+use indexer::{Indexer, IndexerError};
 use rand::Rng;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
@@ -48,6 +47,9 @@ struct RouteState {
 
 #[derive(Debug, thiserror::Error)]
 enum AppError {
+    #[error("failed to initialize indexer")]
+    Indexer(#[from] IndexerError),
+
     #[error("failed to join task")]
     JoinError(#[from] tokio::task::JoinError),
 
@@ -356,11 +358,11 @@ async fn get_records(
                     // then querying again with the returned `before` should return the `after` record,
                     // not just records before it.
                     .or_else(|| {
-                        query
-                            .after
-                            .0
-                            .clone()
-                            .map(|a| a.immediate_successor().unwrap())
+                        query.after.0.clone().map(|a| {
+                            #[allow(clippy::unwrap_used)]
+                            // Unwrap is safe because `a` is an index key, immediate_sucessor works on index keys
+                            a.immediate_successor().unwrap()
+                        })
                     }),
                 after: records
                     .last()
@@ -494,6 +496,8 @@ async fn raft_status(
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     let config = Config::parse();
+    #[allow(clippy::unwrap_used)]
+    let indexer_dir = get_indexer_dir(&config.root_dir).unwrap();
 
     let _guard;
     if let Some(dsn) = config.sentry_dsn {
@@ -519,8 +523,7 @@ async fn main() -> Result<(), AppError> {
     // let _guard = slog_scope::set_global_logger(logger.clone());
     // let _log_guard = slog_stdlog::init().unwrap();
 
-    let indexer_dir = get_indexer_dir(&config.root_dir);
-    let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).unwrap());
+    let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).map_err(IndexerError::from)?);
 
     let db = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
 
@@ -540,7 +543,7 @@ async fn main() -> Result<(), AppError> {
             .unwrap_or(random),
     );
 
-    let (raft, raft_handle) = Raft::new(
+    let (raft, raft_handle, commit_interval_handle) = Raft::new(
         id,
         config.raft_laddr,
         peers,
@@ -589,7 +592,11 @@ async fn main() -> Result<(), AppError> {
         }
         res = raft_handle => {
             error!(logger, "Raft server exited unexpectedly: {res:#?}");
-            res?
+            res??
+        },
+        res = commit_interval_handle => {
+            error!(logger, "Commit interval exited unexpectedly: {res:#?}");
+            res??
         },
         _ = tokio::signal::ctrl_c() => {
             match raft.clone().shutdown().await {
@@ -602,16 +609,16 @@ async fn main() -> Result<(), AppError> {
     Ok(())
 }
 
-fn get_indexer_dir(dir: &str) -> PathBuf {
+fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
     let mut path_buf = PathBuf::new();
     if dir.starts_with("~/") {
         if let Some(home_dir) = dirs::home_dir() {
             path_buf.push(home_dir);
-            path_buf.push(dir.strip_prefix("~/").unwrap());
+            path_buf.push(dir.strip_prefix("~/")?);
         }
     } else {
         path_buf.push(dir);
     }
     path_buf.push("data/indexer.db");
-    path_buf
+    Some(path_buf)
 }

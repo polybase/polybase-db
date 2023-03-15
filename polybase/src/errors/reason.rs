@@ -22,9 +22,11 @@ pub enum ReasonCode {
     #[display(fmt = "record/missing-field")]
     RecordMissingField,
 
+    #[allow(unused)]
     #[display(fmt = "index/missing-index")]
     IndexesMissingIndex,
 
+    #[allow(unused)]
     #[display(fmt = "function/invalidated-id")]
     FunctionInvalidatedId,
 
@@ -34,6 +36,7 @@ pub enum ReasonCode {
     #[display(fmt = "function/invalid-args")]
     FunctionInvalidArgs,
 
+    #[allow(unused)]
     #[display(fmt = "function/invalid-call")]
     FunctionInvalidCall,
 
