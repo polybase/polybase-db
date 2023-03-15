@@ -58,6 +58,9 @@ pub enum CollectionError {
     #[error("record is missing ID field")]
     RecordMissingID,
 
+    #[error("Collection collection record not found for collection {id:?}")]
+    CollectionCollectionRecordNotFound { id: String },
+
     #[error("keys error")]
     KeysError(#[from] keys::KeysError),
 
@@ -182,9 +185,11 @@ collection Collection {
     );
 
     let mut program = None;
+    #[allow(clippy::unwrap_used)]
     let (_, stable_ast) = polylang::parse(code, "", &mut program).unwrap();
     hm.insert(
         "ast".to_string(),
+        #[allow(clippy::unwrap_used)]
         RecordValue::String(serde_json::to_string(&stable_ast).unwrap()),
     );
 
@@ -677,11 +682,14 @@ impl<'a> Collection<'a> {
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let record = Self::load(self.logger.clone(), self.store, "Collection".to_owned())
+        let Some(record) = Self::load(self.logger.clone(), self.store, "Collection".to_owned())
             .await?
             .get(self.collection_id.clone(), None)
-            .await?
-            .unwrap();
+            .await? else {
+            return Err(CollectionError::CollectionCollectionRecordNotFound {
+                id: self.collection_id.clone(),
+            });
+        };
 
         let ast_json = match record.get("ast") {
             Some(RecordValue::String(ast_json)) => ast_json,
@@ -690,6 +698,7 @@ impl<'a> Collection<'a> {
         };
 
         *ast_json_holder = Some(ast_json.clone());
+        #[allow(clippy::unwrap_used)]
         let ast_json = ast_json_holder.as_ref().unwrap();
 
         collection_ast_from_json(ast_json, self.name().as_str())
@@ -704,12 +713,10 @@ impl<'a> Collection<'a> {
     }
 
     pub fn normalize_name(collection_id: &str) -> String {
-        collection_id
-            .split('/')
-            .last()
-            .unwrap()
-            .to_string()
-            .replace('-', "_")
+        #[allow(clippy::unwrap_used)] // split always returns at least one element
+        let last_part = collection_id.split('/').last().unwrap();
+
+        last_part.replace('-', "_")
     }
 
     pub fn namespace(&self) -> &str {
@@ -741,6 +748,7 @@ impl<'a> Collection<'a> {
             let mut record_references = vec![];
             let mut foreign_record_references = vec![];
 
+            #[allow(clippy::unwrap_used)] // We never return an error
             value
                 .walk_all::<std::convert::Infallible>(
                     &mut vec![Cow::Borrowed(key)],
@@ -783,7 +791,7 @@ impl<'a> Collection<'a> {
                         Ok(())
                     },
                 )
-                .unwrap(); // We never return an error
+                .unwrap();
 
             for record_reference in record_references {
                 let Some(record) = self.get(record_reference.id, Some(user)).await? else {
@@ -1050,11 +1058,13 @@ impl<'a> Collection<'a> {
 
         if self.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {
+                // Unwrap is safe because collection_before had to load the existing record.
+                #[allow(clippy::unwrap_used)]
+                let old_value = old_value.unwrap();
+
                 let target_col = Collection::load(self.logger.clone(), self.store, id).await?;
 
-                target_col
-                    .rebuild(collection_before, &old_value.unwrap())
-                    .await?;
+                target_col.rebuild(collection_before, &old_value).await?;
             }
         }
 

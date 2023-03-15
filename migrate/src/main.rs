@@ -155,7 +155,7 @@ async fn main() -> Result<()> {
 
 fn convert_public_key(public_key_str: &str) -> Result<PublicKey> {
     let hex_str = normalize_hex(public_key_str);
-    let res = hex::decode(&hex_str).unwrap();
+    let _res = hex::decode(&hex_str).unwrap();
     // hex::from_hex(hex_str.as_str()).unwrap();
     let pubkey = &Secp256k1PublicKey::from_str(hex_str.as_str()).unwrap();
     Ok(PublicKey::from_secp256k1_key(pubkey)?)
@@ -243,7 +243,7 @@ fn name(collection_id: &str) -> String {
         .last()
         .unwrap()
         .to_string()
-        .replace("-", "_")
+        .replace('-', "_")
 }
 
 fn namespace(collection_id: &str) -> &str {

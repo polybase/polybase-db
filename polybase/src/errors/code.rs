@@ -13,6 +13,7 @@ pub enum ErrorCode {
 
     // #[display(fmt = "out-of-range")]
     // OutOfRange,
+    #[allow(unused)]
     #[display(fmt = "unauthenticated")]
     Unauthenticated,
 

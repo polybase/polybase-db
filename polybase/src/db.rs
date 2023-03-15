@@ -18,6 +18,9 @@ pub enum DbError {
     #[error("collection not found")]
     CollectionNotFound,
 
+    #[error("collection AST not found in collection record")]
+    CollectionASTNotFound,
+
     #[error("collection AST is invalid: {0}")]
     CollectionASTInvalid(String),
 
@@ -32,6 +35,9 @@ pub enum DbError {
 
     #[error("serialize error")]
     SerializerError(#[from] bincode::Error),
+
+    #[error("serde_json error")]
+    SerdeJsonError(#[from] serde_json::Error),
 
     #[error("rollup error")]
     RollupError,
@@ -277,12 +283,12 @@ impl Db {
 
     async fn validate_schema_update(
         &self,
-        collection_id: &String,
-        record_id: &String,
+        collection_id: &str,
+        record_id: &str,
         record: &RecordRoot,
         auth: Option<&indexer::AuthUser>,
     ) -> Result<()> {
-        let collection = match self.indexer.collection(collection_id.clone()).await {
+        let collection = match self.indexer.collection(collection_id.to_owned()).await {
             Ok(collection) => collection,
             Err(e) => {
                 return Err(DbError::IndexerError(e.into()));
@@ -290,14 +296,14 @@ impl Db {
         };
 
         let old_record = collection
-            .get(record_id.clone(), auth)
+            .get(record_id.to_owned(), auth)
             .await
-            .unwrap()
-            .expect("Collection not found");
+            .map_err(indexer::IndexerError::from)?
+            .ok_or(DbError::CollectionNotFound)?;
 
         let old_ast = old_record
             .get("ast")
-            .expect("Collection AST not found in collection record");
+            .ok_or(DbError::CollectionASTNotFound)?;
 
         let indexer::RecordValue::String(old_ast) = old_ast
             else {
@@ -306,14 +312,15 @@ impl Db {
 
         let indexer::RecordValue::String(new_ast) = record
                 .get("ast")
-                .expect("Collection AST not found in new collection record") else {
-            return Err(DbError::CollectionASTInvalid("Collection AST in new ".into()));
+                .ok_or(DbError::CollectionASTNotFound)? else {
+            return Err(DbError::CollectionASTInvalid("Collection AST in new record is not a string".into()));
         };
 
         validate_schema_change(
+            #[allow(clippy::unwrap_used)] // split always returns at least one element
             record_id.split('/').last().unwrap(),
-            serde_json::from_str(old_ast).unwrap(),
-            serde_json::from_str(new_ast).unwrap(),
+            serde_json::from_str(old_ast)?,
+            serde_json::from_str(new_ast)?,
         )
         .map_err(indexer::IndexerError::from)?;
 

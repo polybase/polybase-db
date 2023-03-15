@@ -106,7 +106,9 @@ impl PublicKey {
         key: &secp256k1::PublicKey,
     ) -> std::result::Result<Self, secp256k1::Error> {
         let uncompressed = key.serialize_uncompressed();
+        #[allow(clippy::unwrap_used)] // unwrap is safe because uncompressed is always 65 bytes
         let x = uncompressed[1..33].try_into().unwrap();
+        #[allow(clippy::unwrap_used)] // same as above
         let y = uncompressed[33..65].try_into().unwrap();
 
         Self::es256k(x, y)
@@ -327,7 +329,9 @@ impl TryFrom<[u8; 64]> for PublicKey {
     type Error = PublicKeyError;
 
     fn try_from(bytes: [u8; 64]) -> Result<Self> {
+        #[allow(clippy::unwrap_used)] // unwrap is safe because we know the length is 64
         let x = <[u8; 32]>::try_from(&bytes[0..32]).unwrap();
+        #[allow(clippy::unwrap_used)] // same as above
         let y = <[u8; 32]>::try_from(&bytes[32..64]).unwrap();
 
         Self::es256k(x, y).map_err(PublicKeyError::from)
@@ -340,7 +344,9 @@ impl Default for PublicKey {
         compressed[0] = 2;
         compressed[32] = 1;
 
+        #[allow(clippy::unwrap_used)]
         let key = secp256k1::PublicKey::from_slice(&compressed).unwrap();
+        #[allow(clippy::unwrap_used)]
         Self::from_secp256k1_key(&key).unwrap()
     }
 }

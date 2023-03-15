@@ -1,5 +1,7 @@
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 use std::fmt::Debug;
-use winter_crypto::{hashers::Rp64_256, Hasher};
+use winter_crypto::Hasher;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum Color {
@@ -305,6 +307,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
 
         // Remove node from vector, we can unwrap because we check
         // if is_none() above
+        #[allow(clippy::unwrap_used)]
         self.delete_swap(id.unwrap())
     }
 
@@ -445,6 +448,7 @@ impl<T: Ord + Copy + Debug, H: Hasher> RedBlackTree<T, H> {
     fn print_node(&self, id: Option<usize>, depth: usize) {
         let indent = "     ".repeat(depth);
         if id.is_some() {
+            #[allow(clippy::unwrap_used)]
             let node = self.node(id).unwrap();
             println!(
                 "{indent} key={:?}, left={:?}, right={:?} parent={:?}, hash={:?}",
@@ -556,6 +560,7 @@ impl<T: Ord + Copy + std::hash::Hash + Debug, H: Hasher> Default for RedBlackTre
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winter_crypto::hashers::Rp64_256;
 
     fn assert_balanced(tree: &RedBlackTree<i32, Rp64_256>) {
         // Check equal number of nodes

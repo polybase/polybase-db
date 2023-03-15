@@ -1,3 +1,5 @@
+#![warn(clippy::unwrap_used, clippy::expect_used)]
+
 use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
@@ -805,22 +807,28 @@ impl Gateway {
 
         if collection_id == "Collection" {
             global.set(
-                v8::String::new(&mut scope, "parse").unwrap().into(),
+                v8::String::new(&mut scope, "parse").ok_or(GatewayError::FailedToCreateV8String)?.into(),
                 v8::FunctionTemplate::new(
                     &mut scope,
                     |scope: &mut v8::HandleScope,
                      args: v8::FunctionCallbackArguments,
                      mut retval: v8::ReturnValue| {
-                        let code = args
-                            .get(0)
-                            .to_string(scope)
-                            .unwrap()
-                            .to_rust_string_lossy(scope);
-                        let collection_id = args
-                            .get(1)
-                            .to_string(scope)
-                            .unwrap()
-                            .to_rust_string_lossy(scope);
+                        let mut get_string_arg = |i: i32| {
+                            let Some(arg) = args
+                                .get(i)
+                                .to_string(scope) else {
+                                #[allow(clippy::unwrap_used)] // we can't recover from this
+                                let error_msg = v8::String::new(scope, "Argument is not a string").unwrap();
+                                let exception = v8::Exception::error(scope, error_msg);
+                                scope.throw_exception(exception);
+                                return None;
+                            };
+
+                            Some(arg.to_rust_string_lossy(scope))
+                        };
+
+                        let Some(code) = get_string_arg(0) else { return; };
+                        let Some(collection_id) = get_string_arg(1) else { return; };
 
                         let namespace = {
                             let mut parts = collection_id.split('/').collect::<Vec<_>>();
@@ -835,6 +843,7 @@ impl Gateway {
                         {
                             Ok(x) => x,
                             Err(e) => {
+                                #[allow(clippy::unwrap_used)] // we can't recover from this
                                 let error_msg = v8::String::new(scope, &e.message).unwrap();
                                 let exception = v8::Exception::error(scope, error_msg);
                                 scope.throw_exception(exception);
@@ -844,6 +853,7 @@ impl Gateway {
                         let json = match serde_json::to_string(&stable_ast) {
                             Ok(json) => json,
                             Err(e) => {
+                                #[allow(clippy::unwrap_used)] // we can't recover from this
                                 let error_msg = v8::String::new(scope, &format!("{e:?}")).unwrap();
                                 let exception = v8::Exception::error(scope, error_msg);
                                 scope.throw_exception(exception);
@@ -851,6 +861,7 @@ impl Gateway {
                             }
                         };
 
+                        #[allow(clippy::unwrap_used)] // we can't recover from this
                         retval.set(v8::String::new(scope, &json).unwrap().into());
                     },
                 )
@@ -860,23 +871,29 @@ impl Gateway {
 
         global.set(
             v8::String::new(&mut scope, "$$__publicKeyToHex")
-                .unwrap()
+                .ok_or(GatewayError::FailedToCreateV8String)?
                 .into(),
             v8::FunctionTemplate::new(
                 &mut scope,
                 |scope: &mut v8::HandleScope,
                  args: v8::FunctionCallbackArguments,
                  mut retval: v8::ReturnValue| {
-                    let public_key_json = args
+                    let Some(public_key_json) = args
                         .get(0)
-                        .to_string(scope)
-                        .unwrap()
-                        .to_rust_string_lossy(scope);
+                        .to_string(scope) else {
+                        #[allow(clippy::unwrap_used)] // we can't recover from this
+                        let error = v8::String::new(scope, "Argument is not a string").unwrap();
+                        let exception = v8::Exception::error(scope, error);
+                        scope.throw_exception(exception);
+                        return;
+                    };
+                    let public_key_json = public_key_json.to_rust_string_lossy(scope);
 
                     let public_key =
                         match serde_json::from_str::<indexer::PublicKey>(&public_key_json) {
                             Ok(pk) => pk,
                             Err(e) => {
+                                #[allow(clippy::unwrap_used)] // we can't recover from this
                                 let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
                                 let exception = v8::Exception::error(scope, error);
                                 scope.throw_exception(exception);
@@ -887,6 +904,7 @@ impl Gateway {
                     let hex = match public_key.to_hex() {
                         Ok(hex) => hex,
                         Err(e) => {
+                            #[allow(clippy::unwrap_used)] // we can't recover from this
                             let error = v8::String::new(scope, &format!("{e:?}")).unwrap();
                             let exception = v8::Exception::error(scope, error);
                             scope.throw_exception(exception);
@@ -894,6 +912,7 @@ impl Gateway {
                         }
                     };
 
+                    #[allow(clippy::unwrap_used)] // we can't recover from this
                     retval.set(v8::String::new(scope, &hex).unwrap().into());
                 },
             )
@@ -901,14 +920,18 @@ impl Gateway {
         );
 
         global.set(
-            v8::String::new(&mut scope, "instanceJSON").unwrap().into(),
+            v8::String::new(&mut scope, "instanceJSON")
+                .ok_or(GatewayError::FailedToCreateV8String)?
+                .into(),
             v8::String::new(&mut scope, &serde_json::to_string(instance)?)
-                .unwrap()
+                .ok_or(GatewayError::FailedToCreateV8String)?
                 .into(),
         );
 
         global.set(
-            v8::String::new(&mut scope, "authJSON").unwrap().into(),
+            v8::String::new(&mut scope, "authJSON")
+                .ok_or(GatewayError::FailedToCreateV8String)?
+                .into(),
             v8::String::new(
                 &mut scope,
                 &serde_json::to_string(&{
@@ -917,17 +940,18 @@ impl Gateway {
                     } else {
                         HashMap::new()
                     }
-                })
-                .unwrap(),
+                })?,
             )
-            .unwrap()
+            .ok_or(GatewayError::FailedToCreateV8String)?
             .into(),
         );
 
         global.set(
-            v8::String::new(&mut scope, "argsJSON").unwrap().into(),
-            v8::String::new(&mut scope, &serde_json::to_string(args).unwrap())
-                .unwrap()
+            v8::String::new(&mut scope, "argsJSON")
+                .ok_or(GatewayError::FailedToCreateV8String)?
+                .into(),
+            v8::String::new(&mut scope, &serde_json::to_string(args)?)
+                .ok_or(GatewayError::FailedToCreateV8String)?
                 .into(),
         );
 
@@ -1044,20 +1068,21 @@ impl Gateway {
             (_, Some(exception)) => {
                 let msg = (|| {
                     // Extract `message` property from exception object
-                    let message_str = v8::String::new(&mut try_catch, "message").unwrap();
+                    let message_str = v8::String::new(&mut try_catch, "message")
+                        .ok_or(GatewayError::FailedToCreateV8String)?;
 
                     if let Some(object) = exception.to_object(&mut try_catch) {
                         if let Some(message) = object.get(&mut try_catch, message_str.into()) {
-                            return message;
+                            return Ok::<_, GatewayError>(message);
                         }
                     }
 
-                    exception
-                })();
+                    Ok(exception)
+                })()?;
 
                 let exception_string = msg
                     .to_string(&mut try_catch)
-                    .unwrap()
+                    .ok_or(GatewayError::FailedToCreateV8String)?
                     .to_rust_string_lossy(&mut try_catch);
 
                 let s = exception_string.replace("$$__USER_ERROR:", "");
@@ -1077,15 +1102,6 @@ impl Gateway {
             (None, None) => unreachable!(),
         }
     }
-}
-
-fn normalized_collection_name(collection_id: &str) -> String {
-    collection_id
-        .split('/')
-        .last()
-        .unwrap()
-        .to_string()
-        .replace("-", "_")
 }
 
 #[cfg(test)]

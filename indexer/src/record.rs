@@ -386,6 +386,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                 {
                     // s is 0x-prefixed hex-encoded x and y parameters, without 0x04 prefix
                     if let Ok(bytes) = hex::decode(s[2..].as_bytes()) {
+                        #[allow(clippy::unwrap_used)]
                         // Unwrap is safe because we know the hex is 64 bytes
                         let bytes = <[u8; 64]>::try_from(bytes.as_slice()).unwrap();
 
@@ -414,6 +415,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
             Type::ForeignRecord(fr) => {
                 let convert = || {
                     let reference = ForeignRecordReference::try_from(value)?;
+                    #[allow(clippy::unwrap_used)] // split always returns at least one element
                     let short_collection_name = reference.collection_id.split('/').last().unwrap();
 
                     if short_collection_name != fr.collection {

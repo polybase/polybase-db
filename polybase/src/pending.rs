@@ -28,7 +28,8 @@ impl<K: Eq + PartialEq + Hash + Clone, V> PendingQueue<K, V> {
     }
 
     pub fn insert(&self, key: K, value: V) -> Result<()> {
-        let mut state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let mut state = self.state.lock().expect("Mutex was poisoned");
         if state.pending_lock.contains(&key) {
             return Err(PendingQueueError::KeyExists);
         }
@@ -38,19 +39,23 @@ impl<K: Eq + PartialEq + Hash + Clone, V> PendingQueue<K, V> {
     }
 
     pub fn has(&self, key: &K) -> bool {
-        let state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let state = self.state.lock().expect("Mutex was poisoned");
+
         state.pending_lock.contains(key)
     }
 
     pub fn pop(&self) -> Option<(K, V)> {
-        let mut state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let mut state = self.state.lock().expect("Mutex was poisoned");
         let value = state.pending.pop_front()?;
         state.pending_lock.remove(&value.0);
         Some(value)
     }
 
     pub fn back_key(&self) -> Option<K> {
-        let state = self.state.lock().unwrap();
+        #[allow(clippy::expect_used)] // no obvious way to recover from a poisoned mutex
+        let state = self.state.lock().expect("Mutex was poisoned");
         state.pending.back().map(|(k, _)| k.clone())
     }
 }
