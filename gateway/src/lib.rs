@@ -241,16 +241,14 @@ fn reference_records(
     collection_ast: &polylang::stableast::Collection,
     record: serde_json::Value,
 ) -> Result<serde_json::Value> {
-    let record_fields = find_record_fields(collection_ast);
-
     fn visitor(
         collection_namespace: &str,
-        record_fields: &[(Vec<&str>, polylang::stableast::Type)],
+        collection_ast: &polylang::stableast::Collection,
         path: &mut Vec<String>,
         value: serde_json::Value,
     ) -> Result<serde_json::Value> {
-        if let Some((_, type_)) = record_fields.iter().find(|(p, _)| p == path) {
-            match type_ {
+        if let Some(field) = collection_ast.find_field(path) {
+            match field.type_() {
                 polylang::stableast::Type::Record(_) => {
                     let serde_json::Value::Object(o) = value else {
                         return Err(GatewayUserError::RecordFieldNotObject)?;
@@ -282,6 +280,37 @@ fn reference_records(
                         serde_json::json!({ "id": id, "collectionId": foreign_collection_id }),
                     );
                 }
+                polylang::stableast::Type::Array(t) => match t.value.as_ref() {
+                    polylang::stableast::Type::ForeignRecord(fr) => {
+                        let serde_json::Value::Array(ref arr) = value else {
+                            return Err(GatewayUserError::RecordFieldNotObject.into());
+                        };
+
+                        let arr = arr.iter().map(|o| {
+                            let serde_json::Value::Object(o) = o else {
+                                return Err(GatewayUserError::RecordFieldNotObject.into());
+                            };
+
+                            let id = o
+                                .get("id")
+                                .ok_or(GatewayUserError::CollectionRecordIdNotFound)?
+                                .as_str()
+                                .ok_or(GatewayUserError::RecordIdNotString)?;
+    
+                            let foreign_collection_id =
+                                collection_namespace.to_string() + "/" + &fr.collection;
+    
+                            Ok(
+                                serde_json::json!({ "id": id, "collectionId": foreign_collection_id }),
+                            )
+                        });
+
+                        return Ok(serde_json::Value::from(arr.collect::<Result<Vec<_>>>()?));
+                    }
+                    // Record types are not allowed in collection fields, only function parameters
+                    polylang::stableast::Type::Record(_) => unreachable!(),
+                    _ => {},
+                },
                 _ => {}
             }
         }
@@ -292,7 +321,7 @@ fn reference_records(
 
                 for (k, v) in o.into_iter() {
                     path.push(k.clone());
-                    let res = visitor(collection_namespace, record_fields, path, v)?;
+                    let res = visitor(collection_namespace, collection_ast, path, v)?;
                     path.pop();
 
                     new_o.insert(k, res);
@@ -305,7 +334,7 @@ fn reference_records(
 
                 for (i, v) in a.into_iter().enumerate() {
                     path.push(i.to_string());
-                    new_a.push(visitor(collection_namespace, record_fields, path, v)?);
+                    new_a.push(visitor(collection_namespace, collection_ast, path, v)?);
                     path.pop();
                 }
 
@@ -318,7 +347,7 @@ fn reference_records(
         }
     }
 
-    let record = visitor(collection.namespace(), &record_fields, &mut vec![], record)?;
+    let record = visitor(collection.namespace(), collection_ast, &mut vec![], record)?;
 
     Ok(record)
 }

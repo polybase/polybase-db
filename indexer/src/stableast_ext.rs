@@ -1,5 +1,6 @@
 use polylang::stableast;
 
+#[derive(Debug)]
 pub enum Field<'ast> {
     /// A top level property.
     Property(&'ast stableast::Property<'ast>),
