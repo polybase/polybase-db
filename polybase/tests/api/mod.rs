@@ -6,6 +6,7 @@ mod call;
 mod collection_collection;
 mod errors;
 mod general_collection;
+mod index_record_refs;
 mod index_where_sort;
 mod map_field;
 mod nested_field;
