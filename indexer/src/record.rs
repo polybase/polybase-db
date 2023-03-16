@@ -489,6 +489,7 @@ impl TryFrom<IndexValue<'_>> for serde_json::Value {
             ),
             IndexValue::Boolean(b) => serde_json::Value::Bool(b),
             IndexValue::PublicKey(p) => serde_json::Value::from(p.into_owned()),
+            IndexValue::ForeignRecordReference(r) => serde_json::Value::from(r.into_owned()),
             IndexValue::Null => serde_json::Value::Null,
         })
     }
@@ -532,7 +533,12 @@ impl RecordValue {
                 }
             }
             RecordValue::RecordReference(_) => {}
-            RecordValue::ForeignRecordReference(_) => {}
+            RecordValue::ForeignRecordReference(fr) => {
+                f(
+                    current_path,
+                    IndexValue::ForeignRecordReference(Cow::Borrowed(fr)),
+                )?;
+            }
         }
 
         Ok(())
@@ -682,6 +688,29 @@ impl From<RecordReference> for serde_json::Value {
 pub struct ForeignRecordReference {
     pub id: String,
     pub collection_id: String,
+}
+
+impl ForeignRecordReference {
+    fn to_indexable(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&u32::to_be_bytes(self.collection_id.as_bytes().len() as u32));
+        v.extend_from_slice(self.collection_id.as_bytes());
+        v.extend_from_slice(&u32::to_be_bytes(self.id.as_bytes().len() as u32));
+        v.extend_from_slice(self.id.as_bytes());
+        v
+    }
+
+    fn from_indexable(v: &[u8]) -> Result<Self> {
+        let mut v = v;
+        let collection_id_len = u32::from_be_bytes(v[..4].try_into()?) as usize;
+        v = &v[4..];
+        let collection_id = String::from_utf8(v[..collection_id_len].to_vec())?;
+        v = &v[collection_id_len..];
+        let id_len = u32::from_be_bytes(v[..4].try_into()?) as usize;
+        v = &v[4..];
+        let id = String::from_utf8(v[..id_len].to_vec())?;
+        Ok(ForeignRecordReference { id, collection_id })
+    }
 }
 
 impl TryFrom<serde_json::Value> for ForeignRecordReference {
@@ -875,6 +904,7 @@ pub enum IndexValue<'a> {
     Null,
     String(Cow<'a, str>),
     PublicKey(Cow<'a, publickey::PublicKey>),
+    ForeignRecordReference(Cow<'a, ForeignRecordReference>),
 }
 
 impl IndexValue<'_> {
@@ -885,6 +915,7 @@ impl IndexValue<'_> {
             IndexValue::Number(_) => keys::BYTE_NUMBER,
             IndexValue::Boolean(_) => keys::BYTE_BOOLEAN,
             IndexValue::PublicKey(_) => keys::BYTE_PUBLIC_KEY,
+            IndexValue::ForeignRecordReference(_) => keys::BYTE_FOREIGN_RECORD_REFERENCE,
         }
     }
 
@@ -902,6 +933,7 @@ impl IndexValue<'_> {
             },
             IndexValue::Null => Cow::Borrowed(&[0x00]),
             IndexValue::PublicKey(jwk) => Cow::Owned(jwk.to_indexable()),
+            IndexValue::ForeignRecordReference(frr) => Cow::Owned(frr.to_indexable()),
         };
 
         let len = 1 + u16::try_from(value.len())?;
@@ -927,6 +959,9 @@ impl IndexValue<'_> {
             keys::BYTE_PUBLIC_KEY => {
                 IndexValue::PublicKey(Cow::Owned(publickey::PublicKey::from_indexable(value)?))
             }
+            keys::BYTE_FOREIGN_RECORD_REFERENCE => IndexValue::ForeignRecordReference(Cow::Owned(
+                ForeignRecordReference::from_indexable(value)?,
+            )),
             b => return Err(RecordError::InvalidTypePrefix { b }),
         };
 
@@ -937,6 +972,9 @@ impl IndexValue<'_> {
         match self {
             IndexValue::String(s) => IndexValue::String(Cow::Owned(s.into_owned())),
             IndexValue::PublicKey(p) => IndexValue::PublicKey(Cow::Owned(p.into_owned())),
+            IndexValue::ForeignRecordReference(frr) => {
+                IndexValue::ForeignRecordReference(Cow::Owned(frr.into_owned()))
+            }
             IndexValue::Number(n) => IndexValue::Number(n),
             IndexValue::Boolean(b) => IndexValue::Boolean(b),
             IndexValue::Null => IndexValue::Null,
@@ -954,9 +992,11 @@ impl TryFrom<RecordValue> for IndexValue<'_> {
             RecordValue::Number(n) => Ok(IndexValue::Number(n)),
             RecordValue::String(s) => Ok(IndexValue::String(Cow::Owned(s))),
             RecordValue::PublicKey(p) => Ok(IndexValue::PublicKey(Cow::Owned(p))),
+            RecordValue::ForeignRecordReference(fr) => {
+                Ok(IndexValue::ForeignRecordReference(Cow::Owned(fr)))
+            }
             RecordValue::Bytes(_) => Err(()),
             RecordValue::RecordReference(_) => Err(()),
-            RecordValue::ForeignRecordReference(_) => Err(()),
             RecordValue::Map(_) => Err(()),
             RecordValue::Array(_) => Err(()),
         }

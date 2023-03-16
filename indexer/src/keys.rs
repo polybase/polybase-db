@@ -60,6 +60,7 @@ pub(crate) const BYTE_BOOLEAN: u8 = 0x06;
 #[allow(dead_code)]
 pub(crate) const BYTE_BYTES: u8 = 0x07;
 pub(crate) const BYTE_PUBLIC_KEY: u8 = 0x08;
+pub(crate) const BYTE_FOREIGN_RECORD_REFERENCE: u8 = 0x09;
 
 pub(crate) fn comparator(key1: &[u8], key2: &[u8]) -> Ordering {
     if key1.len() < KEY_COMPARE_PREFIX || key2.len() < KEY_COMPARE_PREFIX {
