@@ -590,7 +590,14 @@ impl Gateway {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        if params.len() != args.len() {
+        let required_params_len = params.iter().filter(|p| p.required).count();
+        if args.len() < required_params_len {
+            return Err(GatewayUserError::FunctionIncorrectNumberOfArguments {
+                expected: required_params_len,
+                actual: args.len(),
+            })?;
+        }
+        if args.len() > params.len() {
             return Err(GatewayUserError::FunctionIncorrectNumberOfArguments {
                 expected: params.len(),
                 actual: args.len(),
