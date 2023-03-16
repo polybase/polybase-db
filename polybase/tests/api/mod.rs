@@ -230,9 +230,9 @@ impl Server {
         let res = self.client.execute(req).await.unwrap();
 
         if res.status().is_success() {
-            return Ok(res.json().await.unwrap());
+            Ok(res.json().await.unwrap())
         } else {
-            return Err(res.json().await.unwrap());
+            Err(res.json().await.unwrap())
         }
     }
 
@@ -275,9 +275,9 @@ impl Server {
         let res = self.client.execute(req).await.unwrap();
 
         if res.status().is_success() {
-            return Ok(res.json().await.unwrap());
+            Ok(res.json().await.unwrap())
         } else {
-            return Err(res.json().await.unwrap());
+            Err(res.json().await.unwrap())
         }
     }
 
@@ -324,7 +324,7 @@ impl Server {
                 }
             }
         } else {
-            return Err(res.json().await.unwrap());
+            Err(res.json().await.unwrap())
         }
     }
 
@@ -374,9 +374,9 @@ impl Server {
         let res = self.client.execute(req).await.unwrap();
 
         if res.status().is_success() {
-            return Ok(res.json().await.unwrap());
+            Ok(res.json().await.unwrap())
         } else {
-            return Err(res.json().await.unwrap());
+            Err(res.json().await.unwrap())
         }
     }
 
