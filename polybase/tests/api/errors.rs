@@ -517,3 +517,196 @@ collection test {
         }
     );
 }
+
+#[tokio::test]
+async fn invalid_value_type() {
+    let server = Server::setup_and_wait().await;
+
+    let collection = server
+        .create_collection_untyped(
+            "ns/Test",
+            r#"
+@public
+collection Test {
+    id: string;
+    name: string;
+    extra: {
+        surname: string;
+        testRecord?: Test;
+    };
+    arr: string[];
+
+    constructor (id: string, name: string) {
+        this.id = id;
+        this.name = name;
+        this.extra = { surname: 'Doe' };
+        this.arr = ['a', 'b'];
+    }
+
+    changeNameToUndefined() {
+        this.name = undefined;
+    }
+    
+    changeSurnameToUndefined() {
+        this.extra.surname = undefined;
+    }
+
+    changeNameToNumber() {
+        this.name = 1;
+    }
+
+    changeSurnameToNumber() {
+        this.extra.surname = 1;
+    }
+
+    addNumberToArray() {
+        this.arr.push(1);
+    }
+
+    changeNameAndSurnameToNumber() {
+        this.name = 1;
+        this.extra.surname = 1;
+    }
+
+    setRecord(test: Test) {
+        this.extra.testRecord = test;
+    }
+}
+        "#,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        collection
+            .create(json!(["id1", "John"]), None)
+            .await
+            .unwrap(),
+        json!({
+            "id": "id1",
+            "name": "John",
+            "extra": {
+                "surname": "Doe"
+            },
+            "arr": ["a", "b"]
+        }),
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "changeNameToUndefined", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/missing-field".to_string(),
+                message: "record is missing field \"name\"".to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "changeSurnameToUndefined", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/missing-field".to_string(),
+                message: "record is missing field \"extra.surname\"".to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "changeNameToNumber", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/invalid-field".to_string(),
+                message: "value at field \"name\" does not match the schema type, value: 1"
+                    .to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "changeSurnameToNumber", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/invalid-field".to_string(),
+                message:
+                    "value at field \"extra.surname\" does not match the schema type, value: 1"
+                        .to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "addNumberToArray", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/invalid-field".to_string(),
+                message: "value at field \"arr.[]\" does not match the schema type, value: 1"
+                    .to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "changeNameAndSurnameToNumber", json!([]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/invalid-field".to_string(),
+                message: "value at field \"name\" does not match the schema type, value: 1"
+                    .to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "setRecord", json!([json!({"collectionId": collection.id.clone(), "id": "id2", "extraFieldName": "John"})]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "function/invalid-args".to_string(),
+                message: r#"invalid argument type for parameter "test": unexpected fields: test.extraFieldName"#.to_string(),
+            }
+        }
+    );
+
+    assert_eq!(
+        collection
+            .call("id1", "setRecord", json!([json!({"collectionId": collection.id.clone(), "id": 123})]), None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "function/invalid-args".to_string(),
+                message: r#"invalid argument type for parameter "test": value at field "test.id" does not match the schema type, value: 123"#.to_string(),
+            }
+        }
+    );
+}

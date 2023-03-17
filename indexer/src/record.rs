@@ -18,15 +18,6 @@ pub enum RecordError {
     #[error("invalid type prefix {b}")]
     InvalidTypePrefix { b: u8 },
 
-    #[error("value {value:?} at field {field:?} does not match the schema type")]
-    InvalidSerdeJSONType {
-        value: serde_json::Value,
-        field: Option<String>,
-    },
-
-    #[error("unexpected fields {fields:?}")]
-    UnexpectedFields { fields: Vec<String> },
-
     #[error("expected value to be an object, got {got:?}")]
     ExpectedObject { got: serde_json::Value },
 
@@ -68,6 +59,15 @@ pub enum RecordError {
 pub enum RecordUserError {
     #[error("record is missing field {field:?}")]
     MissingField { field: String },
+
+    #[error("value at field \"{}\" does not match the schema type, value: {value}", .field.as_deref().unwrap_or("unknown"))]
+    InvalidFieldValueType {
+        value: serde_json::Value,
+        field: Option<String>,
+    },
+
+    #[error("unexpected fields: {}", .fields.join(", "))]
+    UnexpectedFields { fields: Vec<String> },
 }
 
 pub type RecordRoot = HashMap<String, RecordValue>;
@@ -88,11 +88,12 @@ pub fn json_to_record(
         }
         _ => None,
     }) {
-        let Some((name, value)) = value.remove_entry(field.as_ref()) else {
+        let Some((name, value)) = value.remove_entry(field.as_ref())
+        else {
             if *required {
                 if always_cast {
                     // Insert default for the type
-                    map.insert(field.to_string(), Converter::convert((ty, serde_json::Value::Null), always_cast)?);
+                    map.insert(field.to_string(), Converter::convert((ty, serde_json::Value::Null), &mut vec![Cow::Borrowed(field.as_ref())], always_cast)?);
                     continue;
                 }
 
@@ -102,7 +103,9 @@ pub fn json_to_record(
             }
         };
 
-        map.insert(name, Converter::convert((ty, value), always_cast)?);
+        let converted =
+            Converter::convert((ty, value), &mut vec![Cow::Borrowed(&name)], always_cast)?;
+        map.insert(name, converted);
     }
 
     Ok(map)
@@ -136,11 +139,11 @@ pub enum RecordValue {
 pub trait Converter {
     /// If always_cast is true, the converter will try to cast values of mismatched types,
     /// if it fails, then it will set them to the default value for the schema type.
-    fn convert(self, always_cast: bool) -> Result<RecordValue>;
+    fn convert(self, path: &mut Vec<Cow<str>>, always_cast: bool) -> Result<RecordValue>;
 }
 
 impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
-    fn convert(self, always_cast: bool) -> Result<RecordValue> {
+    fn convert(self, path: &mut Vec<Cow<str>>, always_cast: bool) -> Result<RecordValue> {
         use polylang::stableast::{PrimitiveType, Type};
 
         let (ty, value) = self;
@@ -169,10 +172,11 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         if always_cast {
                             Ok(RecordValue::String("".to_string()))
                         } else {
-                            Err(RecordError::InvalidSerdeJSONType {
+                            Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
-                                field: None,
-                            })
+                                field: Some(path.join(".")),
+                            }
+                            .into())
                         }
                     }
                 },
@@ -219,10 +223,11 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         if always_cast {
                             Ok(RecordValue::Bytes(vec![]))
                         } else {
-                            Err(RecordError::InvalidSerdeJSONType {
+                            Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
-                                field: None,
-                            })
+                                field: Some(path.join(".")),
+                            }
+                            .into())
                         }
                     }
                 },
@@ -246,10 +251,11 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         if always_cast {
                             Ok(RecordValue::Number(0.0))
                         } else {
-                            Err(RecordError::InvalidSerdeJSONType {
+                            Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
-                                field: None,
-                            })
+                                field: Some(path.join(".")),
+                            }
+                            .into())
                         }
                     }
                 },
@@ -266,63 +272,90 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         if always_cast {
                             Ok(RecordValue::Boolean(false))
                         } else {
-                            Err(RecordError::InvalidSerdeJSONType {
+                            Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
-                                field: None,
-                            })
+                                field: Some(path.join(".")),
+                            }
+                            .into())
                         }
                     }
                 },
             },
-            Type::Array(t) => match value {
-                serde_json::Value::Array(a) => {
-                    let mut array = Vec::with_capacity(a.len());
-                    for v in a {
-                        array.push(Converter::convert((t.value.as_ref(), v), always_cast)?);
-                    }
+            Type::Array(t) => {
+                path.push(Cow::Borrowed("[]"));
 
-                    Ok(RecordValue::Array(array))
-                }
-                serde_json::Value::Null if always_cast => Ok(RecordValue::Array(vec![])),
-                serde_json::Value::Bool(b) if always_cast => {
-                    Ok(RecordValue::Array(vec![Converter::convert(
-                        (t.value.as_ref(), serde_json::Value::Bool(b)),
-                        always_cast,
-                    )?]))
-                }
-                serde_json::Value::Number(n) if always_cast => {
-                    Ok(RecordValue::Array(vec![Converter::convert(
-                        (t.value.as_ref(), serde_json::Value::Number(n)),
-                        always_cast,
-                    )?]))
-                }
-                serde_json::Value::String(s) if always_cast => {
-                    Ok(RecordValue::Array(vec![Converter::convert(
-                        (t.value.as_ref(), serde_json::Value::String(s)),
-                        always_cast,
-                    )?]))
-                }
-                serde_json::Value::Object(_) if always_cast => {
-                    // Turn this into an array with one object
-                    let arr = vec![Converter::convert((t.value.as_ref(), value), always_cast)?];
-                    Ok(RecordValue::Array(arr))
-                }
-                x => {
-                    if always_cast {
-                        Ok(RecordValue::Array(vec![]))
-                    } else {
-                        Err(RecordError::InvalidSerdeJSONType {
-                            value: x,
-                            field: None,
-                        })
+                let res = match value {
+                    serde_json::Value::Array(a) => {
+                        let mut array = Vec::with_capacity(a.len());
+
+                        for v in a {
+                            array.push(Converter::convert(
+                                (t.value.as_ref(), v),
+                                path,
+                                always_cast,
+                            )?);
+                        }
+
+                        Ok(RecordValue::Array(array))
                     }
-                }
-            },
+                    serde_json::Value::Null if always_cast => Ok(RecordValue::Array(vec![])),
+                    serde_json::Value::Bool(b) if always_cast => {
+                        Ok(RecordValue::Array(vec![Converter::convert(
+                            (t.value.as_ref(), serde_json::Value::Bool(b)),
+                            path,
+                            always_cast,
+                        )?]))
+                    }
+                    serde_json::Value::Number(n) if always_cast => {
+                        Ok(RecordValue::Array(vec![Converter::convert(
+                            (t.value.as_ref(), serde_json::Value::Number(n)),
+                            path,
+                            always_cast,
+                        )?]))
+                    }
+                    serde_json::Value::String(s) if always_cast => {
+                        Ok(RecordValue::Array(vec![Converter::convert(
+                            (t.value.as_ref(), serde_json::Value::String(s)),
+                            path,
+                            always_cast,
+                        )?]))
+                    }
+                    serde_json::Value::Object(_) if always_cast => {
+                        // Turn this into an array with one object
+                        let arr = vec![Converter::convert(
+                            (t.value.as_ref(), value),
+                            path,
+                            always_cast,
+                        )?];
+                        Ok(RecordValue::Array(arr))
+                    }
+                    x => {
+                        if always_cast {
+                            Ok(RecordValue::Array(vec![]))
+                        } else {
+                            Err(RecordUserError::InvalidFieldValueType {
+                                value: x,
+                                field: Some(path.join(".")),
+                            }
+                            .into())
+                        }
+                    }
+                };
+
+                path.pop();
+
+                res
+            }
             Type::Map(t) => match value {
                 serde_json::Value::Object(o) => {
                     let mut map = HashMap::with_capacity(o.len());
                     for (k, v) in o {
-                        map.insert(k, Converter::convert((t.value.as_ref(), v), always_cast)?);
+                        path.push(Cow::Owned(k.clone()));
+                        map.insert(
+                            k,
+                            Converter::convert((t.value.as_ref(), v), path, always_cast)?,
+                        );
+                        path.pop();
                     }
                     Ok(RecordValue::Map(map))
                 }
@@ -330,10 +363,11 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     if always_cast {
                         Ok(RecordValue::Map(HashMap::new()))
                     } else {
-                        Err(RecordError::InvalidSerdeJSONType {
+                        Err(RecordUserError::InvalidFieldValueType {
                             value: x,
-                            field: None,
-                        })
+                            field: Some(path.join(".")),
+                        }
+                        .into())
                     }
                 }
             },
@@ -342,26 +376,32 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     let mut map = HashMap::with_capacity(o.len());
 
                     for field in &t.fields {
+                        path.push(Cow::Owned(field.name.to_string()));
+
                         let Some((k, v)) = o.remove_entry(field.name.as_ref()) else {
                             if field.required {
                                 if always_cast {
-                                    map.insert(field.name.to_string(), Converter::convert((&field.type_, serde_json::Value::Null), always_cast)?);
+                                    map.insert(field.name.to_string(), Converter::convert((&field.type_, serde_json::Value::Null), path, always_cast)?);
                                     continue;
                                 }
 
-                                return Err(RecordUserError::MissingField { field: field.name.to_string() }.into());
+                                return Err(RecordUserError::MissingField { field: path.join(".") }.into());
                             } else {
                                 continue;
                             }
                         };
 
-                        map.insert(k, Converter::convert((&field.type_, v), always_cast)?);
+                        map.insert(k, Converter::convert((&field.type_, v), path, always_cast)?);
+
+                        path.pop();
                     }
 
                     if !o.is_empty() {
-                        return Err(RecordError::UnexpectedFields {
-                            fields: o.keys().map(|k| k.to_owned()).collect::<Vec<_>>(),
-                        });
+                        let path = path.join(".");
+                        return Err(RecordUserError::UnexpectedFields {
+                            fields: o.keys().map(|k| path.clone() + "." + k).collect::<Vec<_>>(),
+                        }
+                        .into());
                     }
 
                     Ok(RecordValue::Map(map))
@@ -370,10 +410,11 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     if always_cast {
                         Ok(RecordValue::Map(HashMap::new()))
                     } else {
-                        Err(RecordError::InvalidSerdeJSONType {
+                        Err(RecordUserError::InvalidFieldValueType {
                             value: x,
-                            field: None,
-                        })
+                            field: Some(path.join(".")),
+                        }
+                        .into())
                     }
                 }
             },
@@ -399,13 +440,52 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
                 }
                 _ if always_cast => Ok(RecordValue::PublicKey(publickey::PublicKey::default())),
-                x => Err(RecordError::InvalidSerdeJSONType {
+                x => Err(RecordUserError::InvalidFieldValueType {
                     value: x,
-                    field: None,
-                }),
+                    field: Some(path.join(".")),
+                }
+                .into()),
             },
             Type::Record(_) => Ok(RecordValue::RecordReference({
-                let mut r = RecordReference::try_from(value);
+                let mut r = match value {
+                    serde_json::Value::Object(mut o) => {
+                        let id = {
+                            path.push(Cow::Borrowed("id"));
+
+                            let r = match o.remove("id") {
+                                Some(serde_json::Value::String(s)) => s,
+                                Some(v) => {
+                                    return Err(RecordUserError::InvalidFieldValueType {
+                                        value: v,
+                                        field: Some(path.join(".")),
+                                    }
+                                    .into())
+                                }
+                                None => {
+                                    return Err(RecordUserError::MissingField {
+                                        field: path.join("."),
+                                    }
+                                    .into())
+                                }
+                            };
+
+                            path.pop();
+                            r
+                        };
+
+                        if !o.is_empty() {
+                            let path = path.join(".");
+
+                            return Err(RecordUserError::UnexpectedFields {
+                                fields: o.keys().map(|k| path.clone() + "." + k).collect(),
+                            }
+                            .into());
+                        }
+
+                        Ok(RecordReference { id })
+                    }
+                    x => Err(RecordError::ExpectedObject { got: x }),
+                };
                 if r.is_err() && always_cast {
                     r = Ok(RecordReference::default());
                 }
@@ -414,7 +494,69 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
             })),
             Type::ForeignRecord(fr) => {
                 let convert = || {
-                    let reference = ForeignRecordReference::try_from(value)?;
+                    let reference = match value {
+                        serde_json::Value::Object(mut m) => {
+                            let id = {
+                                path.push(Cow::Borrowed("id"));
+
+                                let r = match m.remove("id") {
+                                    Some(serde_json::Value::String(s)) => s,
+                                    Some(v) => {
+                                        return Err(RecordUserError::InvalidFieldValueType {
+                                            value: v,
+                                            field: Some(path.join(".")),
+                                        }
+                                        .into())
+                                    }
+                                    _ => {
+                                        return Err(RecordUserError::MissingField {
+                                            field: path.join("."),
+                                        }
+                                        .into())
+                                    }
+                                };
+
+                                path.pop();
+                                r
+                            };
+
+                            let collection_id = {
+                                path.push(Cow::Borrowed("collectionId"));
+
+                                let r = match m.remove("collectionId") {
+                                    Some(serde_json::Value::String(s)) => s,
+                                    Some(v) => {
+                                        return Err(RecordUserError::InvalidFieldValueType {
+                                            value: v,
+                                            field: Some(path.join(".")),
+                                        }
+                                        .into())
+                                    }
+                                    None => {
+                                        return Err(RecordUserError::MissingField {
+                                            field: path.join("."),
+                                        }
+                                        .into())
+                                    }
+                                };
+
+                                path.pop();
+                                r
+                            };
+
+                            if !m.is_empty() {
+                                let path = path.join(".");
+                                return Err(RecordUserError::UnexpectedFields {
+                                    fields: m.keys().map(|k| path.clone() + "." + k).collect(),
+                                }
+                                .into());
+                            }
+
+                            Ok(ForeignRecordReference { id, collection_id })
+                        }
+                        v => Err(RecordError::ExpectedObject { got: v }),
+                    }?;
+
                     #[allow(clippy::unwrap_used)] // split always returns at least one element
                     let short_collection_name = reference.collection_id.split('/').last().unwrap();
 
@@ -641,41 +783,6 @@ pub struct RecordReference {
     pub id: String,
 }
 
-impl TryFrom<serde_json::Value> for RecordReference {
-    type Error = RecordError;
-
-    fn try_from(value: serde_json::Value) -> Result<Self> {
-        match value {
-            serde_json::Value::Object(mut o) => {
-                let id = match o.remove("id") {
-                    Some(serde_json::Value::String(s)) => s,
-                    Some(v) => {
-                        return Err(RecordError::InvalidSerdeJSONType {
-                            value: v,
-                            field: Some("id".to_string()),
-                        })
-                    }
-                    None => {
-                        return Err(RecordUserError::MissingField {
-                            field: "id".to_string(),
-                        }
-                        .into())
-                    }
-                };
-
-                if !o.is_empty() {
-                    return Err(RecordError::UnexpectedFields {
-                        fields: o.keys().map(|k| k.to_string()).collect(),
-                    });
-                }
-
-                Ok(RecordReference { id })
-            }
-            x => Err(RecordError::ExpectedObject { got: x }),
-        }
-    }
-}
-
 impl From<RecordReference> for serde_json::Value {
     fn from(r: RecordReference) -> Self {
         serde_json::json!({
@@ -710,57 +817,6 @@ impl ForeignRecordReference {
         v = &v[4..];
         let id = String::from_utf8(v[..id_len].to_vec())?;
         Ok(ForeignRecordReference { id, collection_id })
-    }
-}
-
-impl TryFrom<serde_json::Value> for ForeignRecordReference {
-    type Error = RecordError;
-
-    fn try_from(value: serde_json::Value) -> Result<Self> {
-        match value {
-            serde_json::Value::Object(mut m) => {
-                let id = match m.remove("id") {
-                    Some(serde_json::Value::String(s)) => s,
-                    Some(v) => {
-                        return Err(RecordError::InvalidSerdeJSONType {
-                            value: v,
-                            field: Some("id".to_string()),
-                        })
-                    }
-                    _ => {
-                        return Err(RecordUserError::MissingField {
-                            field: "id".to_string(),
-                        }
-                        .into())
-                    }
-                };
-
-                let collection_id = match m.remove("collectionId") {
-                    Some(serde_json::Value::String(s)) => s,
-                    Some(v) => {
-                        return Err(RecordError::InvalidSerdeJSONType {
-                            value: v,
-                            field: Some("collectionId".to_string()),
-                        })
-                    }
-                    None => {
-                        return Err(RecordUserError::MissingField {
-                            field: "collectionId".to_string(),
-                        }
-                        .into())
-                    }
-                };
-
-                if !m.is_empty() {
-                    return Err(RecordError::UnexpectedFields {
-                        fields: m.keys().map(|k| k.to_string()).collect(),
-                    });
-                }
-
-                Ok(ForeignRecordReference { id, collection_id })
-            }
-            v => Err(RecordError::ExpectedObject { got: v }),
-        }
     }
 }
 

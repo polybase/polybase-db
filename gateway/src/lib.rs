@@ -38,7 +38,7 @@ pub enum GatewayError {
     SerdeJsonError(#[from] serde_json::Error),
 }
 
-#[derive(Debug, thiserror::Error, Serialize)]
+#[derive(Debug, thiserror::Error)]
 pub enum GatewayUserError {
     #[error("record {record_id:?} was not found in collection {collection_id:?}")]
     RecordNotFound {
@@ -82,8 +82,11 @@ pub enum GatewayUserError {
     #[error("incorrect number of arguments, expected {expected:?}, got {actual:?}")]
     FunctionIncorrectNumberOfArguments { expected: usize, actual: usize },
 
-    #[error("invalid argument type for parameter {parameter_name:?}")]
-    FunctionInvalidArgumentType { parameter_name: String },
+    #[error("invalid argument type for parameter {parameter_name:?}: {source}")]
+    FunctionInvalidArgumentType {
+        parameter_name: String,
+        source: indexer::RecordError,
+    },
 
     #[error("you do not have permission to call this function")]
     UnauthorizedCall,
@@ -641,9 +644,10 @@ impl Gateway {
                     return Ok(RecordValue::Null);
                 }
 
-                Converter::convert((&param.type_, arg), false).map_err(|_| {
+                Converter::convert((&param.type_, arg), &mut vec![param.name.clone()], false).map_err(|e| {
                     GatewayUserError::FunctionInvalidArgumentType {
                         parameter_name: param.name.to_string(),
+                        source: e,
                     }
                 })
             })

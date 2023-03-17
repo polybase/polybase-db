@@ -111,6 +111,10 @@ impl WhereValue {
 
         Ok(record::Converter::convert(
             (field.type_(), self.0),
+            &mut path
+                .iter()
+                .map(|x| Cow::Borrowed(x.as_ref()))
+                .collect::<Vec<_>>(),
             always_cast,
         )?)
     }

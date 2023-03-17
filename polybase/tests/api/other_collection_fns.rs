@@ -121,7 +121,7 @@ collection OtherAccountCol {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "function/invalid-args".to_string(),
-                message: r#"invalid argument type for parameter "otherAccount""#.to_string(),
+                message: r#"invalid argument type for parameter "otherAccount": foreign record reference has wrong collection id "OtherAccountCol""#.to_string(),
             },
         },
     );
