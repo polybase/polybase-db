@@ -11,8 +11,8 @@ peerList: "polybase-rust-0.polybase-headless.polybase.svc.cluster.local:5001"
 
 resources:
   limits:
-    cpu: 1
-    memory: 1Gi
+    cpu: 3
+    memory: 4Gi
   requests:
     cpu: 200m
     memory: 300Mi
