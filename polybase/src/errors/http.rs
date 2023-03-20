@@ -2,7 +2,6 @@ use actix_web::{
     http::{header::ContentType, StatusCode},
     HttpResponse,
 };
-use indexer::RecordUserError;
 use serde::Serialize;
 use std::{error::Error, fmt::Display};
 
