@@ -60,9 +60,10 @@ pub enum RecordUserError {
     #[error("record is missing field {field:?}")]
     MissingField { field: String },
 
-    #[error("value at field \"{}\" does not match the schema type, value: {value}", .field.as_deref().unwrap_or("unknown"))]
+    #[error("value at field \"{}\" does not match the schema type, expected type: {expected_type}, got value: {value}", .field.as_deref().unwrap_or("unknown"))]
     InvalidFieldValueType {
         value: serde_json::Value,
+        expected_type: String,
         field: Option<String>,
     },
 
@@ -174,6 +175,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         } else {
                             Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
+                                expected_type: ty.to_string(),
                                 field: Some(path.join(".")),
                             }
                             .into())
@@ -225,6 +227,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         } else {
                             Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
+                                expected_type: ty.to_string(),
                                 field: Some(path.join(".")),
                             }
                             .into())
@@ -253,6 +256,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         } else {
                             Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
+                                expected_type: ty.to_string(),
                                 field: Some(path.join(".")),
                             }
                             .into())
@@ -274,6 +278,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         } else {
                             Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
+                                expected_type: ty.to_string(),
                                 field: Some(path.join(".")),
                             }
                             .into())
@@ -335,6 +340,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         } else {
                             Err(RecordUserError::InvalidFieldValueType {
                                 value: x,
+                                expected_type: ty.to_string(),
                                 field: Some(path.join(".")),
                             }
                             .into())
@@ -365,6 +371,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     } else {
                         Err(RecordUserError::InvalidFieldValueType {
                             value: x,
+                            expected_type: ty.to_string(),
                             field: Some(path.join(".")),
                         }
                         .into())
@@ -412,6 +419,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     } else {
                         Err(RecordUserError::InvalidFieldValueType {
                             value: x,
+                            expected_type: ty.to_string(),
                             field: Some(path.join(".")),
                         }
                         .into())
@@ -442,6 +450,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                 _ if always_cast => Ok(RecordValue::PublicKey(publickey::PublicKey::default())),
                 x => Err(RecordUserError::InvalidFieldValueType {
                     value: x,
+                    expected_type: ty.to_string(),
                     field: Some(path.join(".")),
                 }
                 .into()),
@@ -457,6 +466,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                                 Some(v) => {
                                     return Err(RecordUserError::InvalidFieldValueType {
                                         value: v,
+                                        expected_type: ty.to_string(),
                                         field: Some(path.join(".")),
                                     }
                                     .into())
@@ -504,6 +514,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                                     Some(v) => {
                                         return Err(RecordUserError::InvalidFieldValueType {
                                             value: v,
+                                            expected_type: ty.to_string(),
                                             field: Some(path.join(".")),
                                         }
                                         .into())
@@ -528,6 +539,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                                     Some(v) => {
                                         return Err(RecordUserError::InvalidFieldValueType {
                                             value: v,
+                                            expected_type: ty.to_string(),
                                             field: Some(path.join(".")),
                                         }
                                         .into())

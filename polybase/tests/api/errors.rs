@@ -630,7 +630,7 @@ collection Test {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "record/invalid-field".to_string(),
-                message: "value at field \"name\" does not match the schema type, value: 1"
+                message: "value at field \"name\" does not match the schema type, expected type: string, got value: 1"
                     .to_string(),
             }
         }
@@ -646,7 +646,7 @@ collection Test {
                 code: "invalid-argument".to_string(),
                 reason: "record/invalid-field".to_string(),
                 message:
-                    "value at field \"extra.surname\" does not match the schema type, value: 1"
+                    "value at field \"extra.surname\" does not match the schema type, expected type: string, got value: 1"
                         .to_string(),
             }
         }
@@ -661,7 +661,7 @@ collection Test {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "record/invalid-field".to_string(),
-                message: "value at field \"arr.[]\" does not match the schema type, value: 1"
+                message: "value at field \"arr.[]\" does not match the schema type, expected type: string, got value: 1"
                     .to_string(),
             }
         }
@@ -676,7 +676,7 @@ collection Test {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "record/invalid-field".to_string(),
-                message: "value at field \"name\" does not match the schema type, value: 1"
+                message: "value at field \"name\" does not match the schema type, expected type: string, got value: 1"
                     .to_string(),
             }
         }
@@ -705,7 +705,7 @@ collection Test {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "function/invalid-args".to_string(),
-                message: r#"invalid argument type for parameter "test": value at field "test.id" does not match the schema type, value: 123"#.to_string(),
+                message: r#"invalid argument type for parameter "test": value at field "test.id" does not match the schema type, expected type: Test, got value: 123"#.to_string(),
             }
         }
     );
