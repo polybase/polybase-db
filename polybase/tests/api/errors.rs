@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::api::{Error, ErrorData, Server};
+use crate::api::{Error, ErrorData, ListQuery, Server};
 
 macro_rules! create_collection_test {
     ($error:expr, $test_name:ident, $collection_id:expr, $schema:expr, $signer:expr $(,)?) => {
@@ -708,5 +708,27 @@ collection Test {
                 message: r#"invalid argument type for parameter "test": value at field "test.id" does not match the schema type, expected type: Test, got value: 123"#.to_string(),
             }
         }
+    );
+
+    assert_eq!(
+        collection
+            .list(
+                ListQuery {
+                    where_query: Some(json!({
+                        "name": 123,
+                    })),
+                    ..Default::default()
+                },
+                None
+            )
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/invalid-field".to_string(),
+                message: r#"value at field "name" does not match the schema type, expected type: string, got value: 123"#.to_string(),
+            }
+        },
     );
 }

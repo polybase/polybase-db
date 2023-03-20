@@ -2,6 +2,7 @@ use actix_web::{
     http::{header::ContentType, StatusCode},
     HttpResponse,
 };
+use indexer::RecordUserError;
 use serde::Serialize;
 use std::{error::Error, fmt::Display};
 
@@ -118,6 +119,7 @@ impl From<indexer::collection::CollectionError> for HTTPError {
     fn from(err: indexer::collection::CollectionError) -> Self {
         match err {
             indexer::collection::CollectionError::UserError(e) => e.into(),
+            indexer::collection::CollectionError::WhereQueryError(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
@@ -126,6 +128,18 @@ impl From<indexer::collection::CollectionError> for HTTPError {
 impl From<indexer::collection::CollectionUserError> for HTTPError {
     fn from(err: indexer::collection::CollectionUserError) -> Self {
         HTTPError::new(ReasonCode::from_collection_error(&err), Some(Box::new(err)))
+    }
+}
+
+impl From<indexer::where_query::WhereQueryError> for HTTPError {
+    fn from(err: indexer::where_query::WhereQueryError) -> Self {
+        match err {
+            indexer::where_query::WhereQueryError::UserError(e) => e.into(),
+            indexer::where_query::WhereQueryError::RecordError(
+                indexer::RecordError::UserError(e),
+            ) => e.into(),
+            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+        }
     }
 }
 
