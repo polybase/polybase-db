@@ -62,7 +62,8 @@ collection Account {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "function/invalid-args".to_string(),
-                message: r#"invalid argument type for parameter "data""#.to_string(),
+                message: r#"invalid argument type for parameter "data": base64 decode error"#
+                    .to_string(),
             },
         },
     );
