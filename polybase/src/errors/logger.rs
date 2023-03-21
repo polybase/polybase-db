@@ -5,7 +5,7 @@ use actix_web::{
     Error,
 };
 use futures_util::future::LocalBoxFuture;
-use slog::{error, Logger};
+use slog::{debug, error, Logger};
 use std::future::{ready, Ready};
 
 pub struct SlogMiddleware {
@@ -93,7 +93,7 @@ where
                     Ok(res)
                 }
                 Err(err) => {
-                    debug!(logger, "Error occurred: {}", err);
+                    error!(logger, "Error occurred: {}", err);
                     Err(err)
                 }
             }
