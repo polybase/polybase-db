@@ -5,7 +5,7 @@ use actix_web::{
     Error,
 };
 use futures_util::future::LocalBoxFuture;
-use slog::{error, info, o, Logger};
+use slog::{error, info, Logger};
 use std::future::{ready, Ready};
 
 pub struct SlogMiddleware {

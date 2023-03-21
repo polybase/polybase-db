@@ -24,7 +24,7 @@ use indexer::{Indexer, IndexerError};
 use rand::Rng;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
-use slog::{Drain, Logger};
+use slog::Drain;
 use std::{
     borrow::Cow,
     cmp::min,
