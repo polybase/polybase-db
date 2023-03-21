@@ -19,7 +19,6 @@ use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer,
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::{Indexer, IndexerError};
-use rand::Rng;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
@@ -485,14 +484,6 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
     }))
 }
 
-#[get("/v0/raft/status")]
-async fn raft_status(
-    state: web::Data<RouteState>,
-) -> Result<web::Json<rmqtt_raft::Status>, HTTPError> {
-    let raft_status = state.raft.status().await?;
-    Ok(web::Json(raft_status))
-}
-
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
     let config = Config::parse();
@@ -527,29 +518,7 @@ async fn main() -> Result<(), AppError> {
 
     let db = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
 
-    let peers: Vec<String> = config.raft_peers.split(',').map(|s| s.into()).collect();
-
-    let random: u64 = rand::thread_rng().gen();
-
-    // TODO: we need to find a better way of getting the ID
-    let id = config.id.unwrap_or(
-        std::env::var("HOSTNAME")
-            .map(|p| {
-                p.replace("polybase-", "")
-                    .parse::<u64>()
-                    .map(|n| n + 1)
-                    .unwrap_or(random)
-            })
-            .unwrap_or(random),
-    );
-
-    let (raft, raft_handle, commit_interval_handle) = Raft::new(
-        id,
-        config.raft_laddr,
-        peers,
-        Arc::clone(&db),
-        logger.clone(),
-    );
+    let (raft, commit_interval_handle) = Raft::new(Arc::clone(&db), logger.clone());
 
     let raft = Arc::new(raft);
     let server_raft = Arc::clone(&raft);
@@ -568,7 +537,6 @@ async fn main() -> Result<(), AppError> {
             .wrap(cors)
             .service(root)
             .service(health)
-            .service(raft_status)
             .service(status)
             .service(
                 web::scope("/v0/collections")
@@ -590,10 +558,6 @@ async fn main() -> Result<(), AppError> {
             error!(logger, "HTTP server exited unexpectedly {res:#?}");
             res?
         }
-        res = raft_handle => {
-            error!(logger, "Raft server exited unexpectedly: {res:#?}");
-            res??
-        },
         res = commit_interval_handle => {
             error!(logger, "Commit interval exited unexpectedly: {res:#?}");
             res??
