@@ -122,6 +122,7 @@ impl Raft {
         };
 
         cfg.raft_cfg.check_quorum = false;
+        cfg.grpc_timeout = Duration::from_secs(60);
 
         let shared = Arc::new(RaftSharedState {
             logger: logger.clone(),
