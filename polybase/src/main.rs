@@ -3,6 +3,7 @@
 #[macro_use]
 extern crate slog;
 extern crate slog_async;
+extern crate slog_json;
 extern crate slog_term;
 
 mod auth;
@@ -16,13 +17,14 @@ mod rollup;
 
 use actix_cors::Cors;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
+use chrono::Utc;
 use clap::Parser;
 use futures::TryStreamExt;
 use indexer::{Indexer, IndexerError};
 use rand::Rng;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
-use slog::Drain;
+use slog::{Drain, Logger};
 use std::{
     borrow::Cow,
     cmp::min,
@@ -32,7 +34,7 @@ use std::{
 };
 use tokio::select;
 
-use crate::config::Config;
+use crate::config::{Config, LogFormat};
 use crate::db::Db;
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
@@ -516,10 +518,35 @@ async fn main() -> Result<(), AppError> {
     }
 
     // Logs
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let logger = slog::Logger::root(drain, slog_o!("version" => env!("CARGO_PKG_VERSION")));
+    let drain: Box<dyn Drain<Ok = (), Err = slog::Never> + Send + Sync> =
+        if config.log_format == LogFormat::Json {
+            // JSON output
+            let json_drain = slog_json::Json::new(std::io::stdout())
+                .add_key_value(o!(
+                    // Add the required Cloud Logging fields
+                    "severity" => slog::PushFnValue(move |record : &slog::Record, ser| {
+                        ser.emit(record.level().as_str().to_uppercase())
+                    }),
+                    "timestamp" => slog::PushFnValue(move |_, ser| {
+                        ser.emit(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+                    }),
+                    "message" => slog::PushFnValue(move |record : &slog::Record, ser| {
+                        ser.emit(record.msg())
+                    }),
+                ))
+                .build()
+                .fuse();
+            Box::new(slog_async::Async::new(json_drain).build().fuse())
+        } else {
+            // Terminal output
+            let decorator = slog_term::TermDecorator::new().build();
+            let term_drain = slog_term::FullFormat::new(decorator).build().fuse();
+            Box::new(slog_async::Async::new(term_drain).build().fuse())
+        };
+    let logger = slog::Logger::root(
+        slog_async::Async::new(drain).build().fuse(),
+        slog_o!("version" => env!("CARGO_PKG_VERSION")),
+    );
     // let _guard = slog_scope::set_global_logger(logger.clone());
     // let _log_guard = slog_stdlog::init().unwrap();
 

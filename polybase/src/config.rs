@@ -19,6 +19,10 @@ pub struct Config {
     #[arg(value_enum, long, env = "LOG_LEVEL", default_value = "INFO")]
     pub log_level: LogLevel,
 
+    /// Log format
+    #[arg(value_enum, long, env = "LOG_FORMAT", default_value = "PRETTY")]
+    pub log_format: LogFormat,
+
     /// RPC listen address
     #[arg(long, env = "RPC_LADDR", default_value = "0.0.0.0:8080")]
     pub rpc_laddr: String,
@@ -42,4 +46,11 @@ pub enum LogLevel {
     Debug,
     Info,
     Error,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+#[clap(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum LogFormat {
+    Pretty,
+    Json,
 }
