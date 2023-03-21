@@ -5,7 +5,7 @@ use actix_web::{
     Error,
 };
 use futures_util::future::LocalBoxFuture;
-use slog::{error, info, Logger};
+use slog::{debug, error, Logger};
 use std::future::{ready, Ready};
 
 pub struct SlogMiddleware {
@@ -58,7 +58,7 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let logger = self.logger.clone();
 
-        info!(logger, "request";
+        debug!(logger, "request";
             "method" => ?req.method(),
             "path" => req.path(),
         );
