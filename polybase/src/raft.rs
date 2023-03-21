@@ -1,6 +1,3 @@
-use async_trait::async_trait;
-// use bincode::{serde_json::from_slice, serialize};
-use rmqtt_raft::{Config as RaftConfig, Mailbox, Raft as RmqttRaft, Store as RmqttRaftStore};
 use serde::{Deserialize, Serialize};
 use slog::{debug, info};
 use std::sync::{Arc, Mutex};
@@ -72,15 +69,6 @@ pub struct Raft {
 struct RaftShared {
     db: Arc<Db>,
     shared: Arc<RaftSharedState>,
-    mailbox: Mailbox,
-}
-
-// Annoyingly, we cannot reuse RaftShared as we only get access to mailbox
-// after RmqttRaft::new returns, but RaftConnector still needs access to db/state
-// and we can't wrap in an Arc otherwise it won't adhere to the RaftStore trait
-struct RaftConnector {
-    db: Arc<Db>,
-    shared: Arc<RaftSharedState>,
 }
 
 // Wrapper so we can have common impl for RaftShared and RaftConnector
@@ -110,20 +98,7 @@ impl Drop for Raft {
 
 impl Raft {
     /// Returns (_, raft_handle, commit_internval_handle)
-    pub fn new(
-        id: u64,
-        laddr: String,
-        peers: Vec<String>,
-        db: Arc<Db>,
-        logger: slog::Logger,
-    ) -> (Self, JoinHandle<Result<()>>, JoinHandle<Result<()>>) {
-        let mut cfg = RaftConfig {
-            ..Default::default()
-        };
-
-        cfg.raft_cfg.check_quorum = false;
-        cfg.grpc_timeout = Duration::from_secs(60);
-
+    pub fn new(db: Arc<Db>, logger: slog::Logger) -> (Self, JoinHandle<Result<()>>) {
         let shared = Arc::new(RaftSharedState {
             logger: logger.clone(),
             state: Mutex::new(RaftState {
@@ -135,38 +110,19 @@ impl Raft {
             }),
         });
 
-        let connector = RaftConnector {
-            db: db.clone(),
-            shared: Arc::clone(&shared),
-        };
-
-        let raft = RmqttRaft::new(laddr, connector, logger.clone(), cfg);
-        let mailbox = raft.mailbox();
-
         let shared = Arc::new(RaftShared {
             db: Arc::clone(&db),
-            mailbox,
             shared: Arc::clone(&shared),
         });
-
-        // Create the server handle
-        let handle = tokio::spawn(raft_init_setup(id, raft, peers, logger.clone()));
 
         // Start the loop to commit every ~1 second
         let commit_interval_handle = tokio::spawn(commit_interval(Arc::clone(&shared)));
 
-        (Self { shared }, handle, commit_interval_handle)
+        (Self { shared }, commit_interval_handle)
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        Ok(self.shared.mailbox.leave().await?)
-    }
-
-    pub async fn status(&self) -> Result<rmqtt_raft::Status> {
-        match self.shared.mailbox.status().await {
-            Ok(status) => Ok(status),
-            Err(e) => Err(RaftError::Raft(e)),
-        }
+        Ok(())
     }
 
     // Proxy call() to Raft so that all nodes apply .call() in the same order. We need to await
@@ -204,8 +160,7 @@ impl Raft {
             auth: auth.cloned(),
         };
 
-        let message = serde_json::to_vec(&message)?;
-        let resp = self.shared.mailbox.send(message).await?;
+        let resp = self.shared.apply(message).await?;
         let resp: RaftCallResponse = serde_json::from_slice(&resp)?;
 
         // Wait for the commit to be applied
@@ -242,8 +197,7 @@ impl RaftShared {
             let message = RaftMessage::Commit {
                 commit_id: current_commit_id + 1,
             };
-            let message = serde_json::to_vec(&message)?;
-            match self.mailbox.send(message).await {
+            match self.apply(message).await {
                 Ok(_) => {}
                 Err(e) => {
                     error!(self.shared.logger, "error sending commit message: {e:?}");
@@ -252,6 +206,72 @@ impl RaftShared {
         }
 
         Ok(())
+    }
+
+    async fn apply(&self, message: RaftMessage) -> std::result::Result<Vec<u8>, RaftError> {
+        let db = self.db.clone();
+        match message {
+            RaftMessage::Call {
+                collection_id,
+                function_name,
+                record_id,
+                args,
+                auth,
+            } => {
+                let auth = auth.as_ref();
+
+                debug!(
+                    self.shared.logger,
+                    "apply call: {collection_id}/{record_id}, {function_name}()"
+                );
+
+                let record_id = db
+                    .call(collection_id, &function_name, record_id, args, auth)
+                    .await?;
+
+                let commit_id = self.shared.commit_id();
+                let resp = serde_json::to_vec(&RaftCallResponse {
+                    commit_id,
+                    record_id,
+                })?;
+
+                Ok(resp)
+            }
+            RaftMessage::Commit { commit_id } => {
+                let key = self.db.last_record_id();
+
+                // Check if we have any changes to commit
+                if key.is_none() {
+                    debug!(self.shared.logger, "no changes to commit: {commit_id}");
+                    return Ok(Vec::new());
+                }
+
+                #[allow(clippy::unwrap_used)] // Now safe to unwrap the key
+                let key = key.unwrap();
+
+                if !self.shared.start_commit(commit_id) {
+                    return Ok(Vec::new());
+                }
+
+                let timer = Instant::now();
+
+                info!(self.shared.logger, "commit started: {commit_id}");
+
+                // Send commit to DB
+                self.db.commit(key).await;
+
+                debug!(self.shared.logger, "db updated: {commit_id}"; "time" => timer.elapsed().as_millis());
+
+                // Finalise the commit, and notify all call waiters
+                self.shared.end_commit()?;
+
+                info!(self.shared.logger, "commit ended: {commit_id}"; "time" => timer.elapsed().as_millis());
+
+                // No resp needed for commit
+                Ok(Vec::new())
+            }
+            _ => Ok(Vec::new()),
+        }
     }
 }
 
@@ -345,186 +365,6 @@ impl RaftSharedState {
         state.shutdown
     }
 }
-
-#[async_trait]
-impl RmqttRaftStore for RaftConnector {
-    // Apply the actual changes to the database, apply is guaranteed to
-    // be called in order on all nodes. This is first called on the leader
-    // node and if it succeeds, it is called on all other nodes.
-    async fn apply(&mut self, message: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
-        let db = self.db.clone();
-        let message: RaftMessage = serde_json::from_slice(message)
-            .map_err(RaftError::from)
-            .map_err(|e| rmqtt_raft::Error::Other(Box::new(e)))?;
-        match message {
-            RaftMessage::Call {
-                collection_id,
-                function_name,
-                record_id,
-                args,
-                auth,
-            } => {
-                let auth = auth.as_ref();
-
-                debug!(
-                    self.shared.logger,
-                    "apply call: {collection_id}/{record_id}, {function_name}()"
-                );
-
-                let record_id = db
-                    .call(collection_id, &function_name, record_id, args, auth)
-                    .await?;
-
-                let commit_id = self.shared.commit_id();
-                let resp = serde_json::to_vec(&RaftCallResponse {
-                    commit_id,
-                    record_id,
-                })
-                .map_err(RaftError::from)
-                .map_err(|e| rmqtt_raft::Error::Other(Box::new(e)))?;
-
-                Ok(resp)
-            }
-            RaftMessage::Commit { commit_id } => {
-                let key = self.db.last_record_id();
-
-                // Check if we have any changes to commit
-                if key.is_none() {
-                    debug!(self.shared.logger, "no changes to commit: {commit_id}");
-                    return Ok(Vec::new());
-                }
-
-                #[allow(clippy::unwrap_used)] // Now safe to unwrap the key
-                let key = key.unwrap();
-
-                if !self.shared.start_commit(commit_id) {
-                    return Ok(Vec::new());
-                }
-
-                let timer = Instant::now();
-
-                info!(self.shared.logger, "commit started: {commit_id}");
-
-                // Send commit to DB
-                self.db.commit(key).await;
-
-                debug!(self.shared.logger, "db updated: {commit_id}"; "time" => timer.elapsed().as_millis());
-
-                // Finalise the commit, and notify all call waiters
-                self.shared.end_commit()?;
-
-                info!(self.shared.logger, "commit ended: {commit_id}"; "time" => timer.elapsed().as_millis());
-
-                // No resp needed for commit
-                Ok(Vec::new())
-            }
-            _ => Ok(Vec::new()),
-        }
-    }
-
-    // TODO
-    async fn query(&self, _query: &[u8]) -> rmqtt_raft::Result<Vec<u8>> {
-        Ok(Vec::new())
-    }
-
-    async fn snapshot(&self) -> rmqtt_raft::Result<Vec<u8>> {
-        let indexer = &self.db.indexer;
-        match indexer.snapshot() {
-            Ok(snapshot) => Ok(snapshot),
-            Err(e) => Err(rmqtt_raft::Error::Other(Box::new(e))),
-        }
-    }
-
-    async fn restore(&mut self, snapshot: &[u8]) -> rmqtt_raft::Result<()> {
-        let indexer = &self.db.indexer;
-        match indexer.restore(snapshot.to_vec()) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(rmqtt_raft::Error::Other(Box::new(e))),
-        }
-    }
-}
-async fn raft_init_setup(
-    id: u64,
-    raft: RmqttRaft<RaftConnector>,
-    peers: Vec<String>,
-    logger: slog::Logger,
-) -> Result<()> {
-    let mut peers: Vec<String> = peers.clone();
-
-    // TEMP FIX: remove own hostname
-    if let Ok(hostname) = std::env::var("HOSTNAME") {
-        peers.retain(|p| !p.starts_with(&hostname));
-    }
-
-    info!(logger, "peers: {:?}", peers);
-
-    let leader_info = raft.find_leader_info(peers).await?;
-
-    info!(logger, "leader_info: {:?}", leader_info);
-
-    match leader_info {
-        Some((leader_id, leader_addr)) => {
-            info!(logger, "running in follower mode");
-            raft.join(id, Some(leader_id), leader_addr).await?;
-        }
-        None => {
-            info!(logger, "running in leader mode");
-            raft.lead(id).await?;
-        }
-    }
-
-    Ok(())
-}
-
-// async fn find_leader_info(
-//     raft: &RmqttRaft<RaftConnector>,
-//     peers: Vec<String>,
-//     logger: slog::Logger,
-// ) -> rmqtt_raft::Result<Option<(Option<u64>, String)>> {
-//     loop {
-//         match get_leader_info(raft, peers.clone()).await {
-//             Ok(Some((leader_id, leader_addr))) => {
-//                 return Ok(Some((leader_id, leader_addr)));
-//             }
-//             Ok(None) => return Ok(None),
-//             Err(err) => {
-//                 match err {
-//                     rmqtt_raft::Error::LeaderNotExist => {
-//                         info!(logger, "no leader found, retrying");
-//                     }
-//                     _ => {
-//                         return Err(err);
-//                     }
-//                 }
-//                 info!(logger, "error finding leader: {err}");
-//             }
-//         }
-//         tokio::time::sleep(Duration::from_secs(1)).await;
-//     }
-// }
-
-// async fn get_leader_info(
-//     raft: &RmqttRaft<RaftConnector>,
-//     peers: Vec<String>,
-// ) -> rmqtt_raft::Result<Option<(Option<u64>, String)>> {
-//     let leader_info = None;
-//     for peer in peers {
-//         let p = peer.clone();
-//         match raft.find_leader_info(vec![peer]).await {
-//             Ok(addr) => match addr {
-//                 Some((id, addr)) => return Ok(Some((Some(id), addr))),
-//                 None => continue,
-//             },
-//             Err(e) => match e {
-//                 // If we get LeaderNotExist, it may be because the first node to respond
-//                 // is not active
-//                 rmqtt_raft::Error::LeaderNotExist => return Ok(Some((None, p))),
-//                 _ => return Err(e),
-//             },
-//         }
-//     }
-//     Ok(leader_info)
-// }
 
 async fn commit_interval(shared: Arc<RaftShared>) -> Result<()> {
     while !shared.shared.is_shutdown() {
