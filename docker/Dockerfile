@@ -1,45 +1,59 @@
 # Build binary
-FROM rust:1-bookworm AS builder
+FROM rust:1-bookworm AS workspace
 
 RUN rustup component add rustfmt && \
     apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 protobuf-compiler libprotobuf-dev
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo install cargo-chef --version ^0.1
 
 # Set `SYSROOT` to a dummy path (default is /usr) because pkg-config-rs *always*
 # links those located in that path dynamically but we want static linking, c.f.
 # https://github.com/rust-lang/pkg-config-rs/blob/54325785816695df031cef3b26b6a9a203bbc01b/src/lib.rs#L613
 ENV SYSROOT=/dummy
 
-ARG RELEASE=1
-
 WORKDIR /build
+
+
+
+# Plan the build
+FROM workspace AS planner
 
 COPY Cargo.lock ./
 COPY Cargo.toml ./
-COPY polybase/Cargo.toml ./polybase/
-COPY indexer/Cargo.toml ./indexer/
-COPY gateway/Cargo.toml ./gateway/
-COPY rbmerkle/Cargo.toml ./rbmerkle/
-COPY rbmerkle/benches ./rbmerkle/benches
-COPY migrate/Cargo.toml ./migrate/
+COPY polybase ./polybase/
+COPY indexer ./indexer/
+COPY gateway ./gateway/
+COPY rbmerkle ./rbmerkle/
+COPY migrate ./migrate/
+RUN cargo chef prepare --recipe-path /recipe.json
 
-RUN mkdir polybase/src && echo "fn main() {}" > polybase/src/main.rs && \
-    mkdir indexer/src && echo "fn lib() {}" > indexer/src/lib.rs && \
-    mkdir gateway/src && echo "fn lib() {}" > gateway/src/lib.rs && \
-    mkdir rbmerkle/src && echo "fn lib() {}" > rbmerkle/src/lib.rs && \
-    mkdir migrate/src && echo "fn main() {}" > migrate/src/lib.rs && \
-    cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi) && \
-    rm target -r
 
+
+# Build binary
+FROM workspace AS builder
+
+ARG RELEASE=1
+
+COPY --from=planner /recipe.json /recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo chef cook --recipe-path /recipe.json $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
+
+COPY Cargo.lock ./
+COPY Cargo.toml ./
 COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
 COPY migrate ./migrate/
 
-RUN cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
 RUN cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/polybase /build/target && \
     cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/migrate /build/target
+
+
 
 # Run unit tests
 FROM builder as unit-tests
