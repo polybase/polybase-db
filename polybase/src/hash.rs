@@ -1,9 +1,9 @@
-use winter_crypto::hashers::Rp64_256;
+// use winter_crypto::hashers::Rp64_256;
 use winter_crypto::{Digest, Hasher};
 
-pub fn hash(b: Vec<u8>) -> <Rp64_256 as Hasher>::Digest {
-    winter_crypto::hashers::Rp64_256::hash(&pad_byte_vector(b))
-}
+// pub fn hash(b: Vec<u8>) -> <Rp64_256 as Hasher>::Digest {
+//     winter_crypto::hashers::Rp64_256::hash(&pad_byte_vector(b))
+// }
 
 pub fn hash_bytes(b: Vec<u8>) -> [u8; 32] {
     winter_crypto::hashers::Rp64_256::hash(&pad_byte_vector(b)).as_bytes()

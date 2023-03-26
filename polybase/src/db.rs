@@ -119,13 +119,13 @@ impl Db {
             }
         }
 
-        match self.rollup.commit() {
-            Ok(_) => {}
-            Err(e) => warn!(self.logger, "error committing rollup: {:?}", e),
-        }
+        // match self.rollup.commit() {
+        //     Ok(_) => {}
+        //     Err(e) => warn!(self.logger, "error committing rollup: {:?}", e),
+        // }
     }
 
-    async fn delete(&self, key: [u8; 32], collection_id: String, record_id: String) -> Result<()> {
+    async fn delete(&self, _: [u8; 32], collection_id: String, record_id: String) -> Result<()> {
         let collection = match self.indexer.collection(collection_id.clone()).await {
             Ok(collection) => collection,
             Err(e) => {
@@ -141,16 +141,18 @@ impl Db {
             }
         }
 
+        Ok(())
+
         // Remove from rollup
-        match self.rollup.delete(key) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(DbError::RollupError),
-        }
+        // match self.rollup.delete(key) {
+        //     Ok(_) => Ok(()),
+        //     Err(_) => Err(DbError::RollupError),
+        // }
     }
 
     async fn set(
         &self,
-        key: [u8; 32],
+        _: [u8; 32],
         collection_id: String,
         record_id: String,
         record: RecordRoot,
@@ -171,11 +173,13 @@ impl Db {
             }
         }
 
+        Ok(())
+
         // Add to the rollup
-        match self.rollup.insert(key, &record) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(DbError::RollupError),
-        }
+        // match self.rollup.insert(key, &record) {
+        //     Ok(_) => Ok(()),
+        //     Err(_) => Err(DbError::RollupError),
+        // }
     }
 
     pub async fn validate_call(
