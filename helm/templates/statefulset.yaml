@@ -110,8 +110,6 @@ spec:
           securityContext: {{- omit .Values.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
           env:
-          - name: ENV
-            value: "production"
           - name: ENV_NAME
             value: {{ .Values.env | quote }}
           - name: RELEASE
@@ -126,10 +124,8 @@ spec:
             value: "DEBUG"
           - name: LOG_FORMAT
             value: "JSON"
-          - name: SENTRY_DSN
-            value: https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376
             {{- if .Values.extraEnvVars }}
-            {{- include "polybase.render" (dict "value" .Values.extraEnvVars "context" $) | nindent 12 }}
+            {{- include "polybase.render" (dict "value" .Values.extraEnvVars "context" $) | nindent 10 }}
             {{- end }}
           {{- if .Values.customLivenessProbe }}
           livenessProbe: {{- include "common.tplvalues.render" (dict "value" .Values.customLivenessProbe "context" $) | nindent 12 }}
