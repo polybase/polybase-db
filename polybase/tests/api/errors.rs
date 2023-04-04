@@ -395,6 +395,43 @@ collection test {
 }
 
 #[tokio::test]
+async fn constructor_does_not_assign_required() {
+    let server = Server::setup_and_wait().await;
+
+    let collection = server
+        .create_collection_untyped(
+            "ns/test",
+            "
+@public
+collection test {
+    id: string;
+    arr: array[];
+
+    constructor (id: string) {
+        this.id = id;
+    }
+}
+    ",
+            None,
+        )
+        .await
+        .unwrap();
+
+    let err = collection.create(json!(["id"]), None).await.unwrap_err();
+
+    assert_eq!(
+        err,
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "record/missing-field".to_string(),
+                message: "record is missing field \"arr\"".to_string(),
+            }
+        }
+    );
+}
+
+#[tokio::test]
 async fn id_already_exists() {
     let server = Server::setup_and_wait().await;
 
