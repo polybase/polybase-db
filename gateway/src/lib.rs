@@ -99,6 +99,9 @@ pub enum GatewayUserError {
 
     #[error("constructor must assign id")]
     ConstructorMustAssignId,
+
+    // #[error("constructor must assign required fields")]
+    // ConstructorMustAssignRequired,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
