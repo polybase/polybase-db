@@ -88,6 +88,9 @@ pub enum GatewayUserError {
         source: indexer::RecordError,
     },
 
+    #[error("function timed out")]
+    FunctionTimedOut,
+
     #[error("you do not have permission to call this function")]
     UnauthorizedCall,
 
@@ -844,6 +847,20 @@ impl Gateway {
         auth: Option<&indexer::AuthUser>,
     ) -> Result<FunctionOutput> {
         let mut isolate = v8::Isolate::new(Default::default());
+        let terminate_handle = isolate.thread_safe_handle();
+
+        // If the script takes more than 5 seconds to run, terminate it.
+        let terminated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (finished_tx, finished_rx) = std::sync::mpsc::channel::<()>();
+        let terminated_clone = terminated.clone();
+        let script_termination = std::thread::spawn(move || {
+            let timeout = std::time::Duration::from_secs(5);
+            if finished_rx.recv_timeout(timeout).is_err() {
+                terminated_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+                terminate_handle.terminate_execution();
+            }
+        });
+
         let mut scope = v8::HandleScope::new(&mut isolate);
 
         let global = v8::ObjectTemplate::new(&mut scope);
@@ -1106,6 +1123,13 @@ impl Gateway {
         let script = v8::Script::compile(&mut try_catch, code, None)
             .ok_or(GatewayError::FailedToCompileScript)?;
         let result = script.run(&mut try_catch);
+        let _ = finished_tx.send(());
+        #[allow(clippy::unwrap_used)] // This will never panic
+        script_termination.join().unwrap();
+
+        if terminated.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(GatewayUserError::FunctionTimedOut.into());
+        }
 
         match (result, try_catch.exception()) {
             (_, Some(exception)) => {

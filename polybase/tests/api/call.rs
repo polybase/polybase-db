@@ -148,3 +148,38 @@ collection Account {
         }
     );
 }
+
+#[tokio::test]
+async fn timeouts_after_5_seconds() {
+    let schema = r#"
+@public
+collection Account {
+    id: string;
+    balance: number;
+
+    constructor (id: string, balance: number) {
+        while (true) {}
+    }
+}
+    "#;
+
+    let server = Server::setup_and_wait().await;
+
+    let collection = server
+        .create_collection::<serde_json::Value>("test/Account", schema, None)
+        .await
+        .unwrap();
+
+    let result = collection.create(json!(["0", 10.0]), None).await;
+
+    assert_eq!(
+        result.unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "failed-precondition".to_string(),
+                reason: "function/javascript-exception".to_string(),
+                message: "function timed out".to_string(),
+            }
+        }
+    );
+}
