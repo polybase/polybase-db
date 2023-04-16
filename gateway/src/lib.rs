@@ -2,7 +2,7 @@
 
 use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashMap, sync::{Arc, atomic::AtomicBool}};
+use std::{borrow::Cow, collections::HashMap};
 
 use indexer::{
     collection::validate_collection_record, Converter, FieldWalker, Indexer, IndexerError,
