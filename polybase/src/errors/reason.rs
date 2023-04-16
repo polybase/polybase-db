@@ -171,6 +171,8 @@ impl ReasonCode {
             }
 
             gateway::GatewayUserError::ConstructorMustAssignId => ReasonCode::ConstructorNoId,
+
+            gateway::GatewayUserError::FunctionTimedOut => ReasonCode::FunctionJavaScriptException,
         }
     }
 
