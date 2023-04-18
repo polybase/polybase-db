@@ -210,17 +210,6 @@ pub(crate) struct Authorization {
     pub(crate) delegate_fields: Vec<where_query::FieldPath>,
 }
 
-impl Authorization {
-    fn public() -> Self {
-        Self {
-            read_all: true,
-            call_all: true,
-            read_fields: vec![],
-            delegate_fields: vec![],
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Collection<'a> {
     logger: slog::Logger,
@@ -549,7 +538,12 @@ impl<'a> Collection<'a> {
                     keys::Direction::Ascending,
                 )]),
             ],
-            Authorization::public(),
+            Authorization {
+                read_all: true,
+                call_all: true,
+                read_fields: vec![],
+                delegate_fields: vec![],
+            },
         );
 
         if id == "Collection" {
@@ -638,42 +632,38 @@ impl<'a> Collection<'a> {
             store,
             collection_id: id.to_string(),
             indexes,
-            authorization: if is_public {
-                Authorization::public()
-            } else {
-                Authorization {
-                    read_all: is_read_all,
-                    call_all: is_call_all,
-                    read_fields: collection_ast
-                        .attributes
-                        .iter()
-                        .filter_map(|attr| match attr {
-                            stableast::CollectionAttribute::Property(prop) => Some(prop),
-                            _ => None,
-                        })
-                        .filter_map(|prop| {
-                            prop.directives
-                                .iter()
-                                .find(|dir| dir.name == "read")
-                                .map(|_| where_query::FieldPath(vec![prop.name.to_string()]))
-                        })
-                        .collect::<Vec<_>>(),
-                    delegate_fields: {
-                        let mut delegate_fields = vec![];
+            authorization: Authorization {
+                read_all: is_public || is_read_all,
+                call_all: is_public || is_call_all,
+                read_fields: collection_ast
+                    .attributes
+                    .iter()
+                    .filter_map(|attr| match attr {
+                        stableast::CollectionAttribute::Property(prop) => Some(prop),
+                        _ => None,
+                    })
+                    .filter_map(|prop| {
+                        prop.directives
+                            .iter()
+                            .find(|dir| dir.name == "read")
+                            .map(|_| where_query::FieldPath(vec![prop.name.to_string()]))
+                    })
+                    .collect::<Vec<_>>(),
+                delegate_fields: {
+                    let mut delegate_fields = vec![];
 
-                        collection_ast.walk_fields(&mut vec![], &mut |path, field| {
-                            if let crate::stableast_ext::Field::Property(p) = field {
-                                if p.directives.iter().any(|dir| dir.name == "delegate") {
-                                    delegate_fields.push(where_query::FieldPath(
-                                        path.iter().map(|p| p.to_string()).collect(),
-                                    ));
-                                }
-                            };
-                        });
+                    collection_ast.walk_fields(&mut vec![], &mut |path, field| {
+                        if let crate::stableast_ext::Field::Property(p) = field {
+                            if p.directives.iter().any(|dir| dir.name == "delegate") {
+                                delegate_fields.push(where_query::FieldPath(
+                                    path.iter().map(|p| p.to_string()).collect(),
+                                ));
+                            }
+                        };
+                    });
 
-                        delegate_fields
-                    },
-                }
+                    delegate_fields
+                },
             },
         })
     }
@@ -1366,7 +1356,15 @@ mod tests {
             .unwrap();
 
         assert_eq!(collection.collection_id, "Collection");
-        assert_eq!(collection.authorization, Authorization::public());
+        assert_eq!(
+            collection.authorization,
+            Authorization {
+                read_all: true,
+                call_all: true,
+                read_fields: vec![],
+                delegate_fields: vec![]
+            }
+        );
         assert_eq!(collection.indexes.len(), 4);
         assert_eq!(
             collection.indexes[0],
@@ -1509,7 +1507,12 @@ mod tests {
             &store,
             "test".to_string(),
             vec![],
-            Authorization::public(),
+            Authorization {
+                read_all: true,
+                call_all: true,
+                read_fields: vec![],
+                delegate_fields: vec![]
+            },
         );
 
         let value = HashMap::from([
