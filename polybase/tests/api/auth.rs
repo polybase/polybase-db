@@ -1099,3 +1099,84 @@ collection Manager {
         }
     );
 }
+
+#[tokio::test]
+async fn delegate_on_public_collection() {
+    let server = Server::setup_and_wait().await;
+
+    let schema = r#"
+@public
+collection User {
+    id: string;
+    @delegate
+    pk: PublicKey;
+
+    constructor () {
+        this.id = ctx.publicKey.toHex();
+        this.pk = ctx.publicKey;
+    }
+}
+
+@read
+collection Org {
+    id: string;
+    owner: User;
+
+    constructor (id: string, owner: User) {
+        this.id = id;
+        this.owner = owner;
+    }
+
+    @call(owner)
+    onlyOwnerCanCallThis() {}
+}
+    "#;
+
+    let user_collection = server
+        .create_collection_untyped("test/User", schema, None)
+        .await
+        .unwrap();
+
+    let org_collection = server
+        .create_collection_untyped("test/Org", schema, None)
+        .await
+        .unwrap();
+
+    let (owner_private_key, _) = secp256k1::generate_keypair(&mut rand::thread_rng());
+
+    let owner_signer = Signer::from(move |body: &str| {
+        Signature::create(&owner_private_key, SystemTime::now(), body)
+    });
+
+    let user = user_collection
+        .create(json!([]), Some(&owner_signer))
+        .await
+        .unwrap();
+
+    let org = org_collection
+        .create(
+            json!([
+                "org1",
+                ForeignRecordReference {
+                    collection_id: user_collection.id.clone(),
+                    id: user.get("id").unwrap().as_str().unwrap().to_string(),
+                }
+            ]),
+            Some(&owner_signer),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        org_collection
+            .call(
+                org.get("id").unwrap().as_str().unwrap(),
+                "onlyOwnerCanCallThis",
+                json!([]),
+                Some(&owner_signer),
+            )
+            .await
+            .unwrap(),
+        Some(org),
+    );
+}
