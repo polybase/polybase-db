@@ -2,6 +2,7 @@
 
 use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
+use slog::info;
 use std::{borrow::Cow, collections::HashMap};
 
 use indexer::{
@@ -118,14 +119,15 @@ pub struct FunctionOutput {
 pub struct Gateway {
     // This is so the consumer of this library can't create a Gateway without calling initialize
     _x: (),
+    logger: slog::Logger,
 }
 
-pub fn initialize() -> Gateway {
+pub fn initialize(logger: slog::Logger) -> Gateway {
     let platform = v8::new_default_platform(0, false).make_shared();
     v8::V8::initialize_platform(platform);
     v8::V8::initialize();
 
-    Gateway { _x: () }
+    Gateway { _x: (), logger }
 }
 
 async fn dereference_args(
@@ -527,7 +529,7 @@ impl Change {
 fn get_collection_ast<'a>(
     collection_name: &str,
     collection_meta_record: &'a indexer::RecordRoot,
-) -> Result<polylang::stableast::Collection<'a>> {
+) -> Result<(&'a str, polylang::stableast::Collection<'a>)> {
     let Some(ast) = collection_meta_record.get("ast") else {
         return Err(GatewayError::CollectionHasNoAST)?;
     };
@@ -547,7 +549,7 @@ fn get_collection_ast<'a>(
         return Err(GatewayError::CollectionNotFoundInAST)?;
     };
 
-    Ok(collection_ast)
+    Ok((ast_str, collection_ast))
 }
 
 impl Gateway {
@@ -577,7 +579,11 @@ impl Gateway {
             })?;
         };
 
-        let collection_ast = get_collection_ast(collection.name().as_str(), &meta)?;
+        let (collection_ast_json, collection_ast) = get_collection_ast(collection.name().as_str(), &meta)?;
+        let collection_polylang_code = meta.get("code").and_then(|v| match v {
+            RecordValue::String(s) => Some(s),
+            _ => None,
+        });
 
         let js_collection = polylang::js::generate_js_collection(&collection_ast);
 
@@ -663,20 +669,43 @@ impl Gateway {
         let instance_record =
             dereference_fields(indexer, &collection, &collection_ast, instance_record, auth)
                 .await?;
-        let mut output = self.run(
-            &collection_id,
-            &js_collection.code,
-            function_name,
-            &indexer::record_to_json(instance_record.clone()).map_err(IndexerError::from)?,
-            &dereferenced_args
+        let output = {
+            let instance_json = indexer::record_to_json(instance_record.clone()).map_err(IndexerError::from)?;
+            let args = dereferenced_args
                 .clone()
                 .into_iter()
                 .map(|a| a.try_into())
                 .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(IndexerError::from)?,
-            auth,
-        )?;
-        output.instance = reference_records(&collection, &collection_ast, output.instance)?;
+                .map_err(IndexerError::from)?;
+
+            let output = self.run(
+                &collection_id,
+                &js_collection.code,
+                function_name,
+                &instance_json,
+                &args,
+                auth,
+            );
+
+            info!(
+                self.logger,
+                "function output";
+                "collection_id" => &collection_id,
+                "collection_ast" => collection_ast_json,
+                "collection_code" => &collection_polylang_code,
+                "function_name" => function_name,
+                "instance" => serde_json::to_string(&instance_json).unwrap_or_default(),
+                "args" => serde_json::to_string(&args).unwrap_or_default(),
+                "auth" => serde_json::to_string(&auth).unwrap_or_default(),
+                "output" => serde_json::to_string(&output.as_ref().map_err(|e| e.to_string())).unwrap_or_default(),
+            );
+
+            let mut output = output?;
+
+            output.instance = reference_records(&collection, &collection_ast, output.instance)?;
+
+            output
+        };
         let instance = indexer::json_to_record(&collection_ast, output.instance, false).map_err(
             |e| match e {
                 indexer::RecordError::UserError(indexer::RecordUserError::MissingField {
@@ -771,7 +800,7 @@ impl Gateway {
                             })?;
                         };
 
-                        let ast = get_collection_ast(fr.collection.as_ref(), &collection_meta)?;
+                        let (_, ast) = get_collection_ast(fr.collection.as_ref(), &collection_meta)?;
 
                         Some((collection_id, indexer::json_to_record(&ast, output_arg, false).map_err(IndexerError::from)?))
                     }
@@ -1268,7 +1297,7 @@ mod tests {
             .await
             .unwrap();
 
-        let gateway = initialize();
+        let gateway = initialize(logger());
         let changes = gateway
             .call(
                 &indexer,
