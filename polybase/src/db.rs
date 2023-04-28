@@ -56,7 +56,7 @@ impl Db {
         Self {
             pending: PendingQueue::new(),
             rollup: Rollup::new(),
-            gateway: gateway::initialize(),
+            gateway: gateway::initialize(logger.clone()),
             indexer,
             logger,
         }
