@@ -90,13 +90,18 @@ impl MyNetwork {
             senders.insert(local_peer_id.clone(), sender);
         }
 
-        let event_stream =
-            Some(Box::new(receiver)
-                as Box<
-                    dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Send + Sync,
-                >);
-
         let partition = Arc::new(AtomicBool::new(false));
+
+        let drop_probability = config.drop_probability;
+        let dropping_stream = DroppingStream::new(
+            receiver,
+            drop_probability,
+            logger.clone(),
+            partition.clone(),
+        );
+
+        let event_stream = Some(Box::new(dropping_stream)
+            as Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Send + Sync>);
 
         let prefix = local_peer_id.prefix();
         let shared_partition = partition.clone();
@@ -194,16 +199,7 @@ impl solid::network::Network for MyNetwork {
     type EventStream = Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Sync + Send>;
 
     fn events(&mut self) -> &mut Self::EventStream {
-        let drop_probability = self.config.drop_probability; // Adjust the probability as needed, e.g. 0.1 for 10% drop rate
-        let event_stream = self.event_stream.as_mut().unwrap();
-        let dropping_stream = DroppingStream::new(
-            std::mem::replace(event_stream, Box::new(futures::stream::pending())),
-            drop_probability,
-            self.logger.clone(),
-            self.partition.clone(),
-        );
-        *event_stream = Box::new(dropping_stream);
-        event_stream
+        self.event_stream.as_mut().unwrap()
     }
 }
 
@@ -238,7 +234,7 @@ async fn main() {
         let config = MyNetworkConfig {
             min_latency: 200,
             max_latency: 600,
-            drop_probability: 0.000,
+            drop_probability: 0.1,
             partition_duration: 60_000,
             partition_probability: 0.00,
         };
@@ -315,20 +311,21 @@ impl<S: Stream + Unpin> Stream for DroppingStream<S> {
     type Item = S::Item;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let res = self.inner.poll_next_unpin(cx);
-        match res {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(item)) => {
-                if rand::thread_rng().gen_range(0.0..=1.0) < self.drop_probability
-                    || self.partition.load(std::sync::atomic::Ordering::Relaxed)
-                {
-                    info!(self.logger, "Dropping message");
-                    cx.waker().wake_by_ref();
-                    return Poll::Pending;
+        loop {
+            let res = self.inner.poll_next_unpin(cx);
+            match res {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Some(item)) => {
+                    if rand::thread_rng().gen_range(0.0..=1.0) < self.drop_probability
+                        || self.partition.load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        info!(self.logger, "Dropping message");
+                        continue;
+                    }
+                    return Poll::Ready(Some(item));
                 }
-                Poll::Ready(Some(item))
+                Poll::Ready(None) => return Poll::Ready(None),
             }
-            Poll::Ready(None) => Poll::Ready(None),
         }
     }
 }
