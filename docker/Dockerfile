@@ -26,6 +26,7 @@ COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
 COPY migrate ./migrate/
+COPY solid ./solid/
 RUN cargo chef prepare --recipe-path /recipe.json
 
 
@@ -46,6 +47,7 @@ COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
 COPY migrate ./migrate/
+COPY solid ./solid/
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
