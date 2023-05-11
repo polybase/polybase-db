@@ -8,7 +8,7 @@ use crate::register::ProposalRegister;
 use bincode::{deserialize, serialize};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use slog::{debug, info};
+use slog::{debug, error, info};
 use std::collections::HashMap;
 use tokio::select;
 
@@ -134,7 +134,13 @@ where
             select! {
                 network_event =  self.network.events().next() => {
                     if let Some((peer_id, data)) = network_event {
-                        let event: SolidEvent = deserialize(data.as_slice()).unwrap();
+                        let event: SolidEvent = match  deserialize(data.as_slice()) {
+                            Ok(event) => event,
+                            Err(err) => {
+                                error!(self.logger, "failed to deserialize network event"; "from" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                continue;
+                            }
+                        };
                         // debug!(self.logger, "network event"; "from" => format!("{:?}", peer_id.prefix()));
                         self.on_network_event(event, peer_id).await;
                     }
@@ -151,7 +157,13 @@ where
 
     async fn send(&self, peer_id: &PeerId, event: &SolidEvent) {
         // Serialize the data
-        let data = serialize(&event).unwrap();
+        let data = match serialize(event) {
+            Ok(data) => data,
+            Err(err) => {
+                error!(self.logger, "failed to serialize network event"; "err" => format!("{:?}", err));
+                return;
+            }
+        };
 
         // Send event to all peers
         self.network.send(peer_id.clone(), data).await;
@@ -326,7 +338,13 @@ where
             } => {
                 debug!(self.logger, "Received out of sync"; "height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
                 if height + 1024 < self.register.height() {
-                    let snapshot = self.store.snapshot().unwrap();
+                    let snapshot = match self.store.snapshot() {
+                        Ok(snapshot) => snapshot,
+                        Err(err) => {
+                            error!(self.logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                            return;
+                        }
+                    };
                     self.send(&peer_id, &SolidEvent::Snapshot { snapshot })
                         .await;
                 } else {

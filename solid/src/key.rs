@@ -138,7 +138,7 @@ pub struct Distance(pub(super) U256);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libp2p_core::multihash::Code;
+    // use libp2p_core::multihash::Code;
     use quickcheck::*;
 
     impl Arbitrary for Key<PeerId> {
@@ -147,12 +147,12 @@ mod tests {
         }
     }
 
-    impl Arbitrary for Key<Multihash> {
-        fn arbitrary(g: &mut Gen) -> Key<Multihash> {
-            let hash: [u8; 32] = core::array::from_fn(|_| u8::arbitrary(g));
-            Key::from(Multihash::wrap(Code::Sha2_256.into(), &hash).unwrap())
-        }
-    }
+    // impl Arbitrary for Key<Multihash> {
+    //     fn arbitrary(g: &mut Gen) -> Key<Multihash> {
+    //         let hash: [u8; 32] = core::array::from_fn(|_| u8::arbitrary(g));
+    //         Key::from(Multihash::wrap(Code::Sha2_256.into(), &hash).unwrap())
+    //     }
+    // }
 
     #[test]
     fn identity() {

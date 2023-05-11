@@ -35,6 +35,8 @@ impl ProposalCache {
 
     /// Confirmed height
     pub fn height(&self) -> usize {
+        // We can use unwrap because last_confirmed_proposal_hash must always be set
+        #[allow(clippy::unwrap_used)]
         self.proposals
             .get(&self.last_confirmed_proposal_hash)
             .unwrap()
@@ -72,6 +74,8 @@ impl ProposalCache {
 
     /// Get the last confirmed proposal
     pub fn last_confirmed_proposal(&self) -> &Proposal {
+        // We can use unwrap because last_confirmed_proposal_hash must always be set
+        #[allow(clippy::unwrap_used)]
         self.proposals
             .get(&self.last_confirmed_proposal_hash)
             .unwrap()
@@ -80,6 +84,8 @@ impl ProposalCache {
     /// Returns all confirmed proposals from height to confirmed proposal
     pub fn confirmed_proposals_from(&self, from_height: usize) -> Vec<&Proposal> {
         // Start with the last confirmed proposal and work backwards
+        // We can use unwrap because last_confirmed_proposal_hash must always be set
+        #[allow(clippy::unwrap_used)]
         let mut proposal = self
             .proposals
             .get(&self.last_confirmed_proposal_hash)

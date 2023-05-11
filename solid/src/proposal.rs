@@ -112,13 +112,10 @@ impl Proposal {
     }
 
     pub fn add_accept(&mut self, skips: &usize, peer_id: PeerId) -> bool {
-        if !self.incoming_accepts.contains_key(skips) {
-            self.incoming_accepts.insert(*skips, HashSet::new());
-        }
         let added = self
             .incoming_accepts
-            .get_mut(skips)
-            .unwrap()
+            .entry(*skips)
+            .or_insert(HashSet::new())
             .insert(peer_id);
         added && self.majority_accept_breached(skips)
     }
@@ -202,6 +199,7 @@ impl Borrow<[u8]> for ProposalHash {
 
 impl From<&ProposalManifest> for ProposalHash {
     fn from(p: &ProposalManifest) -> Self {
+        #[allow(clippy::unwrap_used)]
         let bytes = Sha256::digest(bincode::serialize(p).unwrap());
         ProposalHash(bytes.to_vec())
     }
