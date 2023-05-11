@@ -33,9 +33,7 @@ jobs:
           push: false
           build-args: |
             RELEASE=0
-          outputs: type=docker
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          load: true
           target: unit-tests
           tags: polybase-unit-tests
 
@@ -51,9 +49,7 @@ jobs:
           push: false
           build-args: |
             RELEASE=0
-          outputs: type=docker
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          load: true
           target: e2e-polybase-ts-tests
           tags: polybase-e2e-polybase-ts-tests
 
