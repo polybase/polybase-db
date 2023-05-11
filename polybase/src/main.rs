@@ -11,6 +11,7 @@ mod config;
 mod db;
 mod errors;
 mod hash;
+mod network;
 mod pending;
 mod raft;
 mod rollup;
@@ -34,7 +35,7 @@ use std::{
 use tokio::select;
 
 use crate::config::{Config, LogFormat};
-use crate::db::Db;
+use crate::db::{ArcDb, Db};
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
 use crate::errors::reason::ReasonCode;
@@ -551,6 +552,22 @@ async fn main() -> Result<(), AppError> {
     let server_raft = Arc::clone(&raft);
     let server_logger = logger.clone();
 
+    let raft = Arc::clone(&raft);
+    let logger = logger.clone();
+
+    let network = network::Network::init(config.network_laddr, vec![])
+        .await
+        .unwrap();
+
+    let peer_id = solid::peer::PeerId::random();
+    let mut solid = solid::Solid::new(
+        peer_id.clone(),
+        vec![peer_id],
+        ArcDb(Arc::clone(&db)),
+        network,
+        logger.clone(),
+    );
+
     let server = HttpServer::new(move || {
         let cors = Cors::permissive();
 
@@ -576,9 +593,6 @@ async fn main() -> Result<(), AppError> {
     .bind(config.rpc_laddr)?
     .run();
 
-    let raft = Arc::clone(&raft);
-    let logger = logger.clone();
-
     select!(
         res = server => { // TODO: check if err
             // res
@@ -588,6 +602,9 @@ async fn main() -> Result<(), AppError> {
         res = commit_interval_handle => {
             error!(logger, "Commit interval exited unexpectedly: {res:#?}");
             res??
+        },
+        _ = solid.run() => {
+            error!(logger, "Solid exited unexpectedly");
         },
         _ = tokio::signal::ctrl_c() => {
             match raft.clone().shutdown().await {

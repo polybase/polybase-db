@@ -1,0 +1,15 @@
+ syntax = "proto3";
+
+ package networkservice;
+
+message EventResponse {
+  bytes data = 1;
+}
+
+ message RegisterStream {
+   bytes peerId = 1;
+ }
+
+ service NetworkService {
+   rpc EventStream(RegisterStream) returns (stream EventResponse) {}
+ }

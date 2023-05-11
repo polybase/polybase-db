@@ -1,0 +1,334 @@
+#[macro_use]
+extern crate slog;
+extern crate slog_async;
+extern crate slog_term;
+
+// use async_trait::async_trait;
+use bincode::{deserialize, serialize};
+use futures::channel::mpsc::{self, Sender, TrySendError};
+// use futures::stream::select_all::Iter;
+use futures::stream::Stream;
+use futures::StreamExt;
+// use futures::SinkExt;
+use parking_lot::deadlock;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use slog::{Drain, Level};
+use solid::peer::PeerId;
+use solid::proposal::ProposalManifest;
+use solid::{Snapshot, Solid};
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
+use std::thread;
+use std::time::Duration;
+use tokio::time::sleep;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Store {
+    data: HashMap<String, String>,
+    proposal: Option<ProposalManifest>,
+}
+
+impl solid::Store for Store {
+    fn commit(&mut self, manifest: ProposalManifest) -> Vec<u8> {
+        self.proposal = Some(manifest);
+        vec![]
+    }
+
+    fn restore(&mut self, snapshot: Snapshot) {
+        let Snapshot { data, proposal } = snapshot;
+        let data: HashMap<String, String> = deserialize(&data).unwrap();
+        self.data = data;
+        self.proposal = Some(proposal)
+    }
+
+    fn snapshot(&self) -> std::result::Result<Snapshot, Box<dyn std::error::Error>> {
+        Ok(Snapshot {
+            data: serialize(&self.data)?,
+            proposal: self.proposal.as_ref().unwrap().clone(),
+        })
+    }
+}
+
+pub type SenderMap = HashMap<PeerId, Sender<(PeerId, Vec<u8>)>>;
+
+#[derive(Clone)]
+pub struct MyNetworkConfig {
+    min_latency: u64,
+    max_latency: u64,
+    drop_probability: f64,
+    partition_duration: u64,
+    partition_probability: f64,
+}
+
+pub struct MyNetwork {
+    local_peer_id: PeerId,
+    event_stream: Option<Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Sync + Send>>,
+    senders: Arc<Mutex<SenderMap>>,
+    logger: slog::Logger,
+    partition: Arc<AtomicBool>,
+    config: MyNetworkConfig,
+}
+
+impl MyNetwork {
+    pub fn new(
+        local_peer_id: PeerId,
+        senders: Arc<Mutex<SenderMap>>,
+        logger: slog::Logger,
+        config: MyNetworkConfig,
+    ) -> Self {
+        // A small buffer, so we can simulate network partition
+        let (sender, receiver) = mpsc::channel(20);
+
+        // Insert self into senders!
+        {
+            let mut senders = senders.lock().unwrap();
+            senders.insert(local_peer_id.clone(), sender);
+        }
+
+        let event_stream =
+            Some(Box::new(receiver)
+                as Box<
+                    dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Send + Sync,
+                >);
+
+        let partition = Arc::new(AtomicBool::new(false));
+
+        let prefix = local_peer_id.prefix();
+        let shared_partition = partition.clone();
+        tokio::spawn(async move {
+            loop {
+                if rand::thread_rng().gen_range(0.0..=1.0) < config.partition_probability {
+                    println!(
+                        "----- START: simulating {}s network partition for {} -----",
+                        config.partition_duration / 1000,
+                        prefix,
+                    );
+                    {
+                        shared_partition.swap(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    sleep(std::time::Duration::from_millis(config.partition_duration)).await;
+                    println!(
+                        "----- END: simulating network partition for {} -----",
+                        prefix,
+                    );
+                    {
+                        shared_partition.swap(false, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+
+                // Only check for partition every 1 seconds
+                sleep(std::time::Duration::from_millis(1000)).await;
+            }
+        });
+
+        Self {
+            local_peer_id,
+            event_stream,
+            senders,
+            logger,
+            config,
+            partition,
+        }
+    }
+}
+
+impl solid::network::NetworkSender for MyNetwork {
+    fn send(
+        &self,
+        peer_id: PeerId,
+        data: Vec<u8>,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
+        let senders = self.senders.clone();
+        let local_peer_id = self.local_peer_id.clone();
+        let MyNetworkConfig {
+            min_latency,
+            max_latency,
+            ..
+        } = self.config;
+        Box::pin(async move {
+            let sleep_duration =
+                rand::thread_rng().gen_range(0..=max_latency - min_latency) + min_latency;
+
+            // If we're simulating a network partition ignore requests
+            {
+                if self.partition.load(std::sync::atomic::Ordering::Relaxed) {
+                    return;
+                }
+            }
+
+            // Randomly sleep for a minute (simulate network partition)
+            sleep(std::time::Duration::from_millis(sleep_duration)).await;
+
+            let mut sender_opt = None;
+            {
+                let senders = senders.lock().unwrap();
+                if let Some(sender) = senders.get(&peer_id) {
+                    sender_opt = Some(sender.clone());
+                }
+            }
+            if let Some(mut sender) = sender_opt {
+                match sender.try_send((local_peer_id, data)) {
+                    Ok(_) => {
+                        // println!("Sending from {}", self.local_peer_id.prefix());
+                    }
+                    Err(TrySendError { .. }) => {
+                        info!(
+                            self.logger,
+                            "Failed to send message to {} from {}",
+                            peer_id.prefix(),
+                            self.local_peer_id.prefix()
+                        )
+                    }
+                }
+            }
+        })
+    }
+}
+
+impl solid::network::Network for MyNetwork {
+    type EventStream = Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Sync + Send>;
+
+    fn events(&mut self) -> &mut Self::EventStream {
+        let drop_probability = self.config.drop_probability; // Adjust the probability as needed, e.g. 0.1 for 10% drop rate
+        let event_stream = self.event_stream.as_mut().unwrap();
+        let dropping_stream = DroppingStream::new(
+            std::mem::replace(event_stream, Box::new(futures::stream::pending())),
+            drop_probability,
+            self.logger.clone(),
+            self.partition.clone(),
+        );
+        *event_stream = Box::new(dropping_stream);
+        event_stream
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let senders = Arc::new(Mutex::new(HashMap::new()));
+    let num_of_nodes = 3;
+
+    let peers: Vec<PeerId> = (0..num_of_nodes).map(|_| PeerId::random()).collect();
+
+    let mut solids = Vec::new();
+
+    let decorator = slog_term::PlainDecorator::new(std::io::stdout());
+    let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+    let drain = slog_async::Async::new(drain).build().fuse();
+    let drain = slog::LevelFilter::new(drain, Level::Debug).fuse();
+    let root_log = slog::Logger::root(drain, o!());
+
+    for i in 0..num_of_nodes {
+        let local_peer_id = peers[i].clone();
+
+        let store = Store {
+            data: HashMap::new(),
+            proposal: None,
+        };
+
+        info!(root_log, "Starting node {}", local_peer_id.prefix());
+
+        let log: slog::Logger =
+            root_log.new(o!("local_peer_id" => format!("{}", local_peer_id.prefix())));
+
+        let config = MyNetworkConfig {
+            min_latency: 200,
+            max_latency: 600,
+            drop_probability: 0.000,
+            partition_duration: 60_000,
+            partition_probability: 0.00,
+        };
+        let network = MyNetwork::new(local_peer_id.clone(), senders.clone(), log.clone(), config);
+
+        let solid = Solid::new(
+            local_peer_id.clone(),
+            peers.clone(),
+            store,
+            network,
+            log.clone(),
+        );
+
+        solids.push(solid);
+    }
+
+    // Check for deadlocks
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(10));
+        let deadlocks = deadlock::check_deadlock();
+        if deadlocks.is_empty() {
+            continue;
+        }
+
+        println!("{} deadlocks detected", deadlocks.len());
+        for (i, threads) in deadlocks.iter().enumerate() {
+            println!("Deadlock #{}", i);
+            for t in threads {
+                println!("Thread Id {:#?}", t.thread_id());
+                println!("{:#?}", t.backtrace());
+            }
+        }
+    });
+
+    let mut handles = Vec::new();
+
+    for mut solid in solids {
+        handles.push(tokio::spawn(async move {
+            solid.run().await;
+            println!("Solid finished");
+        }));
+    }
+
+    for handle in handles {
+        handle.await.unwrap();
+    }
+}
+
+/// Util for simulating dropping of messages
+pub struct DroppingStream<S> {
+    inner: S,
+    drop_probability: f64,
+    partition: Arc<AtomicBool>,
+    logger: slog::Logger,
+}
+
+impl<S> DroppingStream<S> {
+    pub fn new(
+        inner: S,
+        drop_probability: f64,
+        logger: slog::Logger,
+        partition: Arc<AtomicBool>,
+    ) -> Self {
+        Self {
+            inner,
+            drop_probability,
+            logger,
+            partition,
+        }
+    }
+}
+
+impl<S: Stream + Unpin> Stream for DroppingStream<S> {
+    type Item = S::Item;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let res = self.inner.poll_next_unpin(cx);
+        match res {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Some(item)) => {
+                if rand::thread_rng().gen_range(0.0..=1.0) < self.drop_probability
+                    || self.partition.load(std::sync::atomic::Ordering::Relaxed)
+                {
+                    info!(self.logger, "Dropping message");
+                    cx.waker().wake_by_ref();
+                    return Poll::Pending;
+                }
+                Poll::Ready(Some(item))
+            }
+            Poll::Ready(None) => Poll::Ready(None),
+        }
+    }
+}

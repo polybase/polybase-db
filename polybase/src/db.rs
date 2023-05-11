@@ -1,8 +1,8 @@
-use std::sync::Arc;
-
 use gateway::{Change, Gateway};
 use indexer::collection::validate_collection_record;
 use indexer::{validate_schema_change, Indexer, RecordRoot};
+use solid::proposal::ProposalManifest;
+use std::sync::Arc;
 
 use crate::hash;
 use crate::pending::{PendingQueue, PendingQueueError};
@@ -331,6 +331,31 @@ impl Db {
         validate_collection_record(record).map_err(indexer::IndexerError::from)?;
 
         Ok(())
+    }
+}
+
+// This is the implementation of the `solid::Store` trait for `Arc<Db>`.
+pub struct ArcDb(pub Arc<Db>);
+
+impl solid::Store for ArcDb {
+    fn commit(&mut self, manifest: ProposalManifest) -> Vec<u8> {
+        // let db_ref = self.0.as_ref();
+        todo!()
+    }
+
+    fn restore(&mut self, snapshot: solid::Snapshot) {
+        let db_ref = self.0.as_ref();
+        db_ref.indexer.restore(snapshot.data);
+    }
+
+    fn snapshot(&self) -> std::result::Result<solid::Snapshot, Box<dyn std::error::Error>> {
+        let db_ref = self.0.as_ref();
+        let data = db_ref.indexer.snapshot()?;
+
+        Ok(solid::Snapshot {
+            proposal: solid::proposal::ProposalManifest::default(),
+            data,
+        })
     }
 }
 
