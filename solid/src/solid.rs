@@ -1,10 +1,11 @@
 use crate::change::Change;
+use crate::config::SolidConfig;
 use crate::event::ProposalEvent;
 use crate::event::SolidEvent;
 use crate::network::Network;
 use crate::peer::PeerId;
 use crate::proposal::ProposalManifest;
-use crate::register::ProposalRegister;
+use crate::register::{ProposalRegister, ProposalRegisterConfig};
 use bincode::{deserialize, serialize};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -70,6 +71,9 @@ pub struct Solid<TStore, TNetwork> {
 
     /// Root hash
     root_hash: Option<Vec<u8>>,
+
+    /// config
+    config: SolidConfig,
 }
 
 impl<TStore, TNetwork> Solid<TStore, TNetwork>
@@ -83,19 +87,34 @@ where
         store: TStore,
         network: TNetwork,
         logger: slog::Logger,
+        config: SolidConfig,
     ) -> Self {
-        let register = ProposalRegister::genesis(peers.to_vec());
+        let SolidConfig {
+            skip_timeout,
+            out_of_sync_timeout,
+            max_proposal_history,
+            ..
+        } = config;
+
+        let register = ProposalRegister::genesis(
+            peers.to_vec(),
+            ProposalRegisterConfig {
+                skip_timeout,
+                out_of_sync_timeout,
+                max_proposal_history,
+            },
+        );
 
         Self {
             local_peer_id,
             register,
             peers,
-            // TODO: we should be able to pass in existing proposals
             pending_changes: HashMap::new(),
             store,
             network,
             logger,
             root_hash: None,
+            config,
         }
     }
 
@@ -214,7 +233,7 @@ where
                 let changes = self.pending_changes.values().cloned().collect();
 
                 // Simulate delay
-                tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+                tokio::time::sleep(self.config.min_proposal_duration).await;
 
                 // Create the proposl manfiest
                 let manifest = ProposalManifest {
@@ -325,7 +344,21 @@ where
                 self.store.restore(snapshot);
 
                 // Reset the register
-                let register = ProposalRegister::with_last_confirmed(proposal);
+                let SolidConfig {
+                    skip_timeout,
+                    out_of_sync_timeout,
+                    max_proposal_history,
+                    ..
+                } = self.config;
+
+                let register = ProposalRegister::with_last_confirmed(
+                    proposal,
+                    ProposalRegisterConfig {
+                        skip_timeout,
+                        out_of_sync_timeout,
+                        max_proposal_history,
+                    },
+                );
 
                 self.register = register;
             }
@@ -337,7 +370,7 @@ where
                 accepts_sent,
             } => {
                 debug!(self.logger, "Received out of sync"; "height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
-                if height + 1024 < self.register.height() {
+                if height + self.config.max_proposal_history < self.register.height() {
                     let snapshot = match self.store.snapshot() {
                         Ok(snapshot) => snapshot,
                         Err(err) => {

@@ -28,8 +28,13 @@ pub struct ProposalRegister {
 #[derive(Debug)]
 pub struct ProposalRegisterConfig {
     /// Amount of time to wait before we skip a leader
-    skip_timeout: Duration,
-    out_of_sync_timeout: Duration,
+    pub skip_timeout: Duration,
+
+    /// Amount of time to wait before we send another out of sync message
+    pub out_of_sync_timeout: Duration,
+
+    /// Maximum number of confirmed proposals to keep in history
+    pub max_proposal_history: usize,
 }
 
 impl Default for ProposalRegisterConfig {
@@ -37,6 +42,7 @@ impl Default for ProposalRegisterConfig {
         ProposalRegisterConfig {
             skip_timeout: Duration::from_secs(5),
             out_of_sync_timeout: Duration::from_secs(60),
+            max_proposal_history: 1024,
         }
     }
 }
@@ -80,12 +86,13 @@ impl Drop for ProposalRegister {
 }
 
 impl ProposalRegister {
-    pub fn with_last_confirmed(manifest: ProposalManifest) -> Self {
-        let config = ProposalRegisterConfig::default();
-
+    pub fn with_last_confirmed(manifest: ProposalManifest, config: ProposalRegisterConfig) -> Self {
         let shared = Arc::new(ProposalRegisterShared {
             events: Mutex::new(VecDeque::new()),
-            store: Mutex::new(ProposalStore::with_last_confirmed(manifest)),
+            store: Mutex::new(ProposalStore::with_last_confirmed(
+                manifest,
+                config.max_proposal_history,
+            )),
             skip_timeout: Mutex::new(None),
             out_of_sync_timeout: Mutex::new(None),
             state: Mutex::new(ProposalRegisterState {
@@ -107,8 +114,8 @@ impl ProposalRegister {
         tokio::spawn(background_worker(Arc::clone(&self.shared)))
     }
 
-    pub fn genesis(peers: Vec<PeerId>) -> Self {
-        Self::with_last_confirmed(ProposalManifest::genesis(peers))
+    pub fn genesis(peers: Vec<PeerId>, config: ProposalRegisterConfig) -> Self {
+        Self::with_last_confirmed(ProposalManifest::genesis(peers), config)
     }
 
     /// Gets the highest confirmed height for this reigster
@@ -344,7 +351,8 @@ mod test {
     #[tokio::test]
     async fn ignores_duplicate_proposal() {
         let peer_1 = PeerId::random();
-        let mut register = ProposalRegister::genesis(vec![peer_1.clone()]);
+        let config = ProposalRegisterConfig::default();
+        let mut register = ProposalRegister::genesis(vec![peer_1.clone()], config);
         let manifest = ProposalManifest {
             last_proposal_hash: ProposalHash::default(),
             height: 1,
@@ -373,8 +381,9 @@ mod test {
     #[tokio::test]
     async fn first_proposal() {
         let peer_1 = PeerId::random();
+        let config = ProposalRegisterConfig::default();
 
-        let mut register = ProposalRegister::genesis(vec![peer_1.clone()]);
+        let mut register = ProposalRegister::genesis(vec![peer_1.clone()], config);
         let manifest = ProposalManifest {
             last_proposal_hash: ProposalHash::default(),
             height: 1,
@@ -404,14 +413,15 @@ mod test {
 
     #[tokio::test]
     async fn test_tick_no_action() {
-        // let peers = create_peers();
-        let register = ProposalRegister::genesis(create_peers().to_vec());
+        let config = ProposalRegisterConfig::default();
+        let register = ProposalRegister::genesis(create_peers().to_vec(), config);
         assert_eq!(register.shared.tick(), None);
     }
 
     #[test]
     fn test_tick_send_skip() {
-        let register = ProposalRegister::genesis(create_peers().to_vec());
+        let config = ProposalRegisterConfig::default();
+        let register = ProposalRegister::genesis(create_peers().to_vec(), config);
 
         // Add an expired skip_timeout instant
         {
@@ -433,8 +443,8 @@ mod test {
 
     #[test]
     fn test_tick_not_ready() {
-        // let peers = create_peers();
-        let register = ProposalRegister::genesis(create_peers().to_vec());
+        let config = ProposalRegisterConfig::default();
+        let register = ProposalRegister::genesis(create_peers().to_vec(), config);
 
         let time = Instant::now() + Duration::from_secs(10);
 

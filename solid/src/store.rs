@@ -31,11 +31,14 @@ pub struct ProposeNextState {
 }
 
 impl ProposalStore {
-    pub fn with_last_confirmed(last_confirmed_proposal: ProposalManifest) -> Self {
+    pub fn with_last_confirmed(
+        last_confirmed_proposal: ProposalManifest,
+        cache_size: usize,
+    ) -> Self {
         let max_height = last_confirmed_proposal.height;
 
         Self {
-            proposals: ProposalCache::new(Proposal::new(last_confirmed_proposal)),
+            proposals: ProposalCache::new(Proposal::new(last_confirmed_proposal), cache_size),
             // max_height,
             accepts_sent: 0,
             accepts_sent_height: max_height,
@@ -44,8 +47,8 @@ impl ProposalStore {
     }
 
     #[cfg(test)]
-    pub fn genesis(peers: Vec<PeerId>) -> Self {
-        Self::with_last_confirmed(ProposalManifest::genesis(peers))
+    pub fn genesis(peers: Vec<PeerId>, cache_size: usize) -> Self {
+        Self::with_last_confirmed(ProposalManifest::genesis(peers), cache_size)
     }
 
     /// Height of the proposal that was last confirmed
@@ -294,7 +297,7 @@ mod test {
 
     #[test]
     fn test_process_next_genesis() {
-        let mut store: ProposalStore = ProposalStore::genesis(create_peers().to_vec());
+        let mut store: ProposalStore = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
@@ -394,7 +397,7 @@ mod test {
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         let (m10, m10_hash) = create_manifest(10, 0, 1, genesis_hash);
-        let mut store = ProposalStore::with_last_confirmed(m10);
+        let mut store = ProposalStore::with_last_confirmed(m10, 100);
 
         assert_eq!(
             store.process_next(),
@@ -450,7 +453,7 @@ mod test {
     /// Node skips, network skips
     #[test]
     fn test_skip_one_network_skip() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
@@ -530,7 +533,7 @@ mod test {
     #[test]
     fn test_out_of_sync() {
         let (m3, m3_hash) = create_manifest(3, 0, 1, ProposalHash::default());
-        let mut store = ProposalStore::with_last_confirmed(m3);
+        let mut store = ProposalStore::with_last_confirmed(m3, 100);
 
         assert_eq!(
             store.process_next(),
@@ -569,7 +572,7 @@ mod test {
     /// Node skips, network no skips
     #[test]
     fn test_skip_one_no_network_skip() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
@@ -656,7 +659,7 @@ mod test {
     #[test]
     fn test_skip_one_proposal() {
         let [p1, p2, p3] = create_peers();
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
@@ -750,7 +753,7 @@ mod test {
     #[test]
     fn test_multi_accept_proposal() {
         let [p1, p2, p3] = create_peers();
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // First accept, no majority
@@ -816,7 +819,7 @@ mod test {
 
     #[test]
     fn test_higher_skip_accept_received() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // First accept, no majority
@@ -849,7 +852,7 @@ mod test {
 
     #[test]
     fn test_duplicate_accepts_received() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // First accept, no majority
@@ -918,7 +921,7 @@ mod test {
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // Create store with init genesis proposal
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
 
         assert_eq!(
             store
@@ -1019,7 +1022,7 @@ mod test {
 
     #[test]
     fn test_has_next_commt() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec());
+        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
         assert!(!store.has_next_commit());
 

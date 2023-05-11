@@ -8,6 +8,7 @@ mod solid;
 mod store;
 
 pub mod change;
+pub mod config;
 pub mod network;
 pub mod peer;
 pub mod proposal;

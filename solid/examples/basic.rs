@@ -9,6 +9,7 @@ use futures::future;
 use futures::stream::Stream;
 use serde::{Deserialize, Serialize};
 use slog::{Drain, Level};
+use solid::config::SolidConfig;
 use solid::peer::PeerId;
 use solid::proposal::ProposalManifest;
 use solid::{Snapshot, Solid};
@@ -100,6 +101,7 @@ async fn main() {
         store,
         network,
         log.clone(),
+        SolidConfig::default(),
     );
 
     // Start

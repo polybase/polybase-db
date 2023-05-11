@@ -15,10 +15,13 @@ pub struct ProposalCache {
 
     /// Max confirmed height seen across all received proposals
     max_height: usize,
+
+    /// Config for the proposal cache
+    cache_size: usize,
 }
 
 impl ProposalCache {
-    pub fn new(last_confirmed_proposal: Proposal) -> Self {
+    pub fn new(last_confirmed_proposal: Proposal, cache_size: usize) -> Self {
         let proposal_hash = last_confirmed_proposal.hash().clone();
         let max_height: usize = last_confirmed_proposal.height();
         let mut proposals = HashMap::new();
@@ -30,6 +33,7 @@ impl ProposalCache {
             last_confirmed_proposal_hash: proposal_hash,
             proposals,
             max_height,
+            cache_size,
         }
     }
 
@@ -166,7 +170,7 @@ impl ProposalCache {
             .iter()
             .filter(|(_, p)| match confirmed_height.partial_cmp(&p.height()) {
                 Some(Ordering::Greater) => {
-                    if p.height() + 1000 < confirmed_height {
+                    if p.height() + self.cache_size < confirmed_height {
                         return true;
                     }
                     false
@@ -217,7 +221,7 @@ mod tests {
     #[test]
     fn test_new_cache() {
         let (genesis, genesis_hash) = create_proposal(0, 0, ProposalHash::genesis());
-        let cache = ProposalCache::new(genesis.clone());
+        let cache = ProposalCache::new(genesis.clone(), 1000);
 
         assert_eq!(cache.len(), 1);
         assert_eq!(cache.height(), 0);
@@ -229,7 +233,7 @@ mod tests {
     #[test]
     fn test_insert() {
         let (genesis, genesis_hash) = create_proposal(0, 0, ProposalHash::genesis());
-        let mut cache = ProposalCache::new(genesis);
+        let mut cache = ProposalCache::new(genesis, 1000);
 
         let (p1, _) = create_proposal(1, 0, genesis_hash);
         cache.insert(p1);
@@ -242,7 +246,7 @@ mod tests {
     #[test]
     fn test_confirm_proposal() {
         let (genesis, genesis_hash) = create_proposal(0, 0, ProposalHash::genesis());
-        let mut cache = ProposalCache::new(genesis);
+        let mut cache = ProposalCache::new(genesis, 1000);
 
         let (p1, p1_hash) = create_proposal(1, 0, genesis_hash);
         cache.insert(p1.clone());
@@ -257,7 +261,7 @@ mod tests {
     #[test]
     fn test_is_decendent() {
         let (genesis, genesis_hash) = create_proposal(0, 0, ProposalHash::genesis());
-        let mut cache = ProposalCache::new(genesis);
+        let mut cache = ProposalCache::new(genesis, 1000);
 
         let (p1, p1_hash) = create_proposal(1, 0, genesis_hash.clone());
         let (p2, p2_hash) = create_proposal(2, 0, p1_hash.clone());
@@ -290,7 +294,7 @@ mod tests {
     #[test]
     fn test_purge_proposals() {
         let (genesis, genesis_hash) = create_proposal(0, 0, ProposalHash::genesis());
-        let mut cache = ProposalCache::new(genesis);
+        let mut cache = ProposalCache::new(genesis, 1000);
 
         let (p1a, p1a_hash) = create_proposal(1, 0, genesis_hash);
         let (p1b, p1b_hash) = create_proposal(1, 1, ProposalHash::new(vec![1u8]));
@@ -323,7 +327,7 @@ mod tests {
     #[test]
     fn test_next_pending_proposal() {
         let (genesis, genesis_hash) = create_proposal(0, 0, ProposalHash::genesis());
-        let mut cache = ProposalCache::new(genesis);
+        let mut cache = ProposalCache::new(genesis, 1000);
 
         let (p1, p1_hash) = create_proposal(1, 0, genesis_hash);
         let (p2a, p2a_hash) = create_proposal(2, 0, p1_hash.clone());

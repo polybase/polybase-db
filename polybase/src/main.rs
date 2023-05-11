@@ -25,6 +25,7 @@ use indexer::{Indexer, IndexerError};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
+use solid::config::SolidConfig;
 use std::{
     borrow::Cow,
     cmp::min,
@@ -566,6 +567,7 @@ async fn main() -> Result<(), AppError> {
         ArcDb(Arc::clone(&db)),
         network,
         logger.clone(),
+        SolidConfig::default(),
     );
 
     let server = HttpServer::new(move || {

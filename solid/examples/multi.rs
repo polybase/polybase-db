@@ -14,6 +14,7 @@ use parking_lot::deadlock;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use slog::{Drain, Level};
+use solid::config::SolidConfig;
 use solid::peer::PeerId;
 use solid::proposal::ProposalManifest;
 use solid::{Snapshot, Solid};
@@ -62,7 +63,7 @@ pub struct MyNetworkConfig {
     max_latency: u64,
     drop_probability: f64,
     partition_duration: u64,
-    partition_probability: f64,
+    partition_frequency: u64,
 }
 
 pub struct MyNetwork {
@@ -107,7 +108,7 @@ impl MyNetwork {
         let shared_partition = partition.clone();
         tokio::spawn(async move {
             loop {
-                if rand::thread_rng().gen_range(0.0..=1.0) < config.partition_probability {
+                if rand::thread_rng().gen_range(0..=config.partition_frequency) == 1 {
                     println!(
                         "----- START: simulating {}s network partition for {} -----",
                         config.partition_duration / 1000,
@@ -235,8 +236,8 @@ async fn main() {
             min_latency: 200,
             max_latency: 600,
             drop_probability: 0.1,
-            partition_duration: 60_000,
-            partition_probability: 0.00,
+            partition_duration: 80_000,
+            partition_frequency: 600,
         };
         let network = MyNetwork::new(local_peer_id.clone(), senders.clone(), log.clone(), config);
 
@@ -246,6 +247,12 @@ async fn main() {
             store,
             network,
             log.clone(),
+            SolidConfig {
+                min_proposal_duration: Duration::from_secs(1),
+                max_proposal_history: 20,
+                skip_timeout: Duration::from_secs(5),
+                out_of_sync_timeout: Duration::from_secs(60),
+            },
         );
 
         solids.push(solid);
