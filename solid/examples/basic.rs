@@ -15,15 +15,26 @@ use solid::proposal::ProposalManifest;
 use solid::{Snapshot, Solid};
 use std::collections::HashMap;
 use std::future::Future;
+// use std::hash::Hash;
+use std::mem;
 use std::pin::Pin;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Store {
     data: HashMap<String, String>,
     proposal: Option<ProposalManifest>,
+    pending: Vec<solid::txn::Txn>,
 }
 
 impl solid::Store for Store {
+    fn propose(&mut self) -> Vec<solid::txn::Txn> {
+        mem::take(&mut self.pending)
+    }
+
+    fn txn(&mut self, txn: solid::txn::Txn) {
+        self.pending.push(txn);
+    }
+
     fn commit(&mut self, manifest: ProposalManifest) -> Vec<u8> {
         self.proposal = Some(manifest);
         vec![]
@@ -86,6 +97,7 @@ async fn main() {
     let store = Store {
         data: HashMap::new(),
         proposal: None,
+        pending: vec![],
     };
 
     // Logging

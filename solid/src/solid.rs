@@ -1,4 +1,3 @@
-use crate::change::Change;
 use crate::config::SolidConfig;
 use crate::event::ProposalEvent;
 use crate::event::SolidEvent;
@@ -6,6 +5,7 @@ use crate::network::Network;
 use crate::peer::PeerId;
 use crate::proposal::ProposalManifest;
 use crate::register::{ProposalRegister, ProposalRegisterConfig};
+use crate::txn::Txn;
 use bincode::{deserialize, serialize};
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -23,6 +23,15 @@ pub enum Error {
 
 /// Trait that defines the interface for a persistent store
 pub trait Store {
+    /// Ask the store to propose a set of changes to be included in a proposal.
+    fn propose(&mut self) -> Vec<Txn>;
+
+    /// A new txn has been received from the network, store it these pending changes
+    /// in case we become the next leader.
+    /// This will be deprecated shortly, as the mempool will be moved out of Solid
+    // TODO: remove txn from store
+    fn txn(&mut self, txn: Txn);
+
     /// Store should apply changes and return the new root hash
     /// for the rollup/store. Store should also persist the stored proposal manifests, as
     /// these are required for determining the next leader in case of a restart.
@@ -58,7 +67,7 @@ pub struct Solid<TStore, TNetwork> {
     register: ProposalRegister,
 
     /// Pending changes (aka txn pool)
-    pending_changes: HashMap<Vec<u8>, Change>,
+    pending_changes: HashMap<Vec<u8>, Txn>,
 
     /// Store to set and get state
     store: TStore,
@@ -118,19 +127,13 @@ where
         }
     }
 
-    pub async fn add_pending_changes(&mut self, changes: Vec<Change>) {
+    pub async fn add_pending_changes(&mut self, changes: Vec<Txn>) {
         for change in changes.iter() {
             self.pending_changes
                 .entry(change.id.clone())
                 .or_insert_with(|| change.clone());
         }
 
-        // Send new txns to other members
-        self.send_all(&SolidEvent::AddPendingChange { changes })
-            .await;
-    }
-
-    pub async fn send_pending_change(&mut self, changes: Vec<Change>) {
         // Send new txns to other members
         self.send_all(&SolidEvent::AddPendingChange { changes })
             .await;
@@ -230,7 +233,7 @@ where
                 skips,
             } => {
                 // Get changes from the pending changes cache
-                let changes = self.pending_changes.values().cloned().collect();
+                let txns = self.pending_changes.values().cloned().collect();
 
                 // Simulate delay
                 tokio::time::sleep(self.config.min_proposal_duration).await;
@@ -241,7 +244,7 @@ where
                     skips,
                     height,
                     leader_id: self.local_peer_id.clone(),
-                    changes,
+                    txns,
                     peers: self.peers.clone(),
                 };
                 let proposal_hash = manifest.hash();
@@ -266,7 +269,7 @@ where
             ProposalEvent::Commit { manifest } => {
                 info!(self.logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
                 // Remove commits from pending changes store
-                for change in &manifest.changes {
+                for change in &manifest.txns {
                     self.pending_changes.remove(&change.id);
                 }
 

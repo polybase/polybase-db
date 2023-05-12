@@ -211,7 +211,7 @@ mod tests {
             height,
             skips,
             leader_id: PeerId::new(vec![1u8]),
-            changes: vec![],
+            txns: vec![],
             peers: create_peers().to_vec(),
         };
         let m_hash = m.hash();

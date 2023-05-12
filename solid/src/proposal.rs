@@ -1,6 +1,6 @@
-use crate::change::Change;
 use crate::key::Key;
 use crate::peer::PeerId;
+use crate::txn::Txn;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::borrow::Borrow;
@@ -62,7 +62,7 @@ pub struct ProposalManifest {
     pub leader_id: PeerId,
 
     /// Changes included in the proposal
-    pub changes: Vec<Change>,
+    pub txns: Vec<Txn>,
 
     /// List of peers on the network
     pub peers: Vec<PeerId>,
@@ -147,7 +147,7 @@ impl ProposalManifest {
             skips: 0,
             height: 0,
             leader_id: PeerId::genesis(),
-            changes: vec![],
+            txns: vec![],
             peers,
         }
     }
@@ -226,7 +226,7 @@ mod test {
             skips: 0,
             height: 0,
             leader_id: p1.clone(),
-            changes: vec![],
+            txns: vec![],
             peers: vec![p1.clone(), p2.clone(), p3.clone()],
         };
 
@@ -253,7 +253,7 @@ mod test {
             skips: 0,
             height: 0,
             leader_id: p1.clone(),
-            changes: vec![],
+            txns: vec![],
             peers: vec![p1.clone(), p2.clone(), p3.clone()],
         });
 

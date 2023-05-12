@@ -358,7 +358,7 @@ mod test {
             height: 1,
             skips: 0,
             leader_id: peer_1,
-            changes: vec![],
+            txns: vec![],
             peers: vec![],
         };
 
@@ -389,7 +389,7 @@ mod test {
             height: 1,
             skips: 0,
             leader_id: peer_1.clone(),
-            changes: vec![],
+            txns: vec![],
             peers: vec![],
         };
         let hash: ProposalHash = (&manifest).into();

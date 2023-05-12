@@ -1,6 +1,6 @@
-use crate::change::Change;
 use crate::peer::PeerId;
 use crate::proposal::{ProposalAccept, ProposalHash, ProposalManifest};
+use crate::txn::Txn;
 use crate::Snapshot;
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,7 @@ pub enum SolidEvent {
     Accept { accept: ProposalAccept },
 
     /// Add a set of pending txns to the queue
-    AddPendingChange { changes: Vec<Change> },
+    AddPendingChange { changes: Vec<Txn> },
 
     /// Node is missing proposals, send them proposals or snapshot
     OutOfSync {
