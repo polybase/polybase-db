@@ -1,7 +1,9 @@
-name: Prenet deploy
+name: Release (Prenet)
 
 on:
-  push:
+  pull_request:
+    types:
+      - closed
     branches:
       - main
 
