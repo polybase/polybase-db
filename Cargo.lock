@@ -2427,7 +2427,7 @@ dependencies = [
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=main#072b4d14173161923661d99269e3c127b99ac40f"
+source = "git+https://github.com/polybase/polylang?branch=main#4559a8f8a62d9651d540ed2d75fa12f35c954e39"
 dependencies = [
  "base64 0.21.0",
  "console_error_panic_hook",
@@ -2441,7 +2441,7 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?branch=main#072b4d14173161923661d99269e3c127b99ac40f"
+source = "git+https://github.com/polybase/polylang?branch=main#4559a8f8a62d9651d540ed2d75fa12f35c954e39"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
