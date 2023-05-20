@@ -18,9 +18,6 @@ pub enum RecordError {
     #[error("invalid type prefix {b}")]
     InvalidTypePrefix { b: u8 },
 
-    #[error("expected value to be an object, got {got:?}")]
-    ExpectedObject { got: serde_json::Value },
-
     #[error("failed to convert number to f64")]
     FailedToConvertNumberToF64,
 
@@ -60,6 +57,9 @@ pub enum RecordUserError {
     #[error("record is missing field {field:?}")]
     MissingField { field: String },
 
+    #[error("record root should be an object, got: {got}")]
+    RecordRootShouldBeAnObject { got: serde_json::Value },
+
     #[error("value at field \"{}\" does not match the schema type, expected type: {expected_type}, got value: {value}", .field.as_deref().unwrap_or("unknown"))]
     InvalidFieldValueType {
         value: serde_json::Value,
@@ -80,7 +80,7 @@ pub fn json_to_record(
 ) -> Result<RecordRoot> {
     let mut map = HashMap::new();
     let serde_json::Value::Object(mut value) = value else {
-        return Err(RecordError::ExpectedObject { got: value });
+        return Err(RecordUserError::RecordRootShouldBeAnObject { got: value }.into());
     };
 
     for (field, ty, required) in collection.attributes.iter().filter_map(|a| match a {
@@ -494,7 +494,11 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
 
                         Ok(RecordReference { id })
                     }
-                    x => Err(RecordError::ExpectedObject { got: x }),
+                    x => Err(RecordUserError::InvalidFieldValueType {
+                        value: x,
+                        expected_type: ty.to_string(),
+                        field: Some(path.join(".")),
+                    }),
                 };
                 if r.is_err() && always_cast {
                     r = Ok(RecordReference::default());
@@ -566,7 +570,11 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
 
                             Ok(ForeignRecordReference { id, collection_id })
                         }
-                        v => Err(RecordError::ExpectedObject { got: v }),
+                        v => Err(RecordUserError::InvalidFieldValueType {
+                            value: v,
+                            expected_type: ty.to_string(),
+                            field: Some(path.join(".")),
+                        }),
                     }?;
 
                     #[allow(clippy::unwrap_used)] // split always returns at least one element
