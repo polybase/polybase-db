@@ -13,6 +13,9 @@ pub enum ReasonCode {
     #[display(fmt = "record/collection-id-not-found")]
     RecordCollectionIdNotFound,
 
+    #[display(fmt = "record/not-object")]
+    RecordNotObject,
+
     #[display(fmt = "record/field-not-object")]
     RecordFieldNotObject,
 
@@ -98,6 +101,7 @@ impl ReasonCode {
             ReasonCode::RecordNotFound => ErrorCode::NotFound,
             ReasonCode::RecordIdNotString => ErrorCode::InvalidArgument,
             ReasonCode::RecordCollectionIdNotFound => ErrorCode::NotFound,
+            ReasonCode::RecordNotObject => ErrorCode::InvalidArgument,
             ReasonCode::RecordFieldNotObject => ErrorCode::InvalidArgument,
             ReasonCode::RecordIDModified => ErrorCode::FailedPrecondition,
             ReasonCode::RecordMissingField => ErrorCode::InvalidArgument,
@@ -246,6 +250,9 @@ impl ReasonCode {
 
     pub fn from_record_error(err: &indexer::RecordUserError) -> Self {
         match err {
+            indexer::RecordUserError::RecordRootShouldBeAnObject { .. } => {
+                ReasonCode::RecordNotObject
+            }
             indexer::RecordUserError::MissingField { .. } => ReasonCode::RecordMissingField,
             indexer::RecordUserError::InvalidFieldValueType { .. } => {
                 ReasonCode::RecordInvalidField
