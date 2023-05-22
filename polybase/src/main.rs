@@ -11,10 +11,10 @@ mod config;
 mod db;
 mod errors;
 mod hash;
+mod mempool;
 mod network;
-mod pending;
-mod raft;
 mod rollup;
+mod txn;
 
 use actix_cors::Cors;
 use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
@@ -40,12 +40,10 @@ use crate::db::{ArcDb, Db};
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
 use crate::errors::reason::ReasonCode;
-use crate::raft::Raft;
 
 struct RouteState {
     db: Arc<Db>,
     indexer: Arc<Indexer>,
-    raft: Arc<Raft>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -55,9 +53,6 @@ enum AppError {
 
     #[error("failed to join task")]
     JoinError(#[from] tokio::task::JoinError),
-
-    #[error("raft failed unexpectedly")]
-    Raft(#[from] raft::RaftError),
 
     #[error("server failed unexpectedly")]
     HttpServer(#[from] actix_web::Error),
@@ -410,12 +405,12 @@ async fn post_record(
     let collection_id = path.into_inner();
 
     let auth = body.auth.map(|a| a.into());
-    let raft = Arc::clone(&state.raft);
+    let db: Arc<_> = Arc::clone(&state.db);
 
-    let record_id = raft
+    let record_id = db
         .call(
             collection_id.clone(),
-            "constructor".to_string(),
+            "constructor",
             "".to_string(),
             body.data.args,
             auth.as_ref(),
@@ -443,12 +438,12 @@ async fn call_function(
     let (collection_id, record_id, function) = path.into_inner();
 
     let auth = body.auth.map(indexer::AuthUser::from);
-    let raft = Arc::clone(&state.raft);
+    let db = Arc::clone(&state.db);
 
-    let record_id = raft
+    let record_id = db
         .call(
             collection_id.clone(),
-            function,
+            function.as_str(),
             record_id,
             body.data.args,
             auth.as_ref(),
@@ -547,13 +542,8 @@ async fn main() -> Result<(), AppError> {
 
     let db = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
 
-    let (raft, commit_interval_handle) = Raft::new(Arc::clone(&db), logger.clone());
-
-    let raft = Arc::new(raft);
-    let server_raft = Arc::clone(&raft);
     let server_logger = logger.clone();
 
-    let raft = Arc::clone(&raft);
     let logger = logger.clone();
 
     let network = network::Network::init(config.network_laddr, vec![])
@@ -577,7 +567,6 @@ async fn main() -> Result<(), AppError> {
             .app_data(web::Data::new(RouteState {
                 db: Arc::clone(&db),
                 indexer: Arc::clone(&indexer),
-                raft: Arc::clone(&server_raft),
             }))
             .wrap(SlogMiddleware::new(server_logger.clone()))
             .wrap(cors)
@@ -601,18 +590,8 @@ async fn main() -> Result<(), AppError> {
             error!(logger, "HTTP server exited unexpectedly {res:#?}");
             res?
         }
-        res = commit_interval_handle => {
-            error!(logger, "Commit interval exited unexpectedly: {res:#?}");
-            res??
-        },
         _ = solid.run() => {
             error!(logger, "Solid exited unexpectedly");
-        },
-        _ = tokio::signal::ctrl_c() => {
-            match raft.clone().shutdown().await {
-                Ok(_) => info!(logger, "Raft shutdown successfully"),
-                Err(e) => error!(logger, "Error shutting down raft"; "error" => ?e),
-            }
         },
     );
 

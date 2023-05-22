@@ -16,4 +16,6 @@ pub trait NetworkSender: Send {
         peer_id: PeerId,
         data: Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>>;
+
+    fn send_all(&self, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>>;
 }

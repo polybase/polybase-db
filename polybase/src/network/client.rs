@@ -1,5 +1,6 @@
 use super::service::{self, network_service_client::NetworkServiceClient};
 use futures::{Stream, StreamExt};
+use futures_util::TryStreamExt;
 use solid::peer;
 use tonic::{
     transport::{self, Channel},
@@ -32,10 +33,10 @@ impl Client {
             }))
             .await?;
 
-        // We need only bytes
         let byte_stream = response
             .into_inner()
-            .map(|Ok(event_response)| event_response.data);
+            .map_ok(|event_response| event_response.data)
+            .filter_map(|result| async { result.ok() });
 
         Ok(byte_stream)
     }

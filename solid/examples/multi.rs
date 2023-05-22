@@ -41,9 +41,9 @@ impl solid::Store for Store {
         mem::take(&mut self.pending)
     }
 
-    fn txn(&mut self, txn: solid::txn::Txn) {
-        self.pending.push(txn);
-    }
+    // fn txn(&mut self, txn: solid::txn::Txn) {
+    //     self.pending.push(txn);
+    // }
 
     fn commit(&mut self, manifest: ProposalManifest) -> Vec<u8> {
         self.proposal = Some(manifest);
@@ -202,6 +202,19 @@ impl solid::network::NetworkSender for MyNetwork {
                     }
                 }
             }
+        })
+    }
+
+    fn send_all(&self, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
+        let senders = self.senders.lock().unwrap().clone();
+        let local_peer_id = self.local_peer_id.clone();
+        let tasks: Vec<_> = senders
+            .keys()
+            .filter(|peer_id| **peer_id != local_peer_id) // Exclude local_peer_id from broadcasting
+            .map(|peer_id| self.send(peer_id.clone(), data.clone()))
+            .collect();
+        Box::pin(async move {
+            futures::future::join_all(tasks).await;
         })
     }
 }

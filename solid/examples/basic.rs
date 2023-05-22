@@ -31,9 +31,9 @@ impl solid::Store for Store {
         mem::take(&mut self.pending)
     }
 
-    fn txn(&mut self, txn: solid::txn::Txn) {
-        self.pending.push(txn);
-    }
+    // fn txn(&mut self, txn: solid::txn::Txn) {
+    //     self.pending.push(txn);
+    // }
 
     fn commit(&mut self, manifest: ProposalManifest) -> Vec<u8> {
         self.proposal = Some(manifest);
@@ -77,6 +77,11 @@ impl Default for MyNetwork {
 
 impl solid::network::NetworkSender for MyNetwork {
     fn send(&self, _: PeerId, _: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
+        // Implement your sending logic here
+        Box::pin(future::ready(()))
+    }
+
+    fn send_all(&self, _: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
         // Implement your sending logic here
         Box::pin(future::ready(()))
     }

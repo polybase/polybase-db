@@ -1,12 +1,12 @@
+use crate::hash;
+use crate::mempool::Mempool;
+use crate::rollup::Rollup;
+use crate::txn::{self, CallTxn};
 use gateway::{Change, Gateway};
 use indexer::collection::validate_collection_record;
 use indexer::{validate_schema_change, Indexer, RecordRoot};
 use solid::proposal::ProposalManifest;
 use std::sync::Arc;
-
-use crate::hash;
-use crate::pending::{PendingQueue, PendingQueueError};
-use crate::rollup::Rollup;
 
 pub type Result<T> = std::result::Result<T, DbError>;
 
@@ -39,12 +39,15 @@ pub enum DbError {
     #[error("serde_json error")]
     SerdeJsonError(#[from] serde_json::Error),
 
+    #[error("call txn error")]
+    CallTxnError(#[from] txn::CallTxnError),
+
     #[error("rollup error")]
     RollupError,
 }
 
 pub struct Db {
-    pending: PendingQueue<[u8; 32], Change>,
+    mempool: Mempool<[u8; 32], CallTxn>,
     gateway: Gateway,
     pub rollup: Rollup,
     pub indexer: Arc<Indexer>,
@@ -54,7 +57,7 @@ pub struct Db {
 impl Db {
     pub fn new(indexer: Arc<Indexer>, logger: slog::Logger) -> Self {
         Self {
-            pending: PendingQueue::new(),
+            mempool: Mempool::new(),
             rollup: Rollup::new(),
             gateway: gateway::initialize(logger.clone()),
             indexer,
@@ -62,10 +65,7 @@ impl Db {
         }
     }
 
-    pub fn last_record_id(&self) -> Option<[u8; 32]> {
-        self.pending.back_key()
-    }
-
+    /// Gets a record from the database
     pub async fn get(
         &self,
         collection_id: String,
@@ -82,141 +82,7 @@ impl Db {
         record.map_err(|e| DbError::IndexerError(e.into()))
     }
 
-    pub async fn commit(&self, commit_until_key: [u8; 32]) {
-        // TODO: If there is a commit to collection metadata, we should ignore other changes?
-
-        // Cachce collections
-        while let Some(value) = self.pending.pop() {
-            let (key, change) = value;
-
-            // Insert into indexer
-            let res = match change {
-                Change::Create {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(key, collection_id, record_id, record).await,
-                Change::Update {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(key, collection_id, record_id, record).await,
-                Change::Delete {
-                    record_id,
-                    collection_id,
-                } => self.delete(key, collection_id, record_id).await,
-            };
-
-            // TODO: is the best way to handle an error in commit?
-            match res {
-                Ok(_) => {}
-                Err(e) => warn!(self.logger, "error committing change: {:?}", e),
-            }
-
-            // Commit up until this point
-            if key == commit_until_key {
-                break;
-            }
-        }
-
-        // match self.rollup.commit() {
-        //     Ok(_) => {}
-        //     Err(e) => warn!(self.logger, "error committing rollup: {:?}", e),
-        // }
-    }
-
-    async fn delete(&self, _: [u8; 32], collection_id: String, record_id: String) -> Result<()> {
-        let collection = match self.indexer.collection(collection_id.clone()).await {
-            Ok(collection) => collection,
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        };
-
-        // Update the indexer
-        match collection.delete(record_id.clone()).await {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        }
-
-        Ok(())
-
-        // Remove from rollup
-        // match self.rollup.delete(key) {
-        //     Ok(_) => Ok(()),
-        //     Err(_) => Err(DbError::RollupError),
-        // }
-    }
-
-    async fn set(
-        &self,
-        _: [u8; 32],
-        collection_id: String,
-        record_id: String,
-        record: RecordRoot,
-    ) -> Result<()> {
-        // Get the indexer collection instance
-        let collection = match self.indexer.collection(collection_id.clone()).await {
-            Ok(collection) => collection,
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        };
-
-        // Update the indexer
-        match collection.set(record_id.clone(), &record).await {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        }
-
-        Ok(())
-
-        // Add to the rollup
-        // match self.rollup.insert(key, &record) {
-        //     Ok(_) => Ok(()),
-        //     Err(_) => Err(DbError::RollupError),
-        // }
-    }
-
-    pub async fn validate_call(
-        &self,
-        collection_id: String,
-        function_name: &str,
-        record_id: String,
-        args: Vec<serde_json::Value>,
-        auth: Option<&indexer::AuthUser>,
-    ) -> Result<()> {
-        let indexer = Arc::clone(&self.indexer);
-
-        // Get changes
-        let changes = self
-            .gateway
-            .call(
-                &indexer,
-                collection_id,
-                function_name,
-                record_id,
-                args,
-                auth,
-            )
-            .await?;
-
-        for change in changes {
-            let (collection_id, record_id) = change.get_path();
-            let k = get_key(collection_id, record_id);
-
-            if self.pending.has(&k) {
-                return Err(DbError::RecordChangeExists);
-            }
-        }
-
-        Ok(())
-    }
-
+    /// Applies a call txn
     pub async fn call(
         &self,
         collection_id: String,
@@ -233,10 +99,10 @@ impl Db {
             .gateway
             .call(
                 &indexer,
-                collection_id,
+                collection_id.clone(),
                 function_name,
-                record_id,
-                args,
+                record_id.clone(),
+                args.clone(),
                 auth,
             )
             .await?;
@@ -273,16 +139,115 @@ impl Db {
                         .await?;
                 }
             }
+        }
 
-            match self.pending.insert(k, change) {
-                Ok(_) => {}
-                Err(PendingQueueError::KeyExists) => {
-                    return Err(DbError::RecordChangeExists);
-                }
+        let txn = CallTxn::new(collection_id, function_name, record_id, args, auth.cloned());
+        let hash = txn.hash()?;
+
+        // Wait for txn to be committed
+        self.mempool.add_wait(hash, txn).await;
+
+        Ok(output_record_id)
+    }
+
+    async fn commit(&self, txn: CallTxn) -> Result<()> {
+        let CallTxn {
+            collection_id,
+            function_name,
+            record_id,
+            args,
+            auth,
+        } = &txn;
+        let indexer = Arc::clone(&self.indexer);
+        // let output_record_id = record_id.clone();
+
+        // Get changes
+        let changes = self
+            .gateway
+            .call(
+                &indexer,
+                collection_id.clone(),
+                &function_name,
+                record_id.clone(),
+                args.clone(),
+                auth.as_ref(),
+            )
+            .await?;
+
+        for change in changes {
+            let (collection_id, record_id) = change.get_path();
+            let key = get_key(collection_id, record_id);
+
+            // Insert into indexer
+            let res = match change {
+                Change::Create {
+                    record,
+                    collection_id,
+                    record_id,
+                } => self.set(key, collection_id, record_id, record).await,
+                Change::Update {
+                    record,
+                    collection_id,
+                    record_id,
+                } => self.set(key, collection_id, record_id, record).await,
+                Change::Delete {
+                    record_id,
+                    collection_id,
+                } => self.delete(key, collection_id, record_id).await,
+            };
+        }
+
+        let hash = txn.hash()?;
+
+        // Commit changes in mempool
+        self.mempool.commit(hash);
+
+        Ok(())
+    }
+
+    async fn delete(&self, _: [u8; 32], collection_id: String, record_id: String) -> Result<()> {
+        let collection = match self.indexer.collection(collection_id.clone()).await {
+            Ok(collection) => collection,
+            Err(e) => {
+                return Err(DbError::IndexerError(e.into()));
+            }
+        };
+
+        // Update the indexer
+        match collection.delete(record_id.clone()).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(DbError::IndexerError(e.into()));
             }
         }
 
-        Ok(output_record_id)
+        Ok(())
+    }
+
+    async fn set(
+        &self,
+        _: [u8; 32],
+        collection_id: String,
+        record_id: String,
+        record: RecordRoot,
+    ) -> Result<()> {
+        // Get the indexer collection instance
+        let collection = match self.indexer.collection(collection_id.clone()).await {
+            Ok(collection) => collection,
+            Err(e) => {
+                return Err(DbError::IndexerError(e.into()));
+            }
+        };
+
+        // Update the indexer
+        match collection.set(record_id.clone(), &record).await {
+            Ok(_) => {}
+            Err(e) => {
+                return Err(DbError::IndexerError(e.into()));
+            }
+        }
+
+        Ok(())
     }
 
     async fn validate_schema_update(
@@ -338,9 +303,28 @@ impl Db {
 pub struct ArcDb(pub Arc<Db>);
 
 impl solid::Store for ArcDb {
+    fn propose(&mut self) -> Vec<solid::txn::Txn> {
+        self.0
+            .mempool
+            .get_batch(110)
+            .iter()
+            .map(|(id, callTxn)| solid::txn::Txn {
+                // TODO: remove unwrap
+                id: callTxn.hash().unwrap().to_vec(),
+                data: callTxn.serialize().unwrap(),
+            })
+            .collect()
+    }
+
     fn commit(&mut self, manifest: ProposalManifest) -> Vec<u8> {
-        // let db_ref = self.0.as_ref();
-        todo!()
+        let db_ref = self.0.as_ref();
+
+        for txn in manifest.txns {
+            let txn = CallTxn::deserialize(&txn.data).unwrap();
+            db_ref.commit(txn);
+        }
+
+        vec![]
     }
 
     fn restore(&mut self, snapshot: solid::Snapshot) {

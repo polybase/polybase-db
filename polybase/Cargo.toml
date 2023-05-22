@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
+prost = "0.11"
 actix-web = "4"
 indexer = { path = "../indexer" }
 gateway = { path = "../gateway" }
@@ -47,6 +48,7 @@ chrono = "0.4.24"
 async-trait = "0.1.68"
 tonic = "0.8.3"
 tokio-stream = "0.1.12"
+parking_lot = "0.12.1"
 
 [dev-dependencies]
 tokio-test = "0.4.2"

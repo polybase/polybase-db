@@ -1,10 +1,12 @@
+use futures::{Future, Stream, StreamExt};
+use parking_lot::Mutex;
+use solid::{self, peer};
+use std::sync::Arc;
+use std::{collections::HashMap, net::ToSocketAddrs, pin::Pin, time::Duration};
+
 mod client;
 mod server;
 mod service;
-
-use futures::{Future, Stream, StreamExt};
-use solid::{self, peer};
-use std::{collections::HashMap, net::ToSocketAddrs, pin::Pin, time::Duration};
 
 pub struct Network {
     clients: HashMap<peer::PeerId, client::Client>,
@@ -32,7 +34,7 @@ impl Network {
                 .expect("failed to get event stream");
 
             clients.insert(peer_id.clone(), client);
-            client_streams.insert(peer_id, Box::pin(stream) as _);
+            client_streams.insert(peer_id, Arc::new(Mutex::new(Box::pin(stream) as _)));
         }
 
         Ok(Self {
@@ -44,7 +46,7 @@ impl Network {
 }
 
 pub struct Listener {
-    client_streams: HashMap<peer::PeerId, Pin<Box<dyn Stream<Item = Vec<u8>> + Send + Sync>>>,
+    client_streams: HashMap<peer::PeerId, Arc<Mutex<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>>>,
 }
 
 impl Stream for Listener {
@@ -55,7 +57,8 @@ impl Stream for Listener {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         for (peer, stream) in self.client_streams.iter_mut() {
-            if let std::task::Poll::Ready(Some(event)) = stream.poll_next_unpin(cx) {
+            let mut locked_stream = stream.lock();
+            if let std::task::Poll::Ready(Some(event)) = locked_stream.poll_next_unpin(cx) {
                 return std::task::Poll::Ready(Some((peer.clone(), event)));
             }
         }
@@ -71,6 +74,10 @@ impl solid::network::NetworkSender for Network {
         data: Vec<u8>,
     ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
         self.sender.send(peer_id, data)
+    }
+
+    fn send_all(&self, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
+        self.sender.send_all(data)
     }
 }
 

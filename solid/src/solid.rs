@@ -26,12 +26,6 @@ pub trait Store {
     /// Ask the store to propose a set of changes to be included in a proposal.
     fn propose(&mut self) -> Vec<Txn>;
 
-    /// A new txn has been received from the network, store it these pending changes
-    /// in case we become the next leader.
-    /// This will be deprecated shortly, as the mempool will be moved out of Solid
-    // TODO: remove txn from store
-    fn txn(&mut self, txn: Txn);
-
     /// Store should apply changes and return the new root hash
     /// for the rollup/store. Store should also persist the stored proposal manifests, as
     /// these are required for determining the next leader in case of a restart.
@@ -192,11 +186,17 @@ where
     }
 
     async fn send_all(&self, event: &SolidEvent) {
-        for peer in self.peers.iter() {
-            if peer != &self.local_peer_id {
-                self.send(peer, event).await;
+        // Serialize the data
+        let data = match serialize(event) {
+            Ok(data) => data,
+            Err(err) => {
+                error!(self.logger, "failed to serialize network event"; "err" => format!("{:?}", err));
+                return;
             }
-        }
+        };
+
+        // Send event to all peers
+        self.network.send_all(data).await;
     }
 
     /// Events from the proposal state machine, which notify of new

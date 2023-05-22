@@ -155,6 +155,17 @@ impl NetworkSender for Sender {
             }
         })
     }
+
+    fn send_all(&self, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
+        let peer_to_sender = self.peer_to_sender.read().unwrap().clone();
+        let tasks: Vec<_> = peer_to_sender
+            .keys()
+            .map(|peer_id| self.send(peer_id.clone(), data.clone()))
+            .collect();
+        Box::pin(async move {
+            futures::future::join_all(tasks).await;
+        })
+    }
 }
 
 #[cfg(test)]

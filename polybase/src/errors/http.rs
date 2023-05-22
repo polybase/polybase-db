@@ -6,13 +6,10 @@ use serde::Serialize;
 use std::{error::Error, fmt::Display};
 
 use super::reason::ReasonCode;
+use crate::rollup;
 use crate::{
     auth,
     db::{self},
-};
-use crate::{
-    raft::{self},
-    rollup,
 };
 
 #[derive(Debug)]
@@ -100,15 +97,6 @@ impl From<db::DbError> for HTTPError {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
             db::DbError::GatewayError(e) => e.into(),
-            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
-        }
-    }
-}
-
-impl From<raft::RaftError> for HTTPError {
-    fn from(err: raft::RaftError) -> Self {
-        match err {
-            raft::RaftError::Db(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }

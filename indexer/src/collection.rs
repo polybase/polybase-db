@@ -1511,7 +1511,7 @@ mod tests {
                 read_all: true,
                 call_all: true,
                 read_fields: vec![],
-                delegate_fields: vec![]
+                delegate_fields: vec![],
             },
         );
 
