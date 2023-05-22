@@ -25,7 +25,7 @@ jobs:
         run: |
           echo "Updating version..."
           for file in `find . -name "Cargo.toml"`; do
-              sed -i 's/^version = ".*"$/version = "VERSION"/g' $file
+              sed -i "s/^version = \".*\"$/version = \"$VERSION\"/g" $file
           done
 
       - name: Commit changes
