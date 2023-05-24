@@ -3,124 +3,104 @@ extern crate slog;
 extern crate slog_async;
 extern crate slog_term;
 
-use bincode::{deserialize, serialize};
-use futures::channel::mpsc;
-use futures::future;
-use futures::stream::Stream;
-use serde::{Deserialize, Serialize};
+use futures::StreamExt;
 use slog::{Drain, Level};
 use solid::config::SolidConfig;
+use solid::event::SolidEvent;
 use solid::peer::PeerId;
 use solid::proposal::ProposalManifest;
-use solid::{Snapshot, Solid};
-use std::collections::HashMap;
-use std::future::Future;
-// use std::hash::Hash;
-use std::mem;
-use std::pin::Pin;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Store {
-    data: HashMap<String, String>,
-    proposal: Option<ProposalManifest>,
-    pending: Vec<solid::txn::Txn>,
-}
-
-impl solid::Store for Store {
-    fn propose(&mut self) -> Vec<solid::txn::Txn> {
-        mem::take(&mut self.pending)
-    }
-
-    // fn txn(&mut self, txn: solid::txn::Txn) {
-    //     self.pending.push(txn);
-    // }
-
-    fn commit(&mut self, manifest: ProposalManifest) -> Vec<u8> {
-        self.proposal = Some(manifest);
-        vec![]
-    }
-
-    fn restore(&mut self, snapshot: Snapshot) {
-        let Snapshot { data, proposal } = snapshot;
-        let data: HashMap<String, String> = deserialize(&data).unwrap();
-        self.data = data;
-        self.proposal = Some(proposal)
-    }
-
-    fn snapshot(&self) -> std::result::Result<Snapshot, Box<dyn std::error::Error>> {
-        Ok(Snapshot {
-            data: serialize(&self.data)?,
-            proposal: self.proposal.as_ref().unwrap().clone(),
-        })
-    }
-}
-
-pub struct MyNetwork {
-    event_stream: Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Send + Sync>,
-}
-
-impl MyNetwork {
-    pub fn new() -> Self {
-        let (_, receiver) = mpsc::channel(100);
-        let event_stream =
-            Box::new(receiver) as Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Send + Sync>;
-
-        Self { event_stream }
-    }
-}
-
-impl Default for MyNetwork {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl solid::network::NetworkSender for MyNetwork {
-    fn send(&self, _: PeerId, _: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
-        // Implement your sending logic here
-        Box::pin(future::ready(()))
-    }
-
-    fn send_all(&self, _: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
-        // Implement your sending logic here
-        Box::pin(future::ready(()))
-    }
-}
-
-impl solid::network::Network for MyNetwork {
-    type EventStream = Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Sync + Send>;
-
-    fn events(&mut self) -> &mut Self::EventStream {
-        &mut self.event_stream
-    }
-}
+use solid::Solid;
+use std::time::Duration;
+use std::vec;
 
 #[tokio::main]
 async fn main() {
     let local_peer_id = PeerId::random();
-    let network = MyNetwork::new();
-    let store = Store {
-        data: HashMap::new(),
-        proposal: None,
-        pending: vec![],
-    };
 
     // Logging
     let decorator = slog_term::PlainDecorator::new(std::io::stdout());
     let drain = slog_term::CompactFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
     let drain = slog::LevelFilter::new(drain, Level::Info).fuse();
-    let log = slog::Logger::root(drain, o!());
+    let logger = slog::Logger::root(drain, o!());
 
-    let mut solid = Solid::new(
+    // Create a new solid instance
+    let mut solid = Solid::genesis(
         local_peer_id.clone(),
-        vec![local_peer_id],
-        store,
-        network,
-        log.clone(),
+        vec![local_peer_id.clone()],
         SolidConfig::default(),
     );
 
+    // Start the service
+    solid.run();
+
     // Start
-    solid.run().await;
+    loop {
+        tokio::select! {
+            Some(event) = solid.next() => {
+                match event {
+                    // Node should send accept for an active proposal
+                    // to another peer
+                    SolidEvent::Accept { accept } => {
+                        info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                    }
+
+                    // Node should create and send a new proposal
+                    SolidEvent::Propose {
+                        last_proposal_hash,
+                        height,
+                        skips,
+                    } => {
+                        // Get changes from the pending changes cache
+                        let txns = vec![];
+
+                        // Simulate delay
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+
+                        // Create the proposl manfiest
+                        let manifest = ProposalManifest {
+                            last_proposal_hash,
+                            skips,
+                            height,
+                            leader_id: local_peer_id.clone(),
+                            txns,
+                            peers: vec![local_peer_id.clone()]
+                        };
+                        let proposal_hash = manifest.hash();
+
+                        info!(logger, "Propose"; "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips);
+
+                        // Add proposal to own register, this will trigger an accept
+                        solid.receive_proposal(manifest.clone());
+                    }
+
+                    // Commit a confirmed proposal changes
+                    SolidEvent::Commit { manifest } => {
+                        info!(logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
+                    }
+
+                    SolidEvent::OutOfSync {
+                        height,
+                        max_seen_height,
+                        accepts_sent,
+                    } => {
+                        info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
+                    }
+
+                    SolidEvent::OutOfDate {
+                        local_height,
+                        proposal_height,
+                        proposal_hash,
+                        peer_id,
+                    } => {
+                        info!(logger, "Out of date proposal"; "local_height" => local_height, "proposal_height" => proposal_height, "proposal_hash" => proposal_hash.to_string(), "from" => peer_id.prefix());
+                    }
+
+                    SolidEvent::DuplicateProposal { proposal_hash } => {
+                        info!(logger, "Duplicate proposal"; "hash" => proposal_hash.to_string());
+                    }
+                }
+            }
+        }
+    }
 }

@@ -1,4 +1,4 @@
-use super::event::ProposalEvent;
+use super::event::SolidEvent;
 use super::proposal::{Proposal, ProposalAccept, ProposalHash, ProposalManifest};
 use crate::cache::ProposalCache;
 use crate::peer::PeerId;
@@ -7,6 +7,9 @@ use std::collections::HashMap;
 /// ProposalStore is responsible for handling new proposals and accepts.
 #[derive(Debug)]
 pub struct ProposalStore {
+    /// peer_id of the local node
+    local_peer_id: PeerId,
+
     /// Pending proposals that may or may not end up being confiremd.
     proposals: ProposalCache,
 
@@ -32,12 +35,14 @@ pub struct ProposeNextState {
 
 impl ProposalStore {
     pub fn with_last_confirmed(
+        local_peer_id: PeerId,
         last_confirmed_proposal: ProposalManifest,
         cache_size: usize,
     ) -> Self {
         let max_height = last_confirmed_proposal.height;
 
         Self {
+            local_peer_id,
             proposals: ProposalCache::new(Proposal::new(last_confirmed_proposal), cache_size),
             // max_height,
             accepts_sent: 0,
@@ -47,8 +52,8 @@ impl ProposalStore {
     }
 
     #[cfg(test)]
-    pub fn genesis(peers: Vec<PeerId>, cache_size: usize) -> Self {
-        Self::with_last_confirmed(ProposalManifest::genesis(peers), cache_size)
+    pub fn genesis(local_peer_id: PeerId, peers: Vec<PeerId>, cache_size: usize) -> Self {
+        Self::with_last_confirmed(local_peer_id, ProposalManifest::genesis(peers), cache_size)
     }
 
     /// Height of the proposal that was last confirmed
@@ -86,13 +91,13 @@ impl ProposalStore {
         self.proposals.insert(proposal);
     }
 
-    pub fn process_next(&mut self) -> Option<ProposalEvent> {
+    pub fn process_next(&mut self) -> Option<SolidEvent> {
         let proposal = match self.proposals.next_pending_proposal(0) {
             Some(p) => p,
             None => {
                 if self.has_pending_commits() {
-                    return Some(ProposalEvent::OutOfSync {
-                        local_height: self.height(),
+                    return Some(SolidEvent::OutOfSync {
+                        height: self.height(),
                         max_seen_height: self.proposals.max_height(),
                         accepts_sent: self.accepts_sent,
                     });
@@ -114,7 +119,7 @@ impl ProposalStore {
             self.accepts_sent = 0;
 
             // Send commit
-            return Some(ProposalEvent::Commit { manifest });
+            return Some(SolidEvent::Commit { manifest });
         }
 
         // Only send initial accept using the process_next, otherwise accept is sent
@@ -123,29 +128,24 @@ impl ProposalStore {
             return None;
         }
 
-        let accept = self.get_next_accept();
-
         // In sync, so we should send accept to the next leader
-        Some(ProposalEvent::SendAccept { accept })
+        Some(self.get_next_accept_event())
     }
 
     /// Skip should be called when we have not received a proposal from the next leader
     /// within the timeout period. Skip will send an accept to the next leader.
-    pub fn skip(&mut self) -> Option<ProposalEvent> {
+    pub fn skip(&mut self) -> Option<SolidEvent> {
         // Just in case we try to skip when we're still catching up
         if self.has_network_commits() {
             return None;
         }
 
         // Get the next accept
-        let accept = self.get_next_accept();
-
-        // Send skip
-        Some(ProposalEvent::SendAccept { accept })
+        Some(self.get_next_accept_event())
     }
 
     /// Gets the next accept to send, where no pending proposal is available, last confirmed will be used.
-    fn get_next_accept(&mut self) -> ProposalAccept {
+    fn get_next_accept_event(&mut self) -> SolidEvent {
         let last_confirmed = self.proposals.last_confirmed_proposal();
         let current_proposal = self
             .proposals
@@ -168,13 +168,28 @@ impl ProposalStore {
         self.accepts_sent_height = current_proposal.height();
         self.accepts_sent = skips + 1;
 
-        accept
+        // Copy the local_peer_id to avoid borrowing issues
+        let local_peer_id = self.local_peer_id.clone();
+
+        // If the next accept is self, then we should add the accept
+        if self.is_peer(&accept.leader_id) {
+            if let Some(event) = self.add_accept(&accept, &local_peer_id) {
+                return event;
+            }
+        }
+
+        SolidEvent::Accept { accept }
+    }
+
+    // Is peer the current node
+    pub fn is_peer(&self, other_peer: &PeerId) -> bool {
+        &self.local_peer_id == other_peer
     }
 
     /// Adds an accept to a proposal, we should only be receiving accepts if we are the
     /// next designated leader. Returns ProposalNextState if we have hit the majority and the
     /// accept is still valid, otherwise returns None.
-    pub fn add_accept(&mut self, accept: &ProposalAccept, from: &PeerId) -> Option<ProposalEvent> {
+    pub fn add_accept(&mut self, accept: &ProposalAccept, from: &PeerId) -> Option<SolidEvent> {
         let ProposalAccept {
             proposal_hash: last_proposal_hash,
             leader_id,
@@ -197,7 +212,7 @@ impl ProposalStore {
             Some(p) => {
                 // Skip if skips is not valid
                 if p.add_accept(skips, from.clone()) {
-                    return Some(ProposalEvent::Propose {
+                    return Some(SolidEvent::Propose {
                         last_proposal_hash: last_proposal_hash.clone(),
                         height: p.height() + 1,
                         skips: *skips,
@@ -221,8 +236,8 @@ impl ProposalStore {
 
         // Accept is indicating that we are behind the network in terms of proposals
         if res.is_none() && *accept_height > self.height() + 2 {
-            return Some(ProposalEvent::OutOfSync {
-                local_height: self.height(),
+            return Some(SolidEvent::OutOfSync {
+                height: self.height(),
                 max_seen_height: accept_height - 1,
                 accepts_sent: 0,
             });
@@ -297,12 +312,13 @@ mod test {
 
     #[test]
     fn test_process_next_genesis() {
-        let mut store: ProposalStore = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let [p1, _, _] = create_peers();
+        let mut store: ProposalStore = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: genesis_hash.clone(),
                     height: 0,
@@ -318,7 +334,7 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m1_hash.clone(),
                     height: 1,
@@ -335,12 +351,12 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Commit { manifest: m1 })
+            Some(SolidEvent::Commit { manifest: m1 })
         );
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m2_hash.clone(),
                     leader_id: peer(3),
@@ -359,8 +375,8 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::OutOfSync {
-                local_height: 1,
+            Some(SolidEvent::OutOfSync {
+                height: 1,
                 max_seen_height: 4,
                 accepts_sent: 1
             })
@@ -369,17 +385,17 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Commit { manifest: m2 })
+            Some(SolidEvent::Commit { manifest: m2 })
         );
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Commit { manifest: m3 })
+            Some(SolidEvent::Commit { manifest: m3 })
         );
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m4_hash,
                     leader_id: peer(1),
@@ -394,14 +410,15 @@ mod test {
 
     #[test]
     fn test_process_next_restore() {
+        let [p1, _, _] = create_peers();
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         let (m10, m10_hash) = create_manifest(10, 0, 1, genesis_hash);
-        let mut store = ProposalStore::with_last_confirmed(m10, 100);
+        let mut store = ProposalStore::with_last_confirmed(p1, m10, 100);
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m10_hash.clone(),
                     height: 10,
@@ -416,7 +433,7 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m11_hash.clone(),
                     height: 11,
@@ -433,12 +450,12 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Commit { manifest: m11 })
+            Some(SolidEvent::Commit { manifest: m11 })
         );
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m12_hash,
                     leader_id: peer(1),
@@ -453,12 +470,13 @@ mod test {
     /// Node skips, network skips
     #[test]
     fn test_skip_one_network_skip() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let [p1, _, _] = create_peers();
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: genesis_hash.clone(),
                     height: 0,
@@ -475,7 +493,7 @@ mod test {
         // Send accept for m1
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m1_hash.clone(),
                     leader_id: peer(2),
@@ -490,7 +508,7 @@ mod test {
         // Send skip for m1 after timeout
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m1_hash.clone(),
                     leader_id: peer(1),
@@ -512,12 +530,12 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Commit { manifest: m1 })
+            Some(SolidEvent::Commit { manifest: m1 })
         );
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     leader_id: peer(3),
                     proposal_hash: m2b_hash,
@@ -532,12 +550,13 @@ mod test {
 
     #[test]
     fn test_out_of_sync() {
+        let [p1, _, _] = create_peers();
         let (m3, m3_hash) = create_manifest(3, 0, 1, ProposalHash::default());
-        let mut store = ProposalStore::with_last_confirmed(m3, 100);
+        let mut store = ProposalStore::with_last_confirmed(p1, m3, 100);
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m3_hash,
                     height: 3,
@@ -552,8 +571,8 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::OutOfSync {
-                local_height: 3,
+            Some(SolidEvent::OutOfSync {
+                height: 3,
                 max_seen_height: 5,
                 accepts_sent: 1
             })
@@ -561,8 +580,8 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::OutOfSync {
-                local_height: 3,
+            Some(SolidEvent::OutOfSync {
+                height: 3,
                 max_seen_height: 5,
                 accepts_sent: 1
             })
@@ -572,12 +591,13 @@ mod test {
     /// Node skips, network no skips
     #[test]
     fn test_skip_one_no_network_skip() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let [p1, _, _] = create_peers();
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: genesis_hash.clone(),
                     height: 0,
@@ -593,7 +613,7 @@ mod test {
         // Send accept for m1
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m1_hash.clone(),
                     leader_id: peer(2),
@@ -607,7 +627,7 @@ mod test {
         // Send skip=1 for m1 (simulating timeout)
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: m1_hash.clone(),
                     leader_id: peer(1),
@@ -634,18 +654,18 @@ mod test {
         // We now need to catch up to network by applying m2
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Commit { manifest: m1 })
+            Some(SolidEvent::Commit { manifest: m1 })
         );
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::Commit { manifest: m2 })
+            Some(SolidEvent::Commit { manifest: m2 })
         );
 
         // We can now send accept for m3, as we are up to date with the network
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     leader_id: peer(2),
                     height: 3,
@@ -659,12 +679,12 @@ mod test {
     #[test]
     fn test_skip_one_proposal() {
         let [p1, p2, p3] = create_peers();
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let mut store = ProposalStore::genesis(p1.clone(), create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     proposal_hash: genesis_hash.clone(),
                     height: 0,
@@ -679,7 +699,7 @@ mod test {
 
         assert_eq!(
             store.process_next(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     leader_id: p2.clone(),
                     proposal_hash: m1_hash.clone(),
@@ -691,7 +711,7 @@ mod test {
 
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     height: 1,
                     skips: 1,
@@ -703,7 +723,7 @@ mod test {
 
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     height: 1,
                     skips: 2,
@@ -715,7 +735,7 @@ mod test {
 
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     height: 1,
                     skips: 3,
@@ -727,7 +747,7 @@ mod test {
 
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     height: 1,
                     skips: 4,
@@ -739,7 +759,7 @@ mod test {
 
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     height: 1,
                     skips: 5,
@@ -753,7 +773,7 @@ mod test {
     #[test]
     fn test_multi_accept_proposal() {
         let [p1, p2, p3] = create_peers();
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let mut store = ProposalStore::genesis(p1.clone(), create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // First accept, no majority
@@ -795,7 +815,7 @@ mod test {
                 },
                 &p2,
             ),
-            Some(ProposalEvent::Propose {
+            Some(SolidEvent::Propose {
                 last_proposal_hash: genesis_hash.clone(),
                 height: 1,
                 skips: 0,
@@ -819,7 +839,8 @@ mod test {
 
     #[test]
     fn test_higher_skip_accept_received() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let [p1, _, _] = create_peers();
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // First accept, no majority
@@ -839,7 +860,7 @@ mod test {
         // Skip should now start from 10, so skips will be 10 + 1
         assert_eq!(
             store.skip(),
-            Some(ProposalEvent::SendAccept {
+            Some(SolidEvent::Accept {
                 accept: ProposalAccept {
                     leader_id: peer(1),
                     proposal_hash: genesis_hash,
@@ -852,7 +873,8 @@ mod test {
 
     #[test]
     fn test_duplicate_accepts_received() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let [p1, _, _] = create_peers();
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // First accept, no majority
@@ -894,7 +916,7 @@ mod test {
                 },
                 &peer(2),
             ),
-            Some(ProposalEvent::Propose {
+            Some(SolidEvent::Propose {
                 last_proposal_hash: genesis_hash.clone(),
                 height: 1,
                 skips: 0,
@@ -918,10 +940,11 @@ mod test {
 
     #[test]
     fn test_next_pending_propsal() {
+        let [p1, _, _] = create_peers();
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // Create store with init genesis proposal
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
 
         assert_eq!(
             store
@@ -1022,7 +1045,8 @@ mod test {
 
     #[test]
     fn test_has_next_commt() {
-        let mut store = ProposalStore::genesis(create_peers().to_vec(), 100);
+        let [p1, _, _] = create_peers();
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
         let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
         assert!(!store.has_next_commit());
 

@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+#[derive(Debug, Clone)]
 pub struct SolidConfig {
     /// Minimum delay for each proposal
     pub min_proposal_duration: Duration,

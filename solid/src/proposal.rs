@@ -25,7 +25,8 @@ pub struct Proposal {
 /// ProposalAccept is sent by all peers to the next leader to indicate
 /// they accept a previous proposal. ProposalAccept is also used in the scenario
 /// where a leader is skipped because they did not produce a proposal in time.
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+// TODO: add from_peer_id to ProposalAccept
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposalAccept {
     /// Peer that sent the accept
     pub leader_id: PeerId,
