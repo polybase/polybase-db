@@ -274,6 +274,26 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
+            message: "index field \"id1\" not found in schema".to_string(),
+        }
+    },
+    collection_with_invalid_index_name,
+    "ns/test",
+    "
+     @public
+     collection test {
+        id: string;
+
+        @index(id1);
+     }
+     ",
+);
+
+create_collection_test!(
+    Error {
+        error: ErrorData {
+            code: "invalid-argument".to_string(),
+            reason: "collection/invalid-schema".to_string(),
             message: r#"collection directive "read" cannot have arguments"#.to_string(),
         }
     },
@@ -767,5 +787,60 @@ collection Test {
                 message: r#"value at field "name" does not match the schema type, expected type: string, got value: 123"#.to_string(),
             }
         },
+    );
+}
+
+#[tokio::test]
+async fn invalid_index_name_update() {
+    let server = Server::setup_and_wait().await;
+
+    let collection = server
+        .create_collection_untyped(
+            "ns/InvalidIndexTest",
+            r#"
+        @public
+        collection InvalidIndexTest {
+            id: string;
+
+            constructor(id: string) {
+                this.id = id;
+            }
+
+            @index(id);
+        }
+    "#,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server
+            .update_collection_untyped(
+                "ns/InvalidIndexTest",
+                &collection.id,
+                r#"
+        @public
+        collection InvalidIndexTest {
+            id: string;
+
+            constructor(id: string) {
+                this.id = id;
+            }
+
+            @index(id1);
+        }
+    "#,
+                None
+            )
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "collection/invalid-schema".to_string(),
+                message: "index field \"id1\" not found in schema".to_string(),
+            }
+        }
     );
 }

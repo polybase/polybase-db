@@ -100,6 +100,7 @@ impl From<db::DbError> for HTTPError {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
             db::DbError::GatewayError(e) => e.into(),
+            db::DbError::IndexerError(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
