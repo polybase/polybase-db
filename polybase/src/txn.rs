@@ -1,5 +1,6 @@
-use bincode::{deserialize, serialize};
+// use bincode::{deserialize, serialize};
 use serde::{Deserialize, Serialize};
+use serde_json::{from_slice as deserialize, to_vec as serialize};
 use sha3::{Digest, Sha3_256};
 
 pub type Result<T> = std::result::Result<T, CallTxnError>;
@@ -7,7 +8,7 @@ pub type Result<T> = std::result::Result<T, CallTxnError>;
 #[derive(Debug, thiserror::Error)]
 pub enum CallTxnError {
     #[error("serialize error")]
-    SerializerError(#[from] bincode::Error),
+    SerializerError(#[from] serde_json::Error),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
