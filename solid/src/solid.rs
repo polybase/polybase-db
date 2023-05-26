@@ -268,7 +268,7 @@ impl Solid {
 impl Stream for Solid {
     type Item = SolidEvent;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<SolidEvent>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut events = self.shared.events.lock();
         if let Some(event) = events.pop_front() {
             return Poll::Ready(Some(event));

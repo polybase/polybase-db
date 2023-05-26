@@ -1,4 +1,5 @@
 use clap::{Parser, ValueEnum};
+// use std::str::FromStr;
 
 /// Polybase is a p2p decentralized database
 #[derive(Parser, Debug)]
@@ -28,20 +29,24 @@ pub struct Config {
     pub rpc_laddr: String,
 
     /// Peer listen address
-    #[arg(long, env = "NETWORK_LADDR", default_value = "0.0.0.0:6000")]
-    pub network_laddr: String,
+    #[arg(
+        long,
+        env = "NETWORK_LADDR",
+        value_parser,
+        value_delimiter = ',',
+        default_value = "/ip4/0.0.0.0/tcp/0"
+    )]
+    pub network_laddr: Vec<String>,
 
-    /// Peer listen address
-    #[arg(long, env = "PEERS", default_value = "")]
-    pub peers: String,
-
-    /// RAFT listen address
-    #[arg(long, env = "RAFT_LADDR", default_value = "0.0.0.0:5001")]
-    pub raft_laddr: String,
-
-    /// RAFT peer addresses
-    #[arg(long, env = "RAFT_PEERS", default_value = "")]
-    pub raft_peers: String,
+    /// Peers to dial
+    #[arg(
+        long,
+        env = "PEERS",
+        default_value = "",
+        value_parser,
+        value_delimiter = ','
+    )]
+    pub peers: Vec<String>,
 
     /// Sentry DSN
     #[arg(long, env = "SENTRY_DSN", default_value = "")]

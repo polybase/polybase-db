@@ -1,90 +1,217 @@
-use futures::{Future, Stream, StreamExt};
+use behaviour::{Behaviour, BehaviourEvent};
+use events::NetworkEvent;
+use futures_util::StreamExt;
+use libp2p::{
+    identity::Keypair,
+    request_response,
+    swarm::{keep_alive, Swarm, SwarmBuilder, SwarmEvent},
+    Multiaddr, PeerId,
+};
 use parking_lot::Mutex;
-use solid::{self, peer};
+use protocol::PolyProtocol;
+use slog::{debug, info};
 use std::sync::Arc;
-use std::{collections::HashMap, net::ToSocketAddrs, pin::Pin, time::Duration};
+use stream::SwarmStream;
+use tokio::{select, sync::mpsc};
+use transport::create_transport;
 
-mod client;
-mod server;
-mod service;
+mod behaviour;
+pub mod events;
+mod protocol;
+mod stream;
+mod transport;
+
+type Result<T> = std::result::Result<T, Error>;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    #[error("Failed to dial peer: {0}")]
+    DialPeer(#[from] libp2p::swarm::DialError),
+
+    #[error("Tansport error: {0}")]
+    Transport(#[from] libp2p::TransportError<std::io::Error>),
+}
 
 pub struct Network {
-    clients: HashMap<peer::PeerId, client::Client>,
-    listener: Listener,
-    sender: server::Sender,
+    swarm: Arc<Mutex<Swarm<Behaviour>>>,
+    // peers: HashMap<PeerId, Multiaddr>,
+    receiver: mpsc::UnboundedReceiver<(NetworkPeerId, NetworkEvent)>,
+    // logger: slog::Logger,
+    shared: Arc<NetworkShared>,
 }
 
 impl Network {
-    pub async fn init(
-        server_addr: impl ToSocketAddrs,
-        nodes: Vec<(peer::PeerId, tonic::transport::Endpoint)>,
-    ) -> Result<Self, tonic::transport::Error> {
-        let server = server::NetworkServer::new(Duration::from_secs(5), server_addr);
-        let sender = server.sender();
+    pub fn new(
+        keypair: &Keypair,
+        listenaddrs: impl Iterator<Item = Multiaddr>,
+        dialaddrs: impl Iterator<Item = Multiaddr>,
+        logger: slog::Logger,
+    ) -> Result<Network> {
+        let local_peer_id = PeerId::from(keypair.public());
+        let transport = create_transport(keypair);
+        let protocols = vec![(PolyProtocol(), request_response::ProtocolSupport::Full)];
+        let config = request_response::Config::default();
+        let mut swarm = {
+            let behaviour = Behaviour {
+                rr: request_response::Behaviour::new(PolyProtocol(), protocols, config),
+                keep_alive: keep_alive::Behaviour::default(),
+            };
+            SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id).build()
+        };
 
-        tokio::spawn(server.run());
-
-        let mut clients = HashMap::new();
-        let mut client_streams = HashMap::new();
-        for (peer_id, endpoint) in nodes {
-            let mut client = client::Client::connect(endpoint, peer_id.clone()).await?;
-            let stream = client
-                .event_stream()
-                .await
-                .expect("failed to get event stream");
-
-            clients.insert(peer_id.clone(), client);
-            client_streams.insert(peer_id, Arc::new(Mutex::new(Box::pin(stream) as _)));
+        // Listen on given addresses
+        for addr in listenaddrs {
+            swarm.listen_on(addr)?;
         }
 
-        Ok(Self {
-            clients,
-            listener: Listener { client_streams },
-            sender,
+        // Connect to peers
+        for addr in dialaddrs {
+            swarm.dial(addr)?;
+        }
+
+        let swarm = Arc::new(Mutex::new(swarm));
+
+        // SwarmStream helps us to create a mutable stream from a Arc'd Mutex'd Swarm
+        let mut swarm_stream = SwarmStream::new(swarm.clone(), logger.clone());
+
+        // Channel to receive NetworkEvents from the network
+        let (sender, receiver) = mpsc::unbounded_channel::<(NetworkPeerId, NetworkEvent)>();
+        let cloned_logger = logger.clone();
+
+        // Shared state between the network and the spawned network behaviour event loop
+        let shared: Arc<NetworkShared> = Arc::new(NetworkShared::new());
+        let shared_clone = Arc::clone(&shared);
+
+        tokio::spawn(async move {
+            let shared = shared_clone;
+            let logger = cloned_logger;
+            loop {
+                select! {
+                    event = swarm_stream.select_next_some() => match event {
+                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
+                            debug!(logger, "Connection established"; "peer_id" => format!("{:?}", peer_id));
+                        }
+                        SwarmEvent::ConnectionClosed { peer_id, .. } => {
+                            debug!(logger, "Connection closed"; "peer_id" => format!("{:?}", peer_id));
+                            shared.add_peer(peer_id);
+                        }
+                        SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::Message { peer, message })) => {
+                            match message {
+                               request_response::Message::Response{ .. } => {},
+                               request_response::Message::Request{ request, channel, .. } => {
+                                    match sender.send((peer.into(), request.event)) {
+                                        Ok(_) => {},
+                                        Err(_) => {
+                                            error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
+                                        }
+                                    }
+                                    swarm_stream.send_response(channel);
+                               }
+                           }
+                        }
+                        SwarmEvent::Behaviour(_) => {},
+                        SwarmEvent::NewListenAddr { address, .. } => {
+                            info!(logger, "Listening on"; "addr" => format!("{:?}", address));
+                        }
+                        event => {
+                            debug!(logger, "Swarm event"; "event" => format!("{:?}", event));
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Network {
+            // peers: HashMap::new(),
+            swarm,
+            receiver,
+            // logger,
+            shared,
         })
     }
-}
 
-pub struct Listener {
-    client_streams: HashMap<peer::PeerId, Arc<Mutex<Pin<Box<dyn Stream<Item = Vec<u8>> + Send>>>>>,
-}
+    // pub fn dial(&self, addr: Multiaddr) -> Result<()> {
+    //     Ok(self.swarm.lock().dial(addr)?)
+    // }
 
-impl Stream for Listener {
-    type Item = (peer::PeerId, Vec<u8>);
+    pub async fn send(&self, peer: &NetworkPeerId, event: NetworkEvent) {
+        self._send(&peer.0, event).await
+    }
 
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        for (peer, stream) in self.client_streams.iter_mut() {
-            let mut locked_stream = stream.lock();
-            if let std::task::Poll::Ready(Some(event)) = locked_stream.poll_next_unpin(cx) {
-                return std::task::Poll::Ready(Some((peer.clone(), event)));
-            }
+    pub async fn send_all(&self, event: NetworkEvent) {
+        let peers = self.shared.state.lock().connected_peers.clone();
+        let mut futures = vec![];
+
+        for peer in peers.iter() {
+            futures.push(self._send(peer, event.clone()));
         }
 
-        std::task::Poll::Pending
+        futures::future::join_all(futures).await;
+    }
+
+    async fn _send(&self, peer: &PeerId, event: NetworkEvent) {
+        self.swarm
+            .lock()
+            .behaviour_mut()
+            .rr
+            .send_request(peer, protocol::Request { event });
+    }
+
+    pub async fn next(&mut self) -> Option<(NetworkPeerId, NetworkEvent)> {
+        self.receiver.recv().await
     }
 }
 
-impl solid::network::NetworkSender for Network {
-    fn send(
-        &self,
-        peer_id: peer::PeerId,
-        data: Vec<u8>,
-    ) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
-        self.sender.send(peer_id, data)
+struct NetworkShared {
+    state: Mutex<NetworkSharedState>,
+}
+
+impl NetworkShared {
+    fn new() -> NetworkShared {
+        NetworkShared {
+            state: Mutex::new(NetworkSharedState {
+                connected_peers: vec![],
+            }),
+        }
     }
 
-    fn send_all(&self, data: Vec<u8>) -> Pin<Box<dyn Future<Output = ()> + Send + Sync + '_>> {
-        self.sender.send_all(data)
+    fn add_peer(&self, peer_id: PeerId) {
+        let mut state = self.state.lock();
+        state.connected_peers.push(peer_id);
     }
 }
 
-impl solid::network::Network for Network {
-    type EventStream = Listener;
+struct NetworkSharedState {
+    connected_peers: Vec<PeerId>,
+}
 
-    fn events(&mut self) -> &mut Self::EventStream {
-        &mut self.listener
+#[derive(Debug)]
+pub struct NetworkPeerId(pub PeerId);
+
+impl From<solid::peer::PeerId> for NetworkPeerId {
+    fn from(peer_id: solid::peer::PeerId) -> Self {
+        #[allow(clippy::unwrap_used)]
+        NetworkPeerId(PeerId::from_bytes(&peer_id.to_bytes()[..]).unwrap())
     }
 }
+
+impl From<PeerId> for NetworkPeerId {
+    fn from(peer_id: PeerId) -> Self {
+        NetworkPeerId(peer_id)
+    }
+}
+
+impl From<NetworkPeerId> for solid::peer::PeerId {
+    fn from(peer_id: NetworkPeerId) -> Self {
+        solid::peer::PeerId::new(peer_id.0.to_bytes())
+    }
+}
+
+// pub fn extract_peer_id(addr: &Multiaddr) -> Option<PeerId> {
+//     let components: Vec<_> = addr.iter().collect();
+//     if let Some(libp2p::multiaddr::Protocol::P2p(hash)) = components.last() {
+//         let peer_id = PeerId::from_multihash(*hash).ok();
+//         return peer_id;
+//     }
+//     None
+// }

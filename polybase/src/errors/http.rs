@@ -90,13 +90,13 @@ impl From<gateway::GatewayUserError> for HTTPError {
     }
 }
 
-impl From<db::DbError> for HTTPError {
-    fn from(err: db::DbError) -> Self {
+impl From<db::Error> for HTTPError {
+    fn from(err: db::Error) -> Self {
         match err {
-            db::DbError::CollectionNotFound => {
+            db::Error::CollectionNotFound => {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
-            db::DbError::GatewayError(e) => e.into(),
+            db::Error::Gateway(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }

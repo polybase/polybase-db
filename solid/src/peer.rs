@@ -4,7 +4,7 @@ use std::borrow::Borrow;
 use std::fmt::Display;
 
 #[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct PeerId(Vec<u8>);
+pub struct PeerId(pub Vec<u8>);
 
 impl PeerId {
     pub fn new(bytes: Vec<u8>) -> Self {
