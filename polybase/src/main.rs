@@ -19,7 +19,7 @@ mod txn;
 
 use crate::config::{Config, LogFormat};
 use crate::db::Db;
-use crate::rpc::run_rpc;
+use crate::rpc::create_rpc_server;
 use chrono::Utc;
 use clap::Parser;
 use futures::StreamExt;
@@ -32,7 +32,13 @@ use solid::config::SolidConfig;
 use solid::event::SolidEvent;
 use solid::proposal::ProposalManifest;
 use std::time::Duration;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 type Result<T> = std::result::Result<T, AppError>;
 
@@ -135,12 +141,14 @@ async fn main() -> Result<()> {
     let network_laddr: Vec<Multiaddr> = config
         .network_laddr
         .iter()
+        .filter(|p| !p.is_empty())
         .map(|p| Ok(p.to_owned().parse()?))
         .collect::<Result<Vec<_>>>()?;
 
     let peers_addr: Vec<Multiaddr> = config
-        .network_laddr
+        .peers
         .iter()
+        .filter(|p| !p.is_empty())
         .map(|p| Ok(p.to_owned().parse()?))
         .collect::<Result<Vec<_>>>()?;
 
@@ -151,191 +159,218 @@ async fn main() -> Result<()> {
         logger.clone(),
     )?;
 
-    // TODO: load solid from disk state
+    // TODO: load solid state from disk state
 
-    let peer_id = solid::peer::PeerId::random();
     let mut solid = solid::Solid::genesis(
-        peer_id.clone(),
-        vec![peer_id],
+        NetworkPeerId(local_peer_id).into(),
+        vec![NetworkPeerId(local_peer_id).into()],
         // logger.clone(),
         SolidConfig::default(),
     );
 
     // Run the RPC server
-    if let Err(err) = run_rpc(
+    let server = create_rpc_server(
         config.rpc_laddr,
         Arc::clone(&indexer),
         Arc::clone(&db),
         logger.clone(),
-    ) {
-        error!(logger, "Error running RPC server");
-        return Err(err.into());
-    }
+    )?;
 
-    solid.run();
+    let db_handle = solid.run();
 
-    loop {
-        tokio::select! {
-            // Db only produces CallTxn events, that should be propogated
-            // to other nodes
-            Some(txn) = db.next() => {
-                network.send_all(NetworkEvent::Txn { txn }).await;
-            },
+    let logger_clone = logger.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = Arc::clone(&shutdown);
 
-            Some((network_peer_id, event)) = network.next() => {
-                match event {
-                    NetworkEvent::OutOfSync { peer_id, height } => {
-                        info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
-                        if height + 1024 < solid.height() {
-                            let snapshot = match db.snapshot() {
-                                Ok(snapshot) => snapshot,
+    let main_handle = tokio::spawn(async move {
+        let logger = logger_clone;
+        let shutdown = shutdown_clone;
+        while !shutdown.load(Ordering::Relaxed) {
+            tokio::select! {
+                // Db only produces CallTxn events, that should be propogated
+                // to other nodes
+                Some(txn) = db.next() => {
+                    network.send_all(NetworkEvent::Txn { txn }).await;
+                },
+
+                Some((network_peer_id, event)) = network.next() => {
+                    match event {
+                        NetworkEvent::OutOfSync { peer_id, height } => {
+                            info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
+                            if height + 1024 < solid.height() {
+                                let snapshot = match db.snapshot() {
+                                    Ok(snapshot) => snapshot,
+                                    Err(err) => {
+                                        error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                        continue;
+                                    }
+                                };
+                                network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
+                            } else {
+                                for proposal in solid.confirmed_proposals_from(height) {
+                                    network.send(
+                                        &network_peer_id,
+                                        NetworkEvent::Proposal {
+                                            manifest: proposal.clone(),
+                                        },
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+
+                        NetworkEvent::Snapshot { snapshot } => {
+                            info!(logger, "Restoring db from snapshot");
+
+                            // We should panic if we are unable to restore
+                            #[allow(clippy::unwrap_used)]
+                            db.restore(&snapshot).unwrap();
+
+                            // TODO: reset solid state after db restore
+
+                            // This will close the server, for now that's fine during
+                            // snapshot reload (as we have auth-restarts)
+                            return;
+                        }
+
+                        NetworkEvent::Accept { accept } => {
+                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                            solid.receive_accept(&accept, &network_peer_id.into());
+                        }
+
+                        NetworkEvent::Proposal { manifest } => {
+                            info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
+                            solid.receive_proposal(manifest);
+                        }
+
+                        NetworkEvent::Txn { txn } => {
+                            info!(logger, "Received txn"; "collection" => &txn.collection_id);
+                            match db.add_txn(txn).await {
+                                Ok(_) => (),
                                 Err(err) => {
-                                    error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                    error!(logger, "Error adding txn"; "err" => format!("{:?}", err));
+                                }
+                            }
+                        }
+                    }
+                },
+
+                Some(event) = solid.next() => {
+                    match event {
+                        // Node should send accept for an active proposal
+                        // to another peer
+                        SolidEvent::Accept { accept } => {
+                            info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                            // let leader = &accept.leader_id;
+
+                            network.send(
+                                &NetworkPeerId::from(accept.leader_id.clone()),
+                                NetworkEvent::Accept { accept },
+                            )
+                            .await;
+                        }
+
+                        // Node should create and send a new proposal
+                        SolidEvent::Propose {
+                            last_proposal_hash,
+                            height,
+                            skips,
+                        } => {
+                            // Get changes from the pending changes cache, if we have an error
+                            // skip being the leader and just continue
+                            let txns = match db.propose_txns() {
+                                Ok(txns) => txns,
+                                Err(err) => {
+                                    error!(logger, "Error getting pending changes"; "err" => format!("{:?}", err));
                                     continue;
                                 }
                             };
-                            network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
-                        } else {
-                            for proposal in solid.confirmed_proposals_from(height) {
-                                network.send(
-                                    &network_peer_id,
-                                    NetworkEvent::Proposal {
-                                        manifest: proposal.clone(),
-                                    },
-                                )
-                                .await;
-                            }
+
+                            // Simulate delay
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+
+                            // Create the proposl manfiest
+                            let manifest = ProposalManifest {
+                                last_proposal_hash,
+                                skips,
+                                height,
+                                leader_id: NetworkPeerId(local_peer_id).into(),
+                                txns,
+
+                                // TODO: get peers from start
+                                peers: vec![NetworkPeerId(local_peer_id).into()]
+                            };
+                            let proposal_hash = manifest.hash();
+
+                            info!(logger, "Propose"; "leader_id" => manifest.leader_id.prefix(), "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips);
+
+                            // Add proposal to own register, this will trigger an accept
+                            solid.receive_proposal(manifest.clone());
+
+                            // // Send proposal to all other nodes
+                            network.send_all(
+                                NetworkEvent::Proposal { manifest: manifest.clone() }
+                            )
+                            .await;
                         }
-                    }
 
-                    NetworkEvent::Snapshot { snapshot } => {
-                        info!(logger, "Restoring db from snapshot");
-                        db.restore(&snapshot)?;
+                        // Commit a confirmed proposal changes
+                        SolidEvent::Commit { manifest } => {
+                            info!(logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
 
-                        // TODO: reset solid state after db restore
-
-                        // This will close the server, for now that's fine during
-                        // snapshot reload (as we have auth-restarts)
-                        return Ok(())
-                    }
-
-                    NetworkEvent::Accept { accept } => {
-                        info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
-                        solid.receive_accept(&accept, &network_peer_id.into());
-                    }
-
-                    NetworkEvent::Proposal { manifest } => {
-                        info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
-                        solid.receive_proposal(manifest);
-                    }
-
-                    NetworkEvent::Txn { txn } => {
-                        info!(logger, "Received txn"; "collection" => &txn.collection_id);
-                        match db.add_txn(txn).await {
-                            Ok(_) => (),
-                            Err(err) => {
-                                error!(logger, "Error adding txn"; "err" => format!("{:?}", err));
-                            }
+                            // We should panic here, because there is really no way to recover from
+                            // an error once a value is committed
+                            #[allow(clippy::expect_used)]
+                            db.commit(manifest).await.expect("Error committing proposal");
                         }
-                    }
-                }
-            },
 
-            Some(event) = solid.next() => {
-                match event {
-                    // Node should send accept for an active proposal
-                    // to another peer
-                    SolidEvent::Accept { accept } => {
-                        info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
-                        // let leader = &accept.leader_id;
-
-                        network.send(
-                            &NetworkPeerId::from(accept.leader_id.clone()),
-                            NetworkEvent::Accept { accept },
-                        )
-                        .await;
-                    }
-
-                    // Node should create and send a new proposal
-                    SolidEvent::Propose {
-                        last_proposal_hash,
-                        height,
-                        skips,
-                    } => {
-                        // Get changes from the pending changes cache, if we have an error
-                        // skip being the leader and just continue
-                        let txns = match db.propose_txns() {
-                            Ok(txns) => txns,
-                            Err(err) => {
-                                error!(logger, "Error getting pending changes"; "err" => format!("{:?}", err));
-                                continue;
-                            }
-                        };
-
-                        // Simulate delay
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-
-                        // Create the proposl manfiest
-                        let manifest = ProposalManifest {
-                            last_proposal_hash,
-                            skips,
+                        SolidEvent::OutOfSync {
                             height,
-                            leader_id: NetworkPeerId(local_peer_id).into(),
-                            txns,
+                            max_seen_height,
+                            accepts_sent,
+                        } => {
+                            info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
+                            network.send_all(NetworkEvent::OutOfSync { peer_id: NetworkPeerId(local_peer_id).into(), height })
+                            .await
+                        }
 
-                            // TODO: get peers from start
-                            peers: vec![NetworkPeerId(local_peer_id).into()]
-                        };
-                        let proposal_hash = manifest.hash();
+                        SolidEvent::OutOfDate {
+                            local_height,
+                            proposal_height,
+                            proposal_hash,
+                            peer_id,
+                        } => {
+                            info!(logger, "Out of date proposal"; "local_height" => local_height, "proposal_height" => proposal_height, "proposal_hash" => proposal_hash.to_string(), "from" => peer_id.prefix());
+                        }
 
-                        info!(logger, "Propose"; "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips);
-
-                        // Add proposal to own register, this will trigger an accept
-                        solid.receive_proposal(manifest.clone());
-
-                        // // Send proposal to all other nodes
-                        network.send_all(
-                            NetworkEvent::Proposal { manifest: manifest.clone() }
-                        )
-                        .await;
-                    }
-
-                    // Commit a confirmed proposal changes
-                    SolidEvent::Commit { manifest } => {
-                        info!(logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
-
-                        // We should panic here, because there is really no way to recover from
-                        // an error once a value is committed
-                        #[allow(clippy::expect_used)]
-                        db.commit(manifest).await.expect("Error committing proposal");
-                    }
-
-                    SolidEvent::OutOfSync {
-                        height,
-                        max_seen_height,
-                        accepts_sent,
-                    } => {
-                        info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
-                        network.send_all(NetworkEvent::OutOfSync { peer_id: NetworkPeerId(local_peer_id).into(), height })
-                        .await
-                    }
-
-                    SolidEvent::OutOfDate {
-                        local_height,
-                        proposal_height,
-                        proposal_hash,
-                        peer_id,
-                    } => {
-                        info!(logger, "Out of date proposal"; "local_height" => local_height, "proposal_height" => proposal_height, "proposal_hash" => proposal_hash.to_string(), "from" => peer_id.prefix());
-                    }
-
-                    SolidEvent::DuplicateProposal { proposal_hash } => {
-                        info!(logger, "Duplicate proposal"; "hash" => proposal_hash.to_string());
+                        SolidEvent::DuplicateProposal { proposal_hash } => {
+                            info!(logger, "Duplicate proposal"; "hash" => proposal_hash.to_string());
+                        }
                     }
                 }
             }
         }
-    }
+    });
+
+    tokio::select!(
+        res = server => { // TODO: check if err
+            error!(logger, "HTTP server exited unexpectedly {res:#?}");
+            res?
+        }
+        res = db_handle => {
+            error!(logger, "Db handle exited unexpectedly {res:#?}");
+            res?
+        },
+        res = main_handle => {
+            error!(logger, "Db handle exited unexpectedly {res:#?}");
+            res?
+        },
+        _ = tokio::signal::ctrl_c() => {
+            shutdown.store(true, Ordering::Relaxed);
+        },
+    );
+
+    Ok(())
 }
 
 fn get_indexer_dir(dir: &str) -> Option<PathBuf> {

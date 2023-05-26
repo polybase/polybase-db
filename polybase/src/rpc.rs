@@ -446,7 +446,7 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
     }))
 }
 
-pub fn run_rpc(
+pub fn create_rpc_server(
     rpc_laddr: String,
     indexer: Arc<indexer::Indexer>,
     db: Arc<Db>,
