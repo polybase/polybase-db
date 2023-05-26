@@ -59,7 +59,7 @@ pub struct DbSnapshot {
 }
 
 pub struct Db {
-    mempool: Mempool<[u8; 32], CallTxn>,
+    mempool: Mempool<[u8; 32], CallTxn, usize>,
     gateway: Gateway,
     pub rollup: Rollup,
     pub indexer: Arc<Indexer>,
@@ -188,10 +188,10 @@ impl Db {
         Ok(output_record_id)
     }
 
-    pub fn propose_txns(&self) -> Result<Vec<solid::txn::Txn>> {
+    pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
         self.mempool
-            .get_batch(110)
-            .iter()
+            .lease(height, 110)
+            .into_iter()
             .map(|(id, call_txn)| {
                 Ok(solid::txn::Txn {
                     // TODO: remove unwrap
@@ -204,9 +204,17 @@ impl Db {
 
     pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let txns = manifest.txns;
+        let mut keys = vec![];
         for txn in txns.iter() {
-            self.commit_txn(CallTxn::deserialize(&txn.data)?).await?;
+            let call_txn = CallTxn::deserialize(&txn.data)?;
+            let hash = call_txn.hash()?;
+            self.commit_txn(call_txn).await?;
+            keys.push(hash);
         }
+
+        // Commit changes in mempool
+        self.mempool.commit(manifest.height, keys.iter().collect());
+
         Ok(())
     }
 
@@ -256,11 +264,6 @@ impl Db {
                 } => self.delete(key, collection_id, record_id).await?,
             };
         }
-
-        let hash = txn.hash()?;
-
-        // Commit changes in mempool
-        self.mempool.commit(hash);
 
         Ok(())
     }

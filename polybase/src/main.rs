@@ -276,7 +276,7 @@ async fn main() -> Result<()> {
                         } => {
                             // Get changes from the pending changes cache, if we have an error
                             // skip being the leader and just continue
-                            let txns = match db.propose_txns() {
+                            let txns = match db.propose_txns(height) {
                                 Ok(txns) => txns,
                                 Err(err) => {
                                     error!(logger, "Error getting pending changes"; "err" => format!("{:?}", err));
