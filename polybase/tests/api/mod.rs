@@ -87,12 +87,6 @@ static API_PORT_POOL: Lazy<Mutex<PortPool>> = once_cell::sync::Lazy::new(|| {
     })
 });
 
-static RAFT_PORT_POOL: Lazy<Mutex<PortPool>> = once_cell::sync::Lazy::new(|| {
-    Mutex::new(PortPool {
-        ports: (5002..5002 + 1000).collect(),
-    })
-});
-
 impl PortPool {
     fn get(&mut self) -> u16 {
         let port = *self.ports.iter().next().expect("No ports left");
@@ -111,7 +105,6 @@ struct Server {
     // Keep the root dir alive so that polybase can use it
     _root_dir: tempfile::TempDir,
     api_port: u16,
-    raft_port: u16,
     client: reqwest::Client,
     base_url: reqwest::Url,
 }
@@ -120,7 +113,6 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.process.kill().expect("Failed to stop polybase");
         API_PORT_POOL.lock().unwrap().release(self.api_port);
-        RAFT_PORT_POOL.lock().unwrap().release(self.raft_port);
     }
 }
 
@@ -128,7 +120,6 @@ impl Server {
     fn setup() -> Arc<Self> {
         let root_dir = tempfile::tempdir().expect("Failed to create temp root dir");
         let api_port = API_PORT_POOL.lock().unwrap().get();
-        let raft_port = RAFT_PORT_POOL.lock().unwrap().get();
 
         let mut command = Command::new(find_binary());
 
@@ -136,9 +127,6 @@ impl Server {
         command
             .arg("--rpc-laddr")
             .arg(format!("127.0.0.1:{api_port}"));
-        command
-            .arg("--raft-laddr")
-            .arg(format!("127.0.0.1:{raft_port}"));
 
         if !std::env::var("LOG_POLYBASE_OUTPUT")
             .map(|v| v == "1")
@@ -157,7 +145,6 @@ impl Server {
             client: reqwest::Client::new(),
             base_url: format!("http://localhost:{api_port}").parse().unwrap(),
             api_port,
-            raft_port,
         })
     }
 
