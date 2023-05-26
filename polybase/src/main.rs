@@ -128,8 +128,6 @@ async fn main() -> Result<()> {
     // that is thread safe
     let db: Arc<Db> = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
 
-    let logger = logger.clone();
-
     // TODO: this should be passed in so we can keep the same keypair across restarts
 
     // Generate a new keypair

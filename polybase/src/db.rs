@@ -102,8 +102,6 @@ impl Db {
 
     /// Applies a call txn
     pub async fn call(&self, txn: CallTxn) -> Result<String> {
-        // let txn = CallTxn::new(collection_id, function_name, record_id, args, auth.cloned());
-
         let record_id = self.validate_call(&txn).await?;
         let hash = txn.hash()?;
 
