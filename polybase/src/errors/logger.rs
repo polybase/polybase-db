@@ -1,4 +1,5 @@
 use super::http::HTTPError;
+use super::metrics::MetricsData;
 use super::reason::ReasonCode;
 use actix_web::{
     dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
@@ -88,6 +89,14 @@ where
                             }
                         } else {
                             crit!(logger, "Error: {err:?}");
+                        }
+                    }
+
+                    // log any metrics data that might be available
+                    {
+                        if let Some(metrics_data) = res.response().extensions().get::<MetricsData>()
+                        {
+                            debug!(logger, "{}", metrics_data);
                         }
                     }
                     Ok(res)
