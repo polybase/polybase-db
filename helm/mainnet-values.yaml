@@ -7,4 +7,12 @@ image:
   digest: ""
   pullPolicy: Always
 
-peerList: "19b003740f5d6a16b1c80328932c8e2ddc441f78@polybase-0.polybase-headless.polybase.svc.cluster.local:26656,f00f05547b22958c5a85005fa50cf1e3da90976b@polybase-1.polybase-headless.polybase.svc.cluster.local:26656,fa9514258d3771b9fcfe42ac21b1b512b08c4a35@polybase-2.polybase-headless.polybase.svc.cluster.local:26656,e22faf7c1a7e4510f124fad3f59dd22821b9c578@polybase-3.polybase-headless.polybase.svc.cluster.local:26656"
+resources:
+  limits:
+    cpu: 3
+    memory: 4Gi
+  requests:
+    cpu: 200m
+    memory: 300Mi
+
+peerList: "polybase-0.polybase-headless.polybase.svc.cluster.local:5001"
