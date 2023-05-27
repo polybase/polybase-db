@@ -109,3 +109,56 @@ where
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actix_web::{get, test, App, HttpResponse, Responder};
+    use slog::{o, Logger};
+
+    fn dummy_logger() -> Logger {
+        let drain = slog::Discard;
+        let logger = slog::Logger::root(drain, o!());
+        logger
+    }
+
+    #[get("/num-records")]
+    async fn dummy_num_recs_returned_handler() -> impl Responder {
+        let mut resp = HttpResponse::Ok().body("");
+        resp.extensions_mut()
+            .insert(MetricsData::NumberOfRecordsBeingReturned {
+                req_uri: "/v0/collections/Collection/records".to_string(),
+                num_records: 11,
+            });
+        resp
+    }
+
+    #[actix_web::test]
+    async fn test_number_of_records_being_returned_metrics_data() {
+        let app = App::new()
+            .wrap(SlogMiddleware {
+                logger: dummy_logger(),
+            })
+            .service(dummy_num_recs_returned_handler);
+        let app = test::init_service(app).await;
+
+        let req = test::TestRequest::get().uri("/num-records").to_request();
+        let resp = test::call_service(&app, req).await;
+
+        assert!(resp.status().is_success());
+
+        let resp = resp.response().extensions();
+
+        let metrics_data = resp.get::<MetricsData>().unwrap();
+
+        match metrics_data {
+            MetricsData::NumberOfRecordsBeingReturned {
+                req_uri,
+                num_records,
+            } => {
+                assert_eq!("/v0/collections/Collection/records", req_uri);
+                assert_eq!(11, *num_records);
+            }
+        }
+    }
+}
