@@ -16,7 +16,9 @@ mod raft;
 mod rollup;
 
 use actix_cors::Cors;
-use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    get, http::StatusCode, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
+};
 use chrono::Utc;
 use clap::Parser;
 use futures::TryStreamExt;
@@ -37,6 +39,7 @@ use crate::config::{Config, LogFormat};
 use crate::db::Db;
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
+use crate::errors::metrics::MetricsData;
 use crate::errors::reason::ReasonCode;
 use crate::raft::Raft;
 
@@ -171,6 +174,7 @@ async fn get_record(
                     return Ok(HttpResponse::Ok().json(data));
                 }
             }
+
             Ok(HttpResponse::Ok().json(GetRecordResponse {
                 data,
                 block: Default::default(),
@@ -281,6 +285,7 @@ struct ListResponse {
 
 #[get("/{collection}/records")]
 async fn get_records(
+    req: HttpRequest,
     state: web::Data<RouteState>,
     path: web::Path<String>,
     query: web::Query<ListQuery>,
@@ -331,6 +336,10 @@ async fn get_records(
         }
     }
 
+    // for metrics data collection
+    let req_uri = req.uri().to_string();
+    let mut num_records = 0;
+
     let list_response: Result<ListResponse, HTTPError> = async {
         let records = collection
             .list(
@@ -346,6 +355,8 @@ async fn get_records(
             .await?
             .try_collect::<Vec<_>>()
             .await?;
+
+        num_records = records.len();
 
         Ok(ListResponse {
             cursor: Cursors {
@@ -384,9 +395,18 @@ async fn get_records(
     }
     .await;
 
-    Ok(HttpResponse::Ok()
+    let mut resp = HttpResponse::Ok()
         .content_type("application/json")
-        .json(list_response?))
+        .json(list_response?);
+
+    // update metrics data
+    resp.extensions_mut()
+        .insert(MetricsData::NumberOfRecordsBeingReturned {
+            req_uri,
+            num_records,
+        });
+
+    Ok(resp)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
