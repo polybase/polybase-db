@@ -2,8 +2,7 @@ name: Mainnet deploy
 
 on:
   release:
-    types:
-    - created
+    types: [created, published]
 
 env:
   GCLOUD_PROJECT: polybase-mainnet
