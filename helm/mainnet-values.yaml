@@ -15,4 +15,9 @@ resources:
     cpu: 200m
     memory: 300Mi
 
+service:
+  annotations:
+    cloud.google.com/backend-config: '{"default": "polybase"}'
+    cloud.google.com/neg: '{"ingress": true}'
+
 peerList: "polybase-0.polybase-headless.polybase.svc.cluster.local:5001"

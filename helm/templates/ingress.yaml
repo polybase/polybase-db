@@ -4,10 +4,9 @@ metadata:
   name: {{ .Release.Name }}-ingress
   annotations:
     kubernetes.io/ingress.class: "gce"
-    kubernetes.io/ingress.global-static-ip-name: "polybase-rust-ip"
+    kubernetes.io/ingress.global-static-ip-name: "{{ $.Release.Name }}-ip"
     networking.gke.io/managed-certificates: "{{ $.Release.Name }}-cert"
-    kubernetes.io/ingress.allow-http: "false"
-    networking.gke.io/v1beta1.FrontendConfig: "polybase-rust"
+    networking.gke.io/v1beta1.FrontendConfig: "{{ $.Release.Name }}"
 spec:
   rules:
   - http:
