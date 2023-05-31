@@ -96,7 +96,7 @@ where
                     {
                         if let Some(metrics_data) = res.response().extensions().get::<MetricsData>()
                         {
-                            debug!(logger, "{}", metrics_data);
+                            debug!(logger, "{}", metrics_data; metrics_data);
                         }
                     }
                     Ok(res)
