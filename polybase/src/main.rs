@@ -528,7 +528,14 @@ async fn main() -> Result<(), AppError> {
         ));
     }
 
-    // Logs
+    // Parse log level
+    let log_level = match &config.log_level {
+        config::LogLevel::Debug => slog::Level::Debug,
+        config::LogLevel::Info => slog::Level::Info,
+        config::LogLevel::Error => slog::Level::Error,
+    };
+
+    // Create logger drain (json/pretty)
     let drain: Box<dyn Drain<Ok = (), Err = slog::Never> + Send + Sync> =
         if config.log_format == LogFormat::Json {
             // JSON output
@@ -554,12 +561,13 @@ async fn main() -> Result<(), AppError> {
             let term_drain = slog_term::FullFormat::new(decorator).build().fuse();
             Box::new(slog_async::Async::new(term_drain).build().fuse())
         };
+
+    // Create logger with log level filter
+    let drain = slog::LevelFilter::new(drain, log_level).fuse();
     let logger = slog::Logger::root(
         slog_async::Async::new(drain).build().fuse(),
         slog_o!("version" => env!("CARGO_PKG_VERSION")),
     );
-    // let _guard = slog_scope::set_global_logger(logger.clone());
-    // let _log_guard = slog_stdlog::init().unwrap();
 
     let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).map_err(IndexerError::from)?);
 
