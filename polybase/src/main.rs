@@ -22,7 +22,7 @@ use actix_web::{
 use chrono::Utc;
 use clap::Parser;
 use futures::TryStreamExt;
-use indexer::{Indexer, IndexerError};
+use indexer::{AuthUser, Indexer, IndexerError};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use slog::Drain;
@@ -47,6 +47,7 @@ struct RouteState {
     db: Arc<Db>,
     indexer: Arc<Indexer>,
     raft: Arc<Raft>,
+    whitelist: Option<Vec<String>>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +66,9 @@ enum AppError {
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
+
+    #[error("public key not included in allowed whitelist")]
+    Whitelist,
 }
 
 #[get("/")]
@@ -430,6 +434,11 @@ async fn post_record(
     let auth = body.auth.map(|a| a.into());
     let raft = Arc::clone(&state.raft);
 
+    // Check whitelist
+    if collection_id == "Collection" {
+        validate_whitelist(&state.whitelist, &auth)?;
+    }
+
     let record_id = raft
         .call(
             collection_id.clone(),
@@ -587,6 +596,7 @@ async fn main() -> Result<(), AppError> {
                 db: Arc::clone(&db),
                 indexer: Arc::clone(&indexer),
                 raft: Arc::clone(&server_raft),
+                whitelist: config.whitelist.clone(),
             }))
             .wrap(SlogMiddleware::new(server_logger.clone()))
             .wrap(cors)
@@ -640,4 +650,29 @@ fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
     }
     path_buf.push("data/indexer.db");
     Some(path_buf)
+}
+
+fn validate_whitelist(
+    whitelist: &Option<Vec<String>>,
+    auth: &Option<AuthUser>,
+) -> Result<(), HTTPError> {
+    // Check whitelist
+    if let Some(whitelist) = whitelist {
+        if let Some(auth_user) = auth {
+            // Convert the key to hex for easier comparison
+            let pk = auth_user.public_key().to_hex().unwrap_or("".to_string());
+            if pk.is_empty() || !whitelist.contains(&pk) {
+                return Err(HTTPError::new(
+                    ReasonCode::Unauthorized,
+                    Some(Box::new(AppError::Whitelist)),
+                ));
+            }
+        } else {
+            return Err(HTTPError::new(
+                ReasonCode::Unauthorized,
+                Some(Box::new(AppError::Whitelist)),
+            ));
+        }
+    }
+    Ok(())
 }

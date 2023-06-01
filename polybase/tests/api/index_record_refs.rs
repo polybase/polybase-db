@@ -41,7 +41,7 @@ collection User {
         user: Option<ForeignRecordReference>,
     }
 
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let user_collection = server
         .create_collection::<User>("test/User", schema, None)

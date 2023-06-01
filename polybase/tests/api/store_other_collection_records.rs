@@ -4,7 +4,7 @@ use crate::api::{ForeignRecordReference, Server};
 
 #[tokio::test]
 async fn store_other_collection_records() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public
@@ -133,7 +133,7 @@ collection User {
 
 #[tokio::test]
 async fn from_array_argument() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public

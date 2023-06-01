@@ -2,7 +2,7 @@
 async fn test_start_stop() {
     let api_port;
     {
-        let server = super::Server::setup_and_wait().await;
+        let server = super::Server::setup_and_wait(None).await;
         api_port = server.api_port;
     }
 

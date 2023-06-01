@@ -5,7 +5,7 @@ use crate::api::{Error, ErrorData, Server};
 
 #[tokio::test]
 async fn bytes_field() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public
