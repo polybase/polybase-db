@@ -32,7 +32,7 @@ collection PeopleIndexWhereSort {
         place: Option<String>,
     }
 
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection::<People>("test/PeopleIndexWhereSort", schema, None)

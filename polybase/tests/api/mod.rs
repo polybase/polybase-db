@@ -13,6 +13,7 @@ mod nested_field;
 mod other_collection_fns;
 mod start_stop;
 mod store_other_collection_records;
+mod whitelist;
 
 use std::{
     collections::HashSet,
@@ -105,6 +106,11 @@ impl PortPool {
     }
 }
 
+#[derive(Debug, Default)]
+struct ServerConfig {
+    whitelist: Option<Vec<String>>,
+}
+
 #[derive(Debug)]
 struct Server {
     process: std::process::Child,
@@ -125,12 +131,17 @@ impl Drop for Server {
 }
 
 impl Server {
-    fn setup() -> Arc<Self> {
-        let root_dir = tempfile::tempdir().expect("Failed to create temp root dir");
+    fn setup(config: Option<ServerConfig>) -> Arc<Self> {
+        let root_dir: tempfile::TempDir =
+            tempfile::tempdir().expect("Failed to create temp root dir");
         let api_port = API_PORT_POOL.lock().unwrap().get();
         let raft_port = RAFT_PORT_POOL.lock().unwrap().get();
 
         let mut command = Command::new(find_binary());
+
+        if let Some(whitelist) = config.and_then(|c| c.whitelist) {
+            command.arg("--whitelist").arg(whitelist.join(","));
+        }
 
         command.arg("--root-dir").arg(root_dir.path());
         command
@@ -161,8 +172,8 @@ impl Server {
         })
     }
 
-    async fn setup_and_wait() -> Arc<Self> {
-        let server = Self::setup();
+    async fn setup_and_wait(config: Option<ServerConfig>) -> Arc<Self> {
+        let server = Self::setup(config);
         server.wait().await.expect("Failed to wait for server");
         server
     }

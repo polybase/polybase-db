@@ -6,7 +6,7 @@ macro_rules! create_collection_test {
     ($error:expr, $test_name:ident, $collection_id:expr, $schema:expr, $signer:expr $(,)?) => {
         #[tokio::test]
         async fn $test_name() {
-            let server = Server::setup_and_wait().await;
+            let server = Server::setup_and_wait(None).await;
 
             let err = server
                 .create_collection::<serde_json::Value>($collection_id, $schema, $signer)
@@ -347,7 +347,7 @@ collection test {
 
 #[tokio::test]
 async fn function_not_found() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -382,7 +382,7 @@ collection test {
 
 #[tokio::test]
 async fn constructor_does_not_assign_id() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -416,7 +416,7 @@ collection test {
 
 #[tokio::test]
 async fn constructor_does_not_assign_required() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -453,7 +453,7 @@ collection test {
 
 #[tokio::test]
 async fn id_already_exists() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -492,7 +492,7 @@ collection test {
 
 #[tokio::test]
 async fn id_invalidated() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -537,7 +537,7 @@ collection test {
 
 #[tokio::test]
 async fn record_already_exists() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -577,7 +577,7 @@ collection test {
 
 #[tokio::test]
 async fn invalid_value_type() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -792,7 +792,7 @@ collection Test {
 
 #[tokio::test]
 async fn invalid_index_name_update() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(

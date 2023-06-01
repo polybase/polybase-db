@@ -4,7 +4,7 @@ use crate::api::{ForeignRecordReference, Server};
 
 #[tokio::test]
 async fn collection_array_field() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public
@@ -69,7 +69,7 @@ collection Account {
 
 #[tokio::test]
 async fn array_of_records_field() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public
@@ -191,7 +191,7 @@ collection Manager {
 
 #[tokio::test]
 async fn array_of_public_key_field() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public

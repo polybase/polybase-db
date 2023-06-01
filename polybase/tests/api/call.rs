@@ -29,7 +29,7 @@ collection Account {
         balance: f64,
     }
 
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection::<Account>("test/Account", schema, None)
@@ -95,7 +95,7 @@ collection Account {
         name: Option<String>,
     }
 
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection::<Account>("test/Account", schema, None)
@@ -163,7 +163,7 @@ collection Account {
 }
     "#;
 
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection::<serde_json::Value>("test/Account", schema, None)
