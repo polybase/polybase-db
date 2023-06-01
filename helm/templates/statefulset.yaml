@@ -122,6 +122,10 @@ spec:
             value: "/polybase/config/priv_validator_key.json"
           - name: LOG_LEVEL
             value: "DEBUG"
+          {{- if .Values.args }}
+          - name: WHITELIST
+            value: {{ .Values.whitelist }}
+          {{- end }}
           - name: LOG_FORMAT
             value: "JSON"
             {{- if .Values.extraEnvVars }}
