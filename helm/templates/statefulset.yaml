@@ -110,10 +110,12 @@ spec:
           securityContext: {{- omit .Values.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
           env:
+          - name: ENV
+            value: "production"
+          - name: SENTRY_DSN
+            value: https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376
           - name: ENV_NAME
             value: {{ .Values.env | quote }}
-          - name: RELEASE
-            value: "latest"
           - name: GENESIS
             value: "/polybase/config/genesis.json"
           - name: NODE_KEY
@@ -122,10 +124,6 @@ spec:
             value: "/polybase/config/priv_validator_key.json"
           - name: LOG_LEVEL
             value: "DEBUG"
-          {{- if .Values.args }}
-          - name: WHITELIST
-            value: {{ .Values.whitelist }}
-          {{- end }}
           - name: LOG_FORMAT
             value: "JSON"
             {{- if .Values.extraEnvVars }}
