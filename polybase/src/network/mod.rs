@@ -10,6 +10,7 @@ use libp2p::{
 use parking_lot::Mutex;
 use protocol::PolyProtocol;
 use slog::{debug, info};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::{select, sync::mpsc};
 use transport::create_transport;
@@ -93,7 +94,7 @@ impl Network {
                         }
                         SwarmEvent::ConnectionClosed { peer_id, .. } => {
                             info!(logger, "Connection closed"; "peer_id" => format!("{:?}", peer_id));
-                            // shared.remove_peer(&peer_id);
+                            shared.remove_peer(&peer_id);
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::Message { peer, message })) => {
                             match message {
@@ -160,6 +161,11 @@ impl Network {
             return;
         }
 
+        if !self.shared.state.lock().connected_peers.contains(peer) {
+            debug!(self.logger, "Dropping event to disconnected peer"; "peer_id" => format!("{:?}", peer));
+            return;
+        }
+
         match self.netout_tx.send((*peer, event)) {
             Ok(_) => {}
             Err(_) => {
@@ -181,19 +187,22 @@ impl NetworkShared {
     fn new() -> NetworkShared {
         NetworkShared {
             state: Mutex::new(NetworkSharedState {
-                connected_peers: vec![],
+                connected_peers: HashSet::new(),
             }),
         }
     }
 
     fn add_peer(&self, peer_id: PeerId) {
-        let mut state = self.state.lock();
-        state.connected_peers.push(peer_id);
+        self.state.lock().connected_peers.insert(peer_id);
+    }
+
+    fn remove_peer(&self, peer_id: &PeerId) {
+        self.state.lock().connected_peers.remove(peer_id);
     }
 }
 
 struct NetworkSharedState {
-    connected_peers: Vec<PeerId>,
+    connected_peers: HashSet<PeerId>,
 }
 
 #[derive(Debug)]

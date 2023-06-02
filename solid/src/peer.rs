@@ -25,7 +25,12 @@ impl PeerId {
     }
 
     pub fn prefix(&self) -> String {
-        self.to_string()[..4].to_string()
+        let string = self.to_string();
+        if string.len() > 4 {
+            string[..4].to_string()
+        } else {
+            string
+        }
     }
 }
 
