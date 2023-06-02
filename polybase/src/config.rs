@@ -57,6 +57,10 @@ pub struct Config {
     /// Sentry DSN
     #[arg(long, env = "SENTRY_DSN", default_value = "")]
     pub sentry_dsn: Option<String>,
+
+    /// Public key whitelist
+    #[arg(long, env = "WHITELIST", value_parser, value_delimiter = ',')]
+    pub whitelist: Option<Vec<String>>,
 }
 
 #[derive(Subcommand, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]

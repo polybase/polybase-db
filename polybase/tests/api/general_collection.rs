@@ -5,7 +5,7 @@ use crate::api::{ListQuery, Server};
 
 #[tokio::test]
 async fn test_collection() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     #[derive(Debug, Deserialize, PartialEq)]
     struct User {

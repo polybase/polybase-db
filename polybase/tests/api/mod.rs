@@ -13,6 +13,7 @@ mod nested_field;
 mod other_collection_fns;
 mod start_stop;
 mod store_other_collection_records;
+mod whitelist;
 
 use std::{
     collections::HashSet,
@@ -99,6 +100,11 @@ impl PortPool {
     }
 }
 
+#[derive(Debug, Default)]
+struct ServerConfig {
+    whitelist: Option<Vec<String>>,
+}
+
 #[derive(Debug)]
 struct Server {
     process: std::process::Child,
@@ -117,11 +123,16 @@ impl Drop for Server {
 }
 
 impl Server {
-    fn setup() -> Arc<Self> {
-        let root_dir = tempfile::tempdir().expect("Failed to create temp root dir");
+    fn setup(config: Option<ServerConfig>) -> Arc<Self> {
+        let root_dir: tempfile::TempDir =
+            tempfile::tempdir().expect("Failed to create temp root dir");
         let api_port = API_PORT_POOL.lock().unwrap().get();
 
         let mut command = Command::new(find_binary());
+
+        if let Some(whitelist) = config.and_then(|c| c.whitelist) {
+            command.arg("--whitelist").arg(whitelist.join(","));
+        }
 
         command.arg("--root-dir").arg(root_dir.path());
         command
@@ -148,8 +159,8 @@ impl Server {
         })
     }
 
-    async fn setup_and_wait() -> Arc<Self> {
-        let server = Self::setup();
+    async fn setup_and_wait(config: Option<ServerConfig>) -> Arc<Self> {
+        let server = Self::setup(config);
         server.wait().await.expect("Failed to wait for server");
         server
     }
@@ -316,6 +327,55 @@ impl Server {
         }
     }
 
+    async fn update_record<T: DeserializeOwned>(
+        &self,
+        collection: &str,
+        record: &str,
+        args: serde_json::Value,
+        signer: Option<&Signer>,
+    ) -> Result<RecordResponse<T>, Error> {
+        let body = json!({
+            "args": args,
+        });
+        let body = serde_json::to_string_pretty(&body).unwrap();
+
+        let req = self
+            .client
+            .post(
+                self.base_url
+                    .join(&format!(
+                        "/v0/collections/{}/records/{}/call/updateCode",
+                        urlencoding::encode(collection),
+                        urlencoding::encode(record),
+                    ))
+                    .unwrap(),
+            )
+            .header("Content-Type", "application/json")
+            .body(body.clone());
+
+        let req = if let Some(signer) = signer {
+            req.header("X-Polybase-Signature", signer(&body).to_header())
+        } else {
+            req
+        };
+
+        let req = req.build().unwrap();
+
+        let res = self.client.execute(req).await.unwrap();
+
+        if res.status().is_success() {
+            let json = res.text().await.unwrap();
+            match serde_json::from_str(&json) {
+                Ok(res) => Ok(res),
+                Err(err) => {
+                    panic!("Failed to parse response: {}, body: {}", err, json);
+                }
+            }
+        } else {
+            Err(res.json().await.unwrap())
+        }
+    }
+
     async fn list_records<T: DeserializeOwned>(
         &self,
         collection: &str,
@@ -378,6 +438,30 @@ impl Server {
             .await?;
 
         Ok(self.collection(collection))
+    }
+
+    async fn update_collection<T: DeserializeOwned>(
+        self: &Arc<Self>,
+        collection: &str,
+        record: &str,
+        schema: &str,
+        signer: Option<&Signer>,
+    ) -> Result<Collection<T>, Error> {
+        self.update_record::<serde_json::Value>("Collection", record, json!([schema]), signer)
+            .await?;
+
+        Ok(self.collection(collection))
+    }
+
+    async fn update_collection_untyped(
+        self: &Arc<Self>,
+        collection: &str,
+        record: &str,
+        schema: &str,
+        signer: Option<&Signer>,
+    ) -> Result<Collection<serde_json::Value>, Error> {
+        self.update_collection(collection, record, schema, signer)
+            .await
     }
 
     async fn create_collection_untyped(

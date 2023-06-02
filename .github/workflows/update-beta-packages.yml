@@ -1,0 +1,31 @@
+name: Update Beta Packages
+
+on:
+  repository_dispatch:
+    types: [update-packages-beta]
+
+jobs:
+  update-packages:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install cargo
+        uses: baptiste0928/cargo-install@v2
+        with:
+          crate: cargo
+
+      - name: Cargo update
+        run: cargo update
+
+      - name: Create a PR  # Action will update PR automatically if it already exists
+        uses: peter-evans/create-pull-request@v3
+        with:
+          token: ${{ secrets.ADMIN_TOKEN }}
+          title: Update cargo packages
+          branch: update-cargo-beta-packages
+          delete-branch: true
+          base: main
+          team-reviewers: engineering

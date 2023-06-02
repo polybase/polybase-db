@@ -6,7 +6,7 @@ macro_rules! create_collection_test {
     ($error:expr, $test_name:ident, $collection_id:expr, $schema:expr, $signer:expr $(,)?) => {
         #[tokio::test]
         async fn $test_name() {
-            let server = Server::setup_and_wait().await;
+            let server = Server::setup_and_wait(None).await;
 
             let err = server
                 .create_collection::<serde_json::Value>($collection_id, $schema, $signer)
@@ -274,6 +274,26 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
+            message: "index field \"id1\" not found in schema".to_string(),
+        }
+    },
+    collection_with_invalid_index_name,
+    "ns/test",
+    "
+     @public
+     collection test {
+        id: string;
+
+        @index(id1);
+     }
+     ",
+);
+
+create_collection_test!(
+    Error {
+        error: ErrorData {
+            code: "invalid-argument".to_string(),
+            reason: "collection/invalid-schema".to_string(),
             message: r#"collection directive "read" cannot have arguments"#.to_string(),
         }
     },
@@ -327,7 +347,7 @@ collection test {
 
 #[tokio::test]
 async fn function_not_found() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -362,7 +382,7 @@ collection test {
 
 #[tokio::test]
 async fn constructor_does_not_assign_id() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -396,7 +416,7 @@ collection test {
 
 #[tokio::test]
 async fn constructor_does_not_assign_required() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -433,7 +453,7 @@ collection test {
 
 #[tokio::test]
 async fn id_already_exists() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -472,7 +492,7 @@ collection test {
 
 #[tokio::test]
 async fn id_invalidated() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -517,7 +537,7 @@ collection test {
 
 #[tokio::test]
 async fn record_already_exists() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -557,7 +577,7 @@ collection test {
 
 #[tokio::test]
 async fn invalid_value_type() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let collection = server
         .create_collection_untyped(
@@ -767,5 +787,60 @@ collection Test {
                 message: r#"value at field "name" does not match the schema type, expected type: string, got value: 123"#.to_string(),
             }
         },
+    );
+}
+
+#[tokio::test]
+async fn invalid_index_name_update() {
+    let server = Server::setup_and_wait(None).await;
+
+    let collection = server
+        .create_collection_untyped(
+            "ns/InvalidIndexTest",
+            r#"
+        @public
+        collection InvalidIndexTest {
+            id: string;
+
+            constructor(id: string) {
+                this.id = id;
+            }
+
+            @index(id);
+        }
+    "#,
+            None,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server
+            .update_collection_untyped(
+                "ns/InvalidIndexTest",
+                &collection.id,
+                r#"
+        @public
+        collection InvalidIndexTest {
+            id: string;
+
+            constructor(id: string) {
+                this.id = id;
+            }
+
+            @index(id1);
+        }
+    "#,
+                None
+            )
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "collection/invalid-schema".to_string(),
+                message: "index field \"id1\" not found in schema".to_string(),
+            }
+        }
     );
 }

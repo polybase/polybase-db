@@ -9,7 +9,7 @@ use super::Server;
 
 #[tokio::test]
 async fn get_slash_signature_is_not_required() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let res = server
         .client
@@ -23,7 +23,7 @@ async fn get_slash_signature_is_not_required() {
 
 #[tokio::test]
 async fn get_collection_collection_records_with_invalid_signature_different_public_key() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let (private_key, _) = secp256k1::generate_keypair(&mut rand::thread_rng());
 
@@ -55,7 +55,7 @@ async fn get_collection_collection_records_with_invalid_signature_different_publ
 
 #[tokio::test]
 async fn public_key_is_optional() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let (private_key, _) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let signer = Signer::from(move |body: &str| {
@@ -105,7 +105,7 @@ collection People {
         public_key: Option<indexer::PublicKey>,
     }
 
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let public_key = indexer::PublicKey::from_secp256k1_key(&public_key).unwrap();
@@ -192,7 +192,7 @@ collection People {
 
 #[tokio::test]
 async fn read_auth() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 collection Account {
@@ -306,7 +306,7 @@ collection Account {
 
 #[tokio::test]
 async fn call_auth() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 collection Account {
@@ -462,7 +462,7 @@ collection Account {
 
 #[tokio::test]
 async fn delegate_auth() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 collection Account {
@@ -648,7 +648,7 @@ collection User {
 
 #[tokio::test]
 async fn collection_read_any_auth() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 // Anyone can read this collection, but not call it's methods
@@ -711,7 +711,7 @@ collection Account {
 
 #[tokio::test]
 async fn collection_call_any_auth() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 // Anyone can call this collection's methods, but not read it
@@ -934,7 +934,7 @@ collection Account {
 
 #[tokio::test]
 async fn array_of_records_auth() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 collection Account {
@@ -1102,7 +1102,7 @@ collection Manager {
 
 #[tokio::test]
 async fn delegate_on_public_collection() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public

@@ -19,6 +19,7 @@ mod txn;
 
 use crate::config::{Command, Config, LogFormat};
 use crate::db::Db;
+use crate::errors::AppError;
 use crate::rpc::create_rpc_server;
 use chrono::Utc;
 use clap::Parser;
@@ -26,7 +27,7 @@ use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
 use indexer::{Indexer, IndexerError};
 use libp2p::PeerId;
-use libp2p::{identity, multiaddr, Multiaddr};
+use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
 use rand::RngCore;
 use slog::Drain;
@@ -43,36 +44,6 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, AppError>;
-
-#[derive(Debug, thiserror::Error)]
-enum AppError {
-    #[error("failed to initialize indexer")]
-    Indexer(#[from] IndexerError),
-
-    #[error("failed to join task")]
-    JoinError(#[from] tokio::task::JoinError),
-
-    #[error("server failed unexpectedly")]
-    HttpServer(#[from] actix_web::Error),
-
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-
-    #[error("network error")]
-    Network(#[from] network::Error),
-    // #[error("")]
-    #[error("multiaddr error")]
-    Multiaddr(#[from] multiaddr::Error),
-
-    #[error("decoding error")]
-    Decoding(#[from] identity::DecodingError),
-
-    #[error("decode hex error")]
-    FromHex(#[from] hex::FromHexError),
-
-    #[error("db error")]
-    Db(#[from] db::Error),
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -112,7 +83,14 @@ async fn main() -> Result<()> {
         ));
     }
 
-    // Logs
+    // Parse log level
+    let log_level = match &config.log_level {
+        config::LogLevel::Debug => slog::Level::Debug,
+        config::LogLevel::Info => slog::Level::Info,
+        config::LogLevel::Error => slog::Level::Error,
+    };
+
+    // Create logger drain (json/pretty)
     let drain: Box<dyn Drain<Ok = (), Err = slog::Never> + Send + Sync> =
         if config.log_format == LogFormat::Json {
             // JSON output
@@ -139,6 +117,8 @@ async fn main() -> Result<()> {
             Box::new(slog_async::Async::new(term_drain).build().fuse())
         };
 
+    // Create logger with log level filter
+    let drain = slog::LevelFilter::new(drain, log_level).fuse();
     let logger = slog::Logger::root(
         slog_async::Async::new(drain).build().fuse(),
         slog_o!("version" => env!("CARGO_PKG_VERSION")),
@@ -218,6 +198,7 @@ async fn main() -> Result<()> {
         config.rpc_laddr,
         Arc::clone(&indexer),
         Arc::clone(&db),
+        Arc::new(config.whitelist.clone()),
         logger.clone(),
     )?;
 

@@ -4,7 +4,7 @@ use crate::api::{Error, ErrorData, Server};
 
 #[tokio::test]
 async fn calling_other_collection_functions() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public

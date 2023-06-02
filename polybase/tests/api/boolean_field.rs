@@ -4,7 +4,7 @@ use crate::api::{ListQuery, Server};
 
 #[tokio::test]
 async fn collection_boolean_field() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public

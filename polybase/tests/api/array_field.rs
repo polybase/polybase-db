@@ -4,7 +4,7 @@ use crate::api::{ForeignRecordReference, Server};
 
 #[tokio::test]
 async fn collection_array_field() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public
@@ -69,7 +69,7 @@ collection Account {
 
 #[tokio::test]
 async fn array_of_records_field() {
-    let server = Server::setup_and_wait().await;
+    let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
 @public
@@ -185,6 +185,87 @@ collection Manager {
                     id: "id2".to_string(),
                 },
             ],
+        }
+    );
+}
+
+#[tokio::test]
+async fn array_of_public_key_field() {
+    let server = Server::setup_and_wait(None).await;
+
+    let schema = r#"
+@public
+collection PublicKeyArrayDemo {
+    id: string;
+    keys: PublicKey[];
+
+    constructor (id: string, keys: PublicKey[]) {
+        this.id = id;
+        this.keys = keys;
+    }
+
+    addPublicKey(key: PublicKey) {
+        this.keys.push(key);
+    }
+}
+    "#;
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PublicKeyArrayDemo {
+        id: String,
+        keys: Vec<indexer::PublicKey>,
+    }
+
+    let collection = server
+        .create_collection::<PublicKeyArrayDemo>("test/PublicKeyArrayDemo", schema, None)
+        .await
+        .unwrap();
+
+    let (_private_key1, public_key1) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let public_key1 = indexer::PublicKey::from_secp256k1_key(&public_key1).unwrap();
+
+    let (_private_key2, public_key2) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let public_key2 = indexer::PublicKey::from_secp256k1_key(&public_key2).unwrap();
+
+    assert_eq!(
+        collection
+            .create(
+                json!(["pkId1", [public_key1.clone(), public_key2.clone()]]),
+                None
+            )
+            .await
+            .unwrap(),
+        PublicKeyArrayDemo {
+            id: "pkId1".to_string(),
+            keys: vec![public_key1.clone(), public_key2.clone()],
+        }
+    );
+
+    let (_private_key2, public_key3) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let public_key3 = indexer::PublicKey::from_secp256k1_key(&public_key3).unwrap();
+
+    assert_eq!(
+        collection
+            .call("pkId1", "addPublicKey", json!([public_key3.clone()]), None)
+            .await
+            .unwrap()
+            .unwrap(),
+        PublicKeyArrayDemo {
+            id: "pkId1".to_string(),
+            keys: vec![
+                public_key1.clone(),
+                public_key2.clone(),
+                public_key3.clone()
+            ],
+        }
+    );
+
+    assert_eq!(
+        collection.get("pkId1", None).await.unwrap(),
+        PublicKeyArrayDemo {
+            id: "pkId1".to_string(),
+            keys: vec![public_key1, public_key2, public_key3],
         }
     );
 }

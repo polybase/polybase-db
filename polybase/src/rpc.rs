@@ -4,13 +4,17 @@ use crate::auth;
 use crate::db::Db;
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
+use crate::errors::metrics::MetricsData;
 use crate::errors::reason::ReasonCode;
+use crate::errors::AppError;
 use crate::txn::CallTxn;
 use actix_cors::Cors;
 use actix_server::Server;
-use actix_web::{get, http::StatusCode, post, web, App, HttpResponse, HttpServer, Responder};
+use actix_web::{
+    get, http::StatusCode, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
+};
 use futures::TryStreamExt;
-use indexer::Indexer;
+use indexer::{AuthUser, Indexer};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{
@@ -23,6 +27,7 @@ use std::{
 struct RouteState {
     db: Arc<Db>,
     indexer: Arc<Indexer>,
+    whitelist: Arc<Option<Vec<String>>>,
 }
 
 #[get("/")]
@@ -242,6 +247,7 @@ struct ListResponse {
 
 #[get("/{collection}/records")]
 async fn get_records(
+    req: HttpRequest,
     state: web::Data<RouteState>,
     path: web::Path<String>,
     query: web::Query<ListQuery>,
@@ -292,6 +298,10 @@ async fn get_records(
         }
     }
 
+    // for metrics data collection
+    let req_uri = req.uri().to_string();
+    let mut num_records = 0;
+
     let list_response: Result<ListResponse, HTTPError> = async {
         let records = collection
             .list(
@@ -307,6 +317,8 @@ async fn get_records(
             .await?
             .try_collect::<Vec<_>>()
             .await?;
+
+        num_records = records.len();
 
         Ok(ListResponse {
             cursor: Cursors {
@@ -345,9 +357,18 @@ async fn get_records(
     }
     .await;
 
-    Ok(HttpResponse::Ok()
+    let mut resp = HttpResponse::Ok()
         .content_type("application/json")
-        .json(list_response?))
+        .json(list_response?);
+
+    // update metrics data
+    resp.extensions_mut()
+        .insert(MetricsData::NumberOfRecordsBeingReturned {
+            req_uri,
+            num_records,
+        });
+
+    Ok(resp)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -370,6 +391,11 @@ async fn post_record(
 
     let auth = body.auth.map(|a| a.into());
     let db: Arc<_> = Arc::clone(&state.db);
+
+    // Check whitelist
+    if collection_id == "Collection" {
+        validate_whitelist(&state.whitelist, &auth)?;
+    }
 
     let txn = CallTxn::new(
         collection_id.clone(),
@@ -450,6 +476,7 @@ pub fn create_rpc_server(
     rpc_laddr: String,
     indexer: Arc<indexer::Indexer>,
     db: Arc<Db>,
+    whitelist: Arc<Option<Vec<String>>>,
     logger: slog::Logger,
 ) -> Result<Server, std::io::Error> {
     Ok(HttpServer::new(move || {
@@ -459,6 +486,7 @@ pub fn create_rpc_server(
             .app_data(web::Data::new(RouteState {
                 db: Arc::clone(&db),
                 indexer: Arc::clone(&indexer),
+                whitelist: Arc::clone(&whitelist),
             }))
             .wrap(SlogMiddleware::new(logger.clone()))
             .wrap(cors)
@@ -475,4 +503,29 @@ pub fn create_rpc_server(
     })
     .bind(rpc_laddr)?
     .run())
+}
+
+fn validate_whitelist(
+    whitelist: &Option<Vec<String>>,
+    auth: &Option<AuthUser>,
+) -> Result<(), HTTPError> {
+    // Check whitelist
+    if let Some(whitelist) = whitelist {
+        if let Some(auth_user) = auth {
+            // Convert the key to hex for easier comparison
+            let pk = auth_user.public_key().to_hex().unwrap_or("".to_string());
+            if pk.is_empty() || !whitelist.contains(&pk) {
+                return Err(HTTPError::new(
+                    ReasonCode::Unauthorized,
+                    Some(Box::new(AppError::Whitelist)),
+                ));
+            }
+        } else {
+            return Err(HTTPError::new(
+                ReasonCode::Unauthorized,
+                Some(Box::new(AppError::Whitelist)),
+            ));
+        }
+    }
+    Ok(())
 }
