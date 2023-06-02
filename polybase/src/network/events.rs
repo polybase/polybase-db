@@ -12,4 +12,5 @@ pub enum NetworkEvent {
     Proposal { manifest: ProposalManifest },
     Snapshot { snapshot: Vec<u8> },
     Txn { txn: CallTxn },
+    Ping,
 }

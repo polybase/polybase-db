@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::fmt::Display;
 
-#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Clone, Serialize, Deserialize, PartialEq, Ord, PartialOrd, Eq, Hash)]
 pub struct PeerId(pub Vec<u8>);
 
 impl PeerId {

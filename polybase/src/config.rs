@@ -19,7 +19,7 @@ pub struct Config {
     pub root_dir: String,
 
     /// Log level
-    #[arg(value_enum, long, env = "LOG_LEVEL", default_value = "INFO")]
+    #[arg(value_enum, long, env = "LOG_LEVEL", default_value = "DEBUG")]
     pub log_level: LogLevel,
 
     /// Log format
@@ -45,6 +45,16 @@ pub struct Config {
     pub network_laddr: Vec<String>,
 
     /// Peers to dial
+    #[arg(
+        long,
+        env = "DIAL_ADDR",
+        default_value = "",
+        value_parser,
+        value_delimiter = ','
+    )]
+    pub dial_addr: Vec<String>,
+
+    /// Validator peers
     #[arg(
         long,
         env = "PEERS",

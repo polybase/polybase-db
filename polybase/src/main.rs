@@ -163,17 +163,18 @@ async fn main() -> Result<()> {
         .map(|p| Ok(p.to_owned().parse()?))
         .collect::<Result<Vec<_>>>()?;
 
-    let mut solid_peers = network_laddr
-        .iter()
-        .filter_map(extract_peer_id)
-        .collect::<Vec<solid::peer::PeerId>>();
-
     let peers_addr: Vec<Multiaddr> = config
-        .peers
+        .dial_addr
         .iter()
         .filter(|p| !p.is_empty())
         .map(|p| Ok(p.to_owned().parse()?))
         .collect::<Result<Vec<_>>>()?;
+
+    let mut solid_peers = config
+        .peers
+        .iter()
+        .map(to_peer_id)
+        .collect::<Result<Vec<solid::peer::PeerId>>>()?;
 
     let mut network = Network::new(
         &keypair,
@@ -184,6 +185,8 @@ async fn main() -> Result<()> {
 
     let local_peer_solid = solid::peer::PeerId(local_peer_id.to_bytes());
     solid_peers.push(local_peer_solid.clone());
+    solid_peers.sort_unstable();
+    solid_peers.dedup();
 
     // TODO: load solid state from disk state
     let mut solid = match db.get_manifest().await? {
@@ -221,6 +224,9 @@ async fn main() -> Result<()> {
 
                 Some((network_peer_id, event)) = network.next() => {
                     match event {
+                        NetworkEvent::Ping => {
+                            info!(logger, "Ping received");
+                        },
                         NetworkEvent::OutOfSync { peer_id, height } => {
                             info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
                             if height + 1024 < solid.height() {
@@ -288,6 +294,8 @@ async fn main() -> Result<()> {
                         SolidEvent::Accept { accept } => {
                             info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
                             // let leader = &accept.leader_id;
+
+                            // TODO: we're receiving our own accept, this should be fixed
 
                             network.send(
                                 &NetworkPeerId::from(accept.leader_id.clone()),
@@ -378,6 +386,24 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Check for deadlocks
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(10));
+        let deadlocks = parking_lot::deadlock::check_deadlock();
+        if deadlocks.is_empty() {
+            continue;
+        }
+
+        println!("{} deadlocks detected", deadlocks.len());
+        for (i, threads) in deadlocks.iter().enumerate() {
+            println!("Deadlock #{}", i);
+            for t in threads {
+                println!("Thread Id {:#?}", t.thread_id());
+                println!("{:#?}", t.backtrace());
+            }
+        }
+    });
+
     tokio::select!(
         res = server => { // TODO: check if err
             error!(logger, "HTTP server exited unexpectedly {res:#?}");
@@ -413,11 +439,7 @@ fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
     Some(path_buf)
 }
 
-fn extract_peer_id(addr: &Multiaddr) -> Option<solid::peer::PeerId> {
-    let components: Vec<_> = addr.iter().collect();
-    if let Some(libp2p::multiaddr::Protocol::P2p(hash)) = components.last() {
-        let peer_id = PeerId::from_multihash(*hash).ok();
-        return Some(solid::peer::PeerId(peer_id.map(|p| p.to_bytes())?));
-    }
-    None
+fn to_peer_id(base58_string: &String) -> Result<solid::peer::PeerId> {
+    let decoded = bs58::decode(base58_string).into_vec()?;
+    Ok(solid::peer::PeerId::new(decoded))
 }

@@ -4,21 +4,19 @@ use futures_util::StreamExt;
 use libp2p::{
     identity::Keypair,
     request_response,
-    swarm::{keep_alive, Swarm, SwarmBuilder, SwarmEvent},
+    swarm::{keep_alive, SwarmBuilder, SwarmEvent},
     Multiaddr, PeerId,
 };
 use parking_lot::Mutex;
 use protocol::PolyProtocol;
 use slog::{debug, info};
 use std::sync::Arc;
-use stream::SwarmStream;
 use tokio::{select, sync::mpsc};
 use transport::create_transport;
 
 mod behaviour;
 pub mod events;
 mod protocol;
-mod stream;
 mod transport;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -33,11 +31,12 @@ pub enum Error {
 }
 
 pub struct Network {
-    swarm: Arc<Mutex<Swarm<Behaviour>>>,
-    // peers: HashMap<PeerId, Multiaddr>,
-    receiver: mpsc::UnboundedReceiver<(NetworkPeerId, NetworkEvent)>,
-    // logger: slog::Logger,
+    // swarm: Arc<Mutex<Swarm<Behaviour>>>,
+    netin_rx: mpsc::UnboundedReceiver<(NetworkPeerId, NetworkEvent)>,
+    netout_tx: mpsc::UnboundedSender<(PeerId, NetworkEvent)>,
+    local_peer_id: PeerId,
     shared: Arc<NetworkShared>,
+    logger: slog::Logger,
 }
 
 impl Network {
@@ -66,16 +65,13 @@ impl Network {
 
         // Connect to peers
         for addr in dialaddrs {
+            info!(logger, "Dialing peer"; "addr" => format!("{:?}", addr));
             swarm.dial(addr)?;
         }
 
-        let swarm = Arc::new(Mutex::new(swarm));
-
-        // SwarmStream helps us to create a mutable stream from a Arc'd Mutex'd Swarm
-        let mut swarm_stream = SwarmStream::new(swarm.clone(), logger.clone());
-
         // Channel to receive NetworkEvents from the network
-        let (sender, receiver) = mpsc::unbounded_channel::<(NetworkPeerId, NetworkEvent)>();
+        let (netin_tx, netin_rx) = mpsc::unbounded_channel::<(NetworkPeerId, NetworkEvent)>();
+        let (netout_tx, mut netout_rx) = mpsc::unbounded_channel::<(PeerId, NetworkEvent)>();
         let cloned_logger = logger.clone();
 
         // Shared state between the network and the spawned network behaviour event loop
@@ -87,29 +83,38 @@ impl Network {
             let logger = cloned_logger;
             loop {
                 select! {
-                    event = swarm_stream.select_next_some() => match event {
+                    Some((peer_id, event)) = netout_rx.recv() => {
+                        swarm.behaviour_mut().rr.send_request(&peer_id, protocol::Request { event });
+                    }
+                    event = swarm.select_next_some() => match event {
                         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                            debug!(logger, "Connection established"; "peer_id" => format!("{:?}", peer_id));
+                            info!(logger, "Connection established"; "peer_id" => format!("{:?}", peer_id));
+                            shared.add_peer(peer_id);
                         }
                         SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                            debug!(logger, "Connection closed"; "peer_id" => format!("{:?}", peer_id));
-                            shared.add_peer(peer_id);
+                            info!(logger, "Connection closed"; "peer_id" => format!("{:?}", peer_id));
+                            // shared.remove_peer(&peer_id);
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::Message { peer, message })) => {
                             match message {
                                request_response::Message::Response{ .. } => {},
                                request_response::Message::Request{ request, channel, .. } => {
-                                    match sender.send((peer.into(), request.event)) {
+                                    match netin_tx.send((peer.into(), request.event)) {
                                         Ok(_) => {},
                                         Err(_) => {
                                             error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
                                         }
                                     }
-                                    swarm_stream.send_response(channel);
+                                    match swarm.behaviour_mut().rr.send_response(channel, protocol::Response) {
+                                        Ok(_) => {},
+                                        Err(_) => {
+                                            error!(logger, "Failed to send response"; "peer_id" => format!("{:?}", peer));
+                                        }
+                                    }
                                }
                            }
                         }
-                        SwarmEvent::Behaviour(_) => {},
+                        SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::ResponseSent { .. })) => {}
                         SwarmEvent::NewListenAddr { address, .. } => {
                             info!(logger, "Listening on"; "addr" => format!("{:?}", address));
                         }
@@ -122,11 +127,11 @@ impl Network {
         });
 
         Ok(Network {
-            // peers: HashMap::new(),
-            swarm,
-            receiver,
-            // logger,
+            netin_rx,
+            netout_tx,
+            local_peer_id,
             shared,
+            logger,
         })
     }
 
@@ -150,15 +155,21 @@ impl Network {
     }
 
     async fn _send(&self, peer: &PeerId, event: NetworkEvent) {
-        self.swarm
-            .lock()
-            .behaviour_mut()
-            .rr
-            .send_request(peer, protocol::Request { event });
+        // Don't send messages to self
+        if self.local_peer_id == *peer {
+            return;
+        }
+
+        match self.netout_tx.send((*peer, event)) {
+            Ok(_) => {}
+            Err(_) => {
+                error!(self.logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
+            }
+        }
     }
 
     pub async fn next(&mut self) -> Option<(NetworkPeerId, NetworkEvent)> {
-        self.receiver.recv().await
+        self.netin_rx.recv().await
     }
 }
 

@@ -65,6 +65,7 @@ impl request_response::Codec for PolyProtocol {
     {
         let data = serde_json::to_vec(&request)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
         io.write_all(&data).await
     }
 

@@ -38,6 +38,9 @@ pub enum AppError {
     #[error("db error")]
     Db(#[from] db::Error),
 
+    #[error("invalid request")]
+    B58(#[from] bs58::decode::Error),
+
     #[error("public key not included in allowed whitelist")]
     Whitelist,
 }
