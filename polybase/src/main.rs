@@ -17,16 +17,18 @@ mod rollup;
 mod rpc;
 mod txn;
 
-use crate::config::{Config, LogFormat};
+use crate::config::{Command, Config, LogFormat};
 use crate::db::Db;
 use crate::rpc::create_rpc_server;
 use chrono::Utc;
 use clap::Parser;
+use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
 use indexer::{Indexer, IndexerError};
 use libp2p::PeerId;
 use libp2p::{identity, multiaddr, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
+use rand::RngCore;
 use slog::Drain;
 use solid::config::SolidConfig;
 use solid::event::SolidEvent;
@@ -62,6 +64,12 @@ enum AppError {
     #[error("multiaddr error")]
     Multiaddr(#[from] multiaddr::Error),
 
+    #[error("decoding error")]
+    Decoding(#[from] identity::DecodingError),
+
+    #[error("decode hex error")]
+    FromHex(#[from] hex::FromHexError),
+
     #[error("db error")]
     Db(#[from] db::Error),
 }
@@ -69,6 +77,23 @@ enum AppError {
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::parse();
+
+    if let Some(Command::GenerateKey) = config.command {
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        #[allow(clippy::unwrap_used)]
+        let key = ed25519::SecretKey::from_bytes(&bytes).unwrap();
+        let public: ed25519::PublicKey = (&key).into();
+        #[allow(clippy::unwrap_used)]
+        let keypair = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
+        let local_peer_id = PeerId::from(keypair.public());
+        println!(" ");
+        println!("  Public Key: 0x{}", hex::encode(public.to_bytes()));
+        println!("  Secret Key: 0x{}", hex::encode(bytes));
+        println!("  PeerId: {}", local_peer_id);
+        println!(" ");
+        return Ok(());
+    }
 
     // Setup Sentry logging
     let _guard;
@@ -128,11 +153,26 @@ async fn main() -> Result<()> {
     // that is thread safe
     let db: Arc<Db> = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
 
-    // TODO: this should be passed in so we can keep the same keypair across restarts
-
-    // Generate a new keypair
-    let keypair = identity::Keypair::generate_ed25519();
+    // Get the keypair (provided or auto-generated)
+    let keypair = match config.secret_key {
+        Some(key) => {
+            let key = match key.strip_prefix("0x") {
+                Some(key) => key,
+                None => &key,
+            };
+            let key_bytes = hex::decode(key)?;
+            identity::Keypair::ed25519_from_bytes(key_bytes)?
+        }
+        None => identity::Keypair::generate_ed25519(),
+    };
     let local_peer_id = PeerId::from(keypair.public());
+
+    // Log the peer id
+    info!(
+        logger,
+        "Peer starting";
+        "peer_id" => local_peer_id.to_string()
+    );
 
     // Interface for sending messages to peers, runs in its own thread
     // and can be polled for events
@@ -142,6 +182,11 @@ async fn main() -> Result<()> {
         .filter(|p| !p.is_empty())
         .map(|p| Ok(p.to_owned().parse()?))
         .collect::<Result<Vec<_>>>()?;
+
+    let mut solid_peers = network_laddr
+        .iter()
+        .filter_map(extract_peer_id)
+        .collect::<Vec<solid::peer::PeerId>>();
 
     let peers_addr: Vec<Multiaddr> = config
         .peers
@@ -157,14 +202,16 @@ async fn main() -> Result<()> {
         logger.clone(),
     )?;
 
-    // TODO: load solid state from disk state
+    let local_peer_solid = solid::peer::PeerId(local_peer_id.to_bytes());
+    solid_peers.push(local_peer_solid.clone());
 
-    let mut solid = solid::Solid::genesis(
-        NetworkPeerId(local_peer_id).into(),
-        vec![NetworkPeerId(local_peer_id).into()],
-        // logger.clone(),
-        SolidConfig::default(),
-    );
+    // TODO: load solid state from disk state
+    let mut solid = match db.get_manifest().await? {
+        Some(manifest) => {
+            solid::Solid::with_last_confirmed(local_peer_solid, manifest, SolidConfig::default())
+        }
+        None => solid::Solid::genesis(local_peer_solid, solid_peers, SolidConfig::default()),
+    };
 
     // Run the RPC server
     let server = create_rpc_server(
@@ -174,7 +221,7 @@ async fn main() -> Result<()> {
         logger.clone(),
     )?;
 
-    let db_handle = solid.run();
+    let solid_handle = solid.run();
 
     let logger_clone = logger.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -355,7 +402,7 @@ async fn main() -> Result<()> {
             error!(logger, "HTTP server exited unexpectedly {res:#?}");
             res?
         }
-        res = db_handle => {
+        res = solid_handle => {
             error!(logger, "Db handle exited unexpectedly {res:#?}");
             res?
         },
@@ -383,4 +430,13 @@ fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
     }
     path_buf.push("data/indexer.db");
     Some(path_buf)
+}
+
+fn extract_peer_id(addr: &Multiaddr) -> Option<solid::peer::PeerId> {
+    let components: Vec<_> = addr.iter().collect();
+    if let Some(libp2p::multiaddr::Protocol::P2p(hash)) = components.last() {
+        let peer_id = PeerId::from_multihash(*hash).ok();
+        return Some(solid::peer::PeerId(peer_id.map(|p| p.to_bytes())?));
+    }
+    None
 }

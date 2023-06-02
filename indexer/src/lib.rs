@@ -76,4 +76,18 @@ impl Indexer {
     pub async fn collection(&self, id: String) -> Result<Collection> {
         Ok(Collection::load(self.logger.clone(), &self.store, id).await?)
     }
+
+    pub async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
+        let system_key = keys::Key::new_system_data(key)?;
+
+        Ok(self
+            .store
+            .set(&system_key, &store::Value::DataValue(data))
+            .await?)
+    }
+
+    pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
+        let system_key = keys::Key::new_system_data(key)?;
+        Ok(self.store.get(&system_key).await?)
+    }
 }

@@ -1,5 +1,4 @@
-use clap::{Parser, ValueEnum};
-// use std::str::FromStr;
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Polybase is a p2p decentralized database
 #[derive(Parser, Debug)]
@@ -8,6 +7,9 @@ use clap::{Parser, ValueEnum};
 #[command(author, version, about = "The p2p decentralized database", long_about = None)]
 #[command(propagate_version = true)]
 pub struct Config {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// ID of the node
     #[arg(long, env = "ID")]
     pub id: Option<u64>,
@@ -27,6 +29,10 @@ pub struct Config {
     /// RPC listen address
     #[arg(long, env = "RPC_LADDR", default_value = "0.0.0.0:8080")]
     pub rpc_laddr: String,
+
+    /// Secret key encoded as hex
+    #[arg(long, env = "SECRET_KEY")]
+    pub secret_key: Option<String>,
 
     /// Peer listen address
     #[arg(
@@ -51,6 +57,15 @@ pub struct Config {
     /// Sentry DSN
     #[arg(long, env = "SENTRY_DSN", default_value = "")]
     pub sentry_dsn: Option<String>,
+}
+
+#[derive(Subcommand, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+#[clap(rename_all = "SNAKE_CASE")]
+pub enum Command {
+    /// Start the server
+    Start,
+    /// Generate a new secret key
+    GenerateKey,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]

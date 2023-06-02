@@ -62,6 +62,7 @@ libp2p-quic = { version = "0.7.0-alpha.3", features = ["tokio"] }
 asynchronous-codec = "0.6"
 void = "1.0.2"
 either = "1.8.1"
+ed25519-dalek = "1.0.1"
 
 [dev-dependencies]
 tokio-test = "0.4.2"

@@ -203,7 +203,7 @@ impl Db {
     }
 
     pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
-        let txns = manifest.txns;
+        let txns = &manifest.txns;
         let mut keys = vec![];
         for txn in txns.iter() {
             let call_txn = CallTxn::deserialize(&txn.data)?;
@@ -214,6 +214,9 @@ impl Db {
 
         // Commit changes in mempool
         self.mempool.commit(manifest.height, keys.iter().collect());
+
+        // TODO: this should be part of a txn with the above!
+        self.set_manifest(manifest).await?;
 
         Ok(())
     }
@@ -279,6 +282,27 @@ impl Db {
         let snapshot: DbSnapshot = bincode::deserialize(data)?;
         self.indexer.restore(snapshot.index)?;
         Ok(())
+    }
+
+    pub async fn set_manifest(&self, manifest: proposal::ProposalManifest) -> Result<()> {
+        let b = bincode::serialize(&manifest)?;
+        let value = indexer::RecordValue::Bytes(b);
+        let mut record = indexer::RecordRoot::new();
+        record.insert("manifest".to_string(), value);
+        Ok(self
+            .indexer
+            .set_system_key("manifest".to_string(), &record)
+            .await?)
+    }
+
+    pub async fn get_manifest(&self) -> Result<Option<proposal::ProposalManifest>> {
+        let record = self.indexer.get_system_key("manifest".to_string()).await?;
+        let value = match record.and_then(|mut r| r.remove("manifest")) {
+            Some(indexer::RecordValue::Bytes(b)) => b,
+            _ => return Ok(None),
+        };
+        let manifest: proposal::ProposalManifest = bincode::deserialize(&value)?;
+        Ok(Some(manifest))
     }
 
     pub async fn delete(

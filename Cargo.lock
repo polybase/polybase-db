@@ -3798,6 +3798,7 @@ dependencies = [
  "clap 4.2.7",
  "derive_more",
  "dirs",
+ "ed25519-dalek",
  "either",
  "env_logger 0.10.0",
  "futures",
