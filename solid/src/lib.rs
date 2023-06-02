@@ -10,4 +10,5 @@ pub mod event;
 pub mod peer;
 pub mod proposal;
 pub mod txn;
-pub use solid::*;
+
+pub use self::solid::*;
