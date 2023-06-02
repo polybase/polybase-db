@@ -193,7 +193,11 @@ async fn main() -> Result<()> {
         Some(manifest) => {
             solid::Solid::with_last_confirmed(local_peer_solid, manifest, SolidConfig::default())
         }
-        None => solid::Solid::genesis(local_peer_solid, solid_peers, SolidConfig::default()),
+        None => solid::Solid::genesis(
+            local_peer_solid,
+            solid_peers.clone(),
+            SolidConfig::default(),
+        ),
     };
 
     // Run the RPC server
@@ -321,7 +325,7 @@ async fn main() -> Result<()> {
                             };
 
                             // Simulate delay
-                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            tokio::time::sleep(Duration::from_millis(300)).await;
 
                             // Create the proposl manfiest
                             let manifest = ProposalManifest {
@@ -332,7 +336,7 @@ async fn main() -> Result<()> {
                                 txns,
 
                                 // TODO: get peers from start
-                                peers: vec![NetworkPeerId(local_peer_id).into()]
+                                peers: solid_peers.clone(),
                             };
                             let proposal_hash = manifest.hash();
 
