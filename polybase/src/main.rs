@@ -134,6 +134,7 @@ async fn main() -> Result<()> {
     let db: Arc<Db> = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
 
     // Get the keypair (provided or auto-generated)
+    // TODO: store keypair if auto-generated
     let keypair = match config.secret_key {
         Some(key) => {
             let key = match key.strip_prefix("0x") {
@@ -173,6 +174,7 @@ async fn main() -> Result<()> {
     let mut solid_peers = config
         .peers
         .iter()
+        .filter(|p| !p.is_empty())
         .map(to_peer_id)
         .collect::<Result<Vec<solid::peer::PeerId>>>()?;
 
@@ -299,8 +301,6 @@ async fn main() -> Result<()> {
                             info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
                             // let leader = &accept.leader_id;
 
-                            // TODO: we're receiving our own accept, this should be fixed
-
                             network.send(
                                 &NetworkPeerId::from(accept.leader_id.clone()),
                                 NetworkEvent::Accept { accept },
@@ -414,11 +414,11 @@ async fn main() -> Result<()> {
             res?
         }
         res = solid_handle => {
-            error!(logger, "Db handle exited unexpectedly {res:#?}");
+            error!(logger, "Solid handle exited unexpectedly {res:#?}");
             res?
         },
         res = main_handle => {
-            error!(logger, "Db handle exited unexpectedly {res:#?}");
+            error!(logger, "Main handle exited unexpectedly {res:#?}");
             res?
         },
         _ = tokio::signal::ctrl_c() => {
