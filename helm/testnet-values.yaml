@@ -15,6 +15,6 @@ resources:
     cpu: 200m
     memory: 300Mi
 
-peerList: "polybase-rust-0.polybase-headless.polybase.svc.cluster.local:5001"
+peerList: "polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local:5001"
 
 additionalDomain: testnet.spacetime.xyz
