@@ -1,8 +1,10 @@
 use bincode::{deserialize, serialize};
-use serde::{Deserialize, Serialize};
-use std::{convert::AsRef, path::Path, sync::Arc};
-
+use parking_lot::Mutex;
 use prost::Message;
+use rocksdb::WriteBatch;
+use serde::{Deserialize, Serialize};
+use std::mem;
+use std::{convert::AsRef, path::Path, sync::Arc};
 
 use crate::{
     keys::{self, Key},
@@ -30,10 +32,6 @@ pub enum StoreError {
     TokioTaskJoinError(#[from] tokio::task::JoinError),
 }
 
-pub(crate) struct Store {
-    db: Arc<rocksdb::DB>,
-}
-
 #[derive(Debug)]
 pub(crate) enum Value<'a> {
     DataValue(&'a RecordRoot),
@@ -58,6 +56,15 @@ impl<'a> Value<'a> {
     }
 }
 
+pub(crate) struct Store {
+    db: Arc<rocksdb::DB>,
+    state: Arc<Mutex<StoreState>>,
+}
+
+pub(crate) struct StoreState {
+    batch: rocksdb::WriteBatch,
+}
+
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut options = rocksdb::Options::default();
@@ -66,7 +73,26 @@ impl Store {
 
         let db = rocksdb::DB::open(&options, path)?;
 
-        Ok(Self { db: Arc::new(db) })
+        Ok(Self {
+            db: Arc::new(db),
+            state: Arc::new(Mutex::new(StoreState {
+                batch: WriteBatch::default(),
+            })),
+        })
+    }
+
+    pub(crate) async fn commit(&self) -> Result<()> {
+        // let batch = Arc::clone(&self.batch);
+        let db = Arc::clone(&self.db);
+
+        let batch = {
+            let mut state = self.state.lock();
+            mem::take(&mut state.batch)
+        };
+
+        tokio::task::spawn_blocking(move || db.write(batch)).await??;
+
+        Ok(())
     }
 
     pub(crate) async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
@@ -79,8 +105,11 @@ impl Store {
 
         let key = key.serialize()?;
         let value = value.serialize()?;
-        let db = Arc::clone(&self.db);
-        tokio::task::spawn_blocking(move || db.put(key, value)).await??;
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            state.lock().batch.put(key, value);
+        })
+        .await?;
 
         Ok(())
     }
@@ -98,8 +127,11 @@ impl Store {
 
     pub(crate) async fn delete(&self, key: &Key<'_>) -> Result<()> {
         let key = key.serialize()?;
-        let db = Arc::clone(&self.db);
-        tokio::task::spawn_blocking(move || db.delete(key)).await??;
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            state.lock().batch.delete(key);
+        })
+        .await?;
 
         Ok(())
     }

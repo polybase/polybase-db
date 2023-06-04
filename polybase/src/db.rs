@@ -228,11 +228,14 @@ impl Db {
             keys.push(hash);
         }
 
-        // Commit changes in mempool
+        // Commit changes in mempool (releasing unused txns and removing used ones)
         self.mempool.commit(manifest.height, keys.iter().collect());
 
-        // TODO: this should be part of a txn with the above!
+        // Update the txn manifest in rocksdb
         self.set_manifest(manifest).await?;
+
+        // Commit all txns
+        self.indexer.commit().await?;
 
         Ok(())
     }
