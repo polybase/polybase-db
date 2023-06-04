@@ -58,6 +58,19 @@ pub struct DbSnapshot {
     pub index: Vec<u8>,
 }
 
+#[derive(Debug)]
+pub struct DbConfig {
+    block_txns_count: usize,
+}
+
+impl Default for DbConfig {
+    fn default() -> Self {
+        DbConfig {
+            block_txns_count: 100,
+        }
+    }
+}
+
 pub struct Db {
     mempool: Mempool<[u8; 32], CallTxn, usize>,
     gateway: Gateway,
@@ -66,10 +79,11 @@ pub struct Db {
     // logger: slog::Logger,
     sender: AsyncMutex<mpsc::Sender<CallTxn>>,
     receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
+    config: DbConfig,
 }
 
 impl Db {
-    pub fn new(indexer: Arc<Indexer>, logger: slog::Logger) -> Self {
+    pub fn new(indexer: Arc<Indexer>, logger: slog::Logger, config: DbConfig) -> Self {
         let (sender, receiver) = mpsc::channel::<CallTxn>(100);
 
         Self {
@@ -80,6 +94,7 @@ impl Db {
             // logger,
             sender: AsyncMutex::new(sender),
             receiver: AsyncMutex::new(receiver),
+            config,
         }
     }
 
@@ -189,8 +204,9 @@ impl Db {
     }
 
     pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
+        // TODO: check txns do not affect the same record
         self.mempool
-            .lease(height, 110)
+            .lease(height, self.config.block_txns_count)
             .into_iter()
             .map(|(id, call_txn)| {
                 Ok(solid::txn::Txn {

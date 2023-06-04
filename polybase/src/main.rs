@@ -18,7 +18,7 @@ mod rpc;
 mod txn;
 
 use crate::config::{Command, Config, LogFormat};
-use crate::db::Db;
+use crate::db::{Db, DbConfig};
 use crate::errors::AppError;
 use crate::rpc::create_rpc_server;
 use chrono::Utc;
@@ -131,7 +131,11 @@ async fn main() -> Result<()> {
 
     // Database combines various components into a single interface
     // that is thread safe
-    let db: Arc<Db> = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
+    let db: Arc<Db> = Arc::new(Db::new(
+        Arc::clone(&indexer),
+        logger.clone(),
+        DbConfig::default(),
+    ));
 
     // Get the keypair (provided or auto-generated)
     // TODO: store keypair if auto-generated
@@ -192,13 +196,21 @@ async fn main() -> Result<()> {
 
     // TODO: load solid state from disk state
     let mut solid = match db.get_manifest().await? {
-        Some(manifest) => {
-            solid::Solid::with_last_confirmed(local_peer_solid, manifest, SolidConfig::default())
-        }
+        Some(manifest) => solid::Solid::with_last_confirmed(
+            local_peer_solid,
+            manifest,
+            SolidConfig {
+                max_proposal_history: config.block_cache_count,
+                ..SolidConfig::default()
+            },
+        ),
         None => solid::Solid::genesis(
             local_peer_solid,
             solid_peers.clone(),
-            SolidConfig::default(),
+            SolidConfig {
+                max_proposal_history: config.block_cache_count,
+                ..SolidConfig::default()
+            },
         ),
     };
 
@@ -235,7 +247,7 @@ async fn main() -> Result<()> {
                         },
                         NetworkEvent::OutOfSync { peer_id, height } => {
                             info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
-                            if height + 1024 < solid.height() {
+                            if height + config.block_cache_count < solid.height() {
                                 let snapshot = match db.snapshot() {
                                     Ok(snapshot) => snapshot,
                                     Err(err) => {
@@ -255,6 +267,17 @@ async fn main() -> Result<()> {
                                     .await;
                                 }
                             }
+                        }
+
+                        NetworkEvent::SnapshotRequest{ peer_id, .. } => {
+                            let snapshot = match db.snapshot() {
+                                Ok(snapshot) => snapshot,
+                                Err(err) => {
+                                    error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                    continue;
+                                }
+                            };
+                            network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
                         }
 
                         NetworkEvent::Snapshot { snapshot } => {
@@ -368,8 +391,11 @@ async fn main() -> Result<()> {
                             accepts_sent,
                         } => {
                             info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
-                            network.send_all(NetworkEvent::OutOfSync { peer_id: NetworkPeerId(local_peer_id).into(), height })
-                            .await
+                            if solid.height() == 0 {
+                                network.send_all(NetworkEvent::SnapshotRequest { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
+                            } else {
+                                network.send_all(NetworkEvent::OutOfSync { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
+                            }
                         }
 
                         SolidEvent::OutOfDate {

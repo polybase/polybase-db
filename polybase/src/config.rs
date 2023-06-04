@@ -64,6 +64,14 @@ pub struct Config {
     )]
     pub peers: Vec<String>,
 
+    // Maximum history of blocks to keep in memory
+    #[arg(long, env = "BLOCK_CACHE_SIZE", default_value = "1024")]
+    pub block_cache_count: usize,
+
+    /// Maximum number of txns to include in a block
+    #[arg(long, env = "BLOCK_TXN_COUNT", default_value = "1024")]
+    pub block_txns_count: usize,
+
     /// Sentry DSN
     #[arg(long, env = "SENTRY_DSN", default_value = "")]
     pub sentry_dsn: Option<String>,
