@@ -36,6 +36,8 @@ use solid::event::SolidEvent;
 use solid::proposal::ProposalManifest;
 use std::time::Duration;
 use std::{
+    fs::{create_dir_all, File, OpenOptions},
+    io::{Read, Write},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -50,13 +52,11 @@ async fn main() -> Result<()> {
     let config = Config::parse();
 
     if let Some(Command::GenerateKey) = config.command {
-        let mut bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        let (keypair, bytes) = generate_key();
         #[allow(clippy::unwrap_used)]
         let key = ed25519::SecretKey::from_bytes(&bytes).unwrap();
         let public: ed25519::PublicKey = (&key).into();
         #[allow(clippy::unwrap_used)]
-        let keypair = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
         let local_peer_id = PeerId::from(keypair.public());
         println!(" ");
         println!("  Public Key: 0x{}", hex::encode(public.to_bytes()));
@@ -148,7 +148,32 @@ async fn main() -> Result<()> {
             let key_bytes = hex::decode(key)?;
             identity::Keypair::ed25519_from_bytes(key_bytes)?
         }
-        None => identity::Keypair::generate_ed25519(),
+        None => {
+            #[allow(clippy::expect_used)]
+            let key_path = get_key_path(&config.root_dir).expect("failed to get key path");
+            if key_path.exists() {
+                let mut file = File::open(key_path)?;
+                let mut content = String::new();
+                file.read_to_string(&mut content)?;
+                let key_bytes = hex::decode(content.trim())?;
+                identity::Keypair::ed25519_from_bytes(key_bytes)?
+            } else {
+                warn!(logger, "Automatically generating keypair, keep this secret"; "path" => key_path.to_str());
+                if let Some(dir) = key_path.parent() {
+                    if !dir.exists() {
+                        // Create the directory and all its parent directories if they do not exist
+                        create_dir_all(dir)?;
+                    }
+                }
+                let (keypair, bytes) = generate_key();
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open(&key_path)?;
+                file.write_all(hex::encode(bytes).as_bytes())?;
+                keypair
+            }
+        }
     };
     let local_peer_id = PeerId::from(keypair.public());
 
@@ -455,7 +480,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn get_key_path(dir: &str) -> Option<PathBuf> {
+    let mut path_buf = get_base_dir(dir)?;
+    path_buf.push("config/secret_key");
+    Some(path_buf)
+}
+
 fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
+    let mut path_buf = get_base_dir(dir)?;
+    path_buf.push("data/indexer.db");
+    Some(path_buf)
+}
+
+fn get_base_dir(dir: &str) -> Option<PathBuf> {
     let mut path_buf = PathBuf::new();
     if dir.starts_with("~/") {
         if let Some(home_dir) = dirs::home_dir() {
@@ -465,11 +502,18 @@ fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
     } else {
         path_buf.push(dir);
     }
-    path_buf.push("data/indexer.db");
     Some(path_buf)
 }
 
 fn to_peer_id(base58_string: &String) -> Result<solid::peer::PeerId> {
     let decoded = bs58::decode(base58_string).into_vec()?;
     Ok(solid::peer::PeerId::new(decoded))
+}
+
+fn generate_key() -> (identity::Keypair, [u8; 32]) {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    #[allow(clippy::unwrap_used)]
+    let keypair = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
+    (keypair, bytes)
 }
