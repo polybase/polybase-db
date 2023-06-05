@@ -228,14 +228,16 @@ impl Db {
             keys.push(hash);
         }
 
-        // Commit changes in mempool (releasing unused txns and removing used ones)
-        self.mempool.commit(manifest.height, keys.iter().collect());
+        let height = manifest.height;
 
         // Update the txn manifest in rocksdb
         self.set_manifest(manifest).await?;
 
         // Commit all txns
         self.indexer.commit().await?;
+
+        // Commit changes in mempool (releasing unused txns and removing used ones)
+        self.mempool.commit(height, keys.iter().collect());
 
         Ok(())
     }
