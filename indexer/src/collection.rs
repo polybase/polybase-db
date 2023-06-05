@@ -1409,6 +1409,8 @@ mod tests {
                 .await
                 .unwrap();
 
+            store.commit().await.unwrap();
+
             collections.push(Collection::load(logger(), store, id).await.unwrap());
         }
 
@@ -1464,6 +1466,8 @@ mod tests {
         .into_iter()
         .next()
         .unwrap();
+
+        store.commit().await.unwrap();
 
         assert_eq!(collection_account.collection_id, "ns/Account");
         assert_eq!(
@@ -1521,6 +1525,7 @@ mod tests {
         ]);
 
         collection.set("1".into(), &value).await.unwrap();
+        store.commit().await.unwrap();
 
         let record = collection.get("1".into(), None).await.unwrap().unwrap();
         assert_eq!(record.get("id").unwrap(), &RecordValue::String("1".into()));
@@ -1595,6 +1600,8 @@ mod tests {
                 .unwrap();
         }
 
+        store.commit().await.unwrap();
+
         let collection = Collection::load(logger(), &store, "test/test".to_owned())
             .await
             .unwrap();
@@ -1610,6 +1617,8 @@ mod tests {
             ("name".to_string(), RecordValue::String("test".into())),
         ]);
         collection.set("2".into(), &value_2).await.unwrap();
+
+        store.commit().await.unwrap();
 
         let mut results = collection
             .list(
