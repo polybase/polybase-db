@@ -312,11 +312,10 @@ async fn main() -> Result<()> {
                             #[allow(clippy::unwrap_used)]
                             db.restore(&snapshot).unwrap();
 
-                            // TODO: reset solid state after db restore
-
-                            // This will close the server, for now that's fine during
-                            // snapshot reload (as we have auth-restarts)
-                            return;
+                            // Reset solid with the new proposal state from the snapshot
+                            #[allow(clippy::unwrap_used)]
+                            let manifest = db.get_manifest().await.unwrap().unwrap();
+                            solid.reset(manifest);
                         }
 
                         NetworkEvent::Accept { accept } => {

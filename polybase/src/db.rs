@@ -6,7 +6,7 @@ use gateway::{Change, Gateway};
 use indexer::collection::validate_collection_record;
 use indexer::{validate_schema_change, Indexer, RecordRoot};
 use serde::{Deserialize, Serialize};
-use solid::proposal;
+use solid::proposal::{self};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::mpsc;

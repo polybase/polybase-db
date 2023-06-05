@@ -100,6 +100,17 @@ impl Solid {
         Self::with_last_confirmed(local_peer_id, ProposalManifest::genesis(peers), config)
     }
 
+    pub fn reset(&self, manifest: ProposalManifest) {
+        let mut store = self.shared.store.lock();
+        *store = ProposalStore::with_last_confirmed(
+            self.shared.local_peer_id.clone(),
+            manifest,
+            self.shared.config.max_proposal_history,
+        );
+        let mut events = self.shared.events.lock();
+        events.clear();
+    }
+
     pub fn run(&self) -> tokio::task::JoinHandle<()> {
         // Create background worker, this is mostly responsible for sending skips
         // when a new proposal has not been created by the next responsible leader
