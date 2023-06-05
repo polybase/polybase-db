@@ -40,7 +40,7 @@ pub struct Config {
         env = "NETWORK_LADDR",
         value_parser,
         value_delimiter = ',',
-        default_value = "/ip4/0.0.0.0/tcp/0"
+        default_value = "/ip4/0.0.0.0/tcp/5000"
     )]
     pub network_laddr: Vec<String>,
 

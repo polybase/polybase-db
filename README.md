@@ -44,7 +44,7 @@ cargo run -- --secret-key=0xf3982b58c55dcfce671c882c00cc97f58ea5c7fc5f37f4a76e56
 If you want to a new generate key / peer, you can use the following command. Make sure to update the 
 
 ```sh
-cargo run -- generate_key
+cd polybase && cargo run -- generate_key
 ```
 
 ## Limitations
