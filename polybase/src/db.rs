@@ -7,6 +7,7 @@ use indexer::collection::validate_collection_record;
 use indexer::{validate_schema_change, Indexer, RecordRoot};
 use serde::{Deserialize, Serialize};
 use solid::proposal;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
@@ -72,7 +73,7 @@ impl Default for DbConfig {
 }
 
 pub struct Db {
-    mempool: Mempool<[u8; 32], CallTxn, usize>,
+    mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
     pub rollup: Rollup,
     pub indexer: Arc<Indexer>,
@@ -117,32 +118,32 @@ impl Db {
 
     /// Applies a call txn
     pub async fn call(&self, txn: CallTxn) -> Result<String> {
-        let record_id = self.validate_call(&txn).await?;
+        let (record_id, changes) = self.validate_call(&txn).await?;
         let hash = txn.hash()?;
 
         // Send txn event
         self.sender.lock().await.send(txn.clone()).await?;
 
         // Wait for txn to be committed
-        self.mempool.add_wait(hash, txn).await;
+        self.mempool.add_wait(hash, txn, changes).await;
 
         Ok(record_id)
     }
 
     pub async fn add_txn(&self, txn: CallTxn) -> Result<String> {
-        let record_id = self.validate_call(&txn).await?;
+        let (record_id, changes) = self.validate_call(&txn).await?;
         let hash = txn.hash()?;
 
         // Send txn event
         self.sender.lock().await.send(txn.clone()).await?;
 
         // Wait for txn to be committed
-        self.mempool.add(hash, txn);
+        self.mempool.add(hash, txn, changes);
 
         Ok(record_id)
     }
 
-    async fn validate_call(&self, txn: &CallTxn) -> Result<String> {
+    async fn validate_call(&self, txn: &CallTxn) -> Result<(String, Vec<[u8; 32]>)> {
         let CallTxn {
             collection_id,
             function_name,
@@ -152,6 +153,7 @@ impl Db {
         } = txn;
         let indexer = Arc::clone(&self.indexer);
         let mut output_record_id = record_id.clone();
+        let mut output_records = HashSet::new();
 
         // Get changes
         let changes = self
@@ -167,11 +169,13 @@ impl Db {
             .await?;
 
         // First we cache the result, as it will be committed later
-        for change in changes {
-            // let (collection_id, record_id) = change.get_path();
-            // let k = get_key(collection_id, record_id);
+        for change in changes.iter() {
+            let (collection_id, record_id) = change.get_path();
+            let key = get_key(collection_id, record_id);
+            output_records.insert(key);
 
-            // Get the ID of created record
+            // If we're creating a record then we need to get the record_id from
+            // the output from the contstructor call.
             if let Change::Create {
                 collection_id: _,
                 record_id,
@@ -200,7 +204,7 @@ impl Db {
             }
         }
 
-        Ok(output_record_id)
+        Ok((output_record_id, output_records.into_iter().collect()))
     }
 
     pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
@@ -236,7 +240,8 @@ impl Db {
         // Commit all txns
         self.indexer.commit().await?;
 
-        // Commit changes in mempool (releasing unused txns and removing used ones)
+        // Commit changes in mempool (releasing unused txns and removing used ones). This will
+        // also release all requests that were waiting for these txns to be committed.
         self.mempool.commit(height, keys.iter().collect());
 
         Ok(())
