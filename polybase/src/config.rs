@@ -19,7 +19,7 @@ pub struct Config {
     pub root_dir: String,
 
     /// Log level
-    #[arg(value_enum, long, env = "LOG_LEVEL", default_value = "DEBUG")]
+    #[arg(value_enum, long, env = "LOG_LEVEL", default_value = "INFO")]
     pub log_level: LogLevel,
 
     /// Log format
