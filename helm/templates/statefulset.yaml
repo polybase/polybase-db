@@ -60,41 +60,6 @@ spec:
       {{- if .Values.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- end }}
-      # initContainers:
-      # - name: init-set
-      #   image: alpine:latest
-      #   command:
-      #   - /mnt/scripts/run.sh
-      #   volumeMounts:
-      #   - name: data
-      #     mountPath: /polybase
-      #   - name: genesis
-      #     mountPath: /mnt/tendermint_files/genesis.json
-      #     subPath: genesis.json
-      #   {{- range $i := until (.Values.replicaCount | int) }}
-      #   - name: node-key{{$i}}
-      #     mountPath: /mnt/tendermint_files/node_key{{$i}}.json
-      #     subPath: node_key{{$i}}.json
-      #   - name: priv-validator-key{{$i}}
-      #     mountPath: /mnt/tendermint_files/priv_validator_key{{$i}}.json
-      #     subPath: priv_validator_key{{$i}}.json
-      #   {{- end }}
-      #   - name: scripts-vol
-      #     mountPath: /mnt/scripts
-      # - name: migration
-      #   image: {{ include "polybase.main_image" . }}
-      #   command:
-      #   - polybase-migrate
-      #   securityContext:
-      #     runAsUser: 1001
-      #     runAsGroup: 1001
-      #     runAsNonRoot: true
-      #   volumeMounts:
-      #   - name: data
-      #     mountPath: /polybase
-      #   env:
-      #   - name: MIGRATION_URL
-      #     value: "http://polybase-0.polybase-headless.polybase.svc.cluster.local:8080"
       containers:
         - name: polybase
           command:
@@ -116,12 +81,10 @@ spec:
             value: https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376
           - name: ENV_NAME
             value: {{ .Values.env | quote }}
-          - name: GENESIS
-            value: "/polybase/config/genesis.json"
-          - name: NODE_KEY
-            value: "/polybase/config/node_key.json"
-          - name: VALIDATOR_KEY
-            value: "/polybase/config/priv_validator_key.json"
+          - name: DIAL_ADDR
+            value: "/dns/polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-1.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-2.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001"
+          - name: NETWORK_LADDR
+            value: "/ip4/0.0.0.0/tcp/5001"
           - name: LOG_LEVEL
             value: "DEBUG"
           - name: LOG_FORMAT
@@ -160,8 +123,8 @@ spec:
           {{- else if .Values.startupProbe.enabled }}
           startupProbe:
             httpGet:
-              path: /health
-              port: 26657
+              path: /
+              port: 8080
             initialDelaySeconds: {{ .Values.startupProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.startupProbe.periodSeconds }}
             timeoutSeconds: {{ .Values.startupProbe.timeoutSeconds }}
@@ -175,9 +138,9 @@ spec:
               hostPort: {{ .Values.containerPorts.public_api }}
               {{- end }}
             - name: p2p
-              containerPort: {{ .Values.containerPorts.tendermint_p2p | default "5001" }}
+              containerPort: {{ .Values.containerPorts.p2p | default "5001" }}
               {{- if .Values.hostNetwork }}
-              hostPort: {{ .Values.containerPorts.tendermint_p2p }}
+              hostPort: {{ .Values.containerPorts.p2p }}
               {{- end }}
           {{- if .Values.resources }}
           resources: {{ toYaml .Values.resources | nindent 12 }}
@@ -189,23 +152,6 @@ spec:
             {{- include "polybase.render" (dict "value" .Values.extraVolumeMounts "context" $) | nindent 12 }}
             {{- end }}
       volumes:
-      # - name: scripts-vol
-      #   configMap:
-      #     name: validator-keys
-      #     defaultMode: 0555
-      #   {{- if .Values.extraVolumes }}
-      #   {{- include "polybase.render" (dict "value" .Values.extraVolumes "context" $) | nindent 8 }}
-      #   {{- end }}
-      # - name: genesis
-      #   secret:
-      #     secretName: genesis
-      # {{- range $i := until (.Values.replicaCount | int) }}
-      # - name: node-key{{$i}}
-      #   secret: 
-      #     secretName: node-key{{$i}}
-      # - name: priv-validator-key{{$i}}
-      #   secret:
-      #     secretName: priv-validator-key{{$i}}
       {{- end }}
   {{- if not .Values.persistence.enabled }}
         - name: data
