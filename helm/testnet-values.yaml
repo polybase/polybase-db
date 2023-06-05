@@ -7,14 +7,6 @@ image:
   digest: ""
   pullPolicy: IfNotPresent
 
-peerList: "polybase-rust-0.polybase-headless.polybase.svc.cluster.local:5001"
-
-extraEnvVars: 
-- name: ENV
-  value: "production"
-- name: SENTRY_DSN
-  value: https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376
-
 resources:
   limits:
     cpu: 3
@@ -22,5 +14,7 @@ resources:
   requests:
     cpu: 200m
     memory: 300Mi
+
+peerList: "polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local:5001"
 
 additionalDomain: testnet.spacetime.xyz

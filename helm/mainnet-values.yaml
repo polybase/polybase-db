@@ -22,4 +22,6 @@ service:
 
 peerList: "polybase-0.polybase-headless.polybase.svc.cluster.local:5001"
 
-whitelist: "0xea448a816eba719df5155f1799d014d6ce74638fc5d42780597ad7e9df046a486ba295ed1c8364d284c416b350ba6b4e4db4966faf053e98cca6cab9fd6aa266"
+extraEnvVars:
+  - name: WHITELIST
+    value: "0xea448a816eba719df5155f1799d014d6ce74638fc5d42780597ad7e9df046a486ba295ed1c8364d284c416b350ba6b4e4db4966faf053e98cca6cab9fd6aa266"

@@ -2,7 +2,7 @@ name: Update Beta Packages
 
 on:
   repository_dispatch:
-    types: [update-polylang-packages-beta]
+    types: [update-polylang-packages]
 
 jobs:
   update-packages:
@@ -24,7 +24,7 @@ jobs:
         uses: peter-evans/create-pull-request@v3
         with:
           token: ${{ secrets.ADMIN_TOKEN }}
-          title: Update beta cargo packages
-          branch: update-cargo-beta-packages
+          title: Update cargo packages
+          branch: update-cargo-packages
           delete-branch: true
           team-reviewers: engineering
