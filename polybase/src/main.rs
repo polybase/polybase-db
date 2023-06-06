@@ -271,6 +271,7 @@ async fn main() -> Result<()> {
                     height: 0,
                 })
                 .await;
+            db.out_of_sync(1);
         }
 
         while !shutdown.load(Ordering::Relaxed) {
