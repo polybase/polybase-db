@@ -70,7 +70,7 @@ spec:
           mountPath: /polybase
         {{- range $i := until (.Values.replicaCount | int) }}
         - name: secret-key-{{$i}}
-          mountPath: /mnt/secret-keys/secret-key-{{$i}}
+          mountPath: /mnt/secret_keys/secret-key-{{$i}}
           subPath: secret-key-{{$i}}
         {{- end }}
         - name: scripts-vol
@@ -188,7 +188,7 @@ spec:
           name: secret-keys-setup
           defaultMode: 0555
       {{- range $i := until (.Values.replicaCount | int) }}
-      - name: secret-node-key{{$i}}
+      - name: secret-key-{{$i}}
         secret: 
           secretName: secret-key-{{$i}}
       {{- end }}
@@ -213,4 +213,3 @@ spec:
             storage: {{ .Values.persistence.size | quote }}
     {{- include "polybase.storageClass" (dict "persistence" .Values.persistence "global" .Values.global) | nindent 8 }}
     {{- end }}
-    
