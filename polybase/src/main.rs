@@ -262,6 +262,17 @@ async fn main() -> Result<()> {
         let logger = logger_clone;
         let shutdown = shutdown_clone;
         let mut restore_height = solid.height();
+
+        // For migration only, check if DB is empty
+        if db.is_empty().await.unwrap_or(true) {
+            network
+                .send_all(NetworkEvent::SnapshotRequest {
+                    peer_id: NetworkPeerId(local_peer_id).into(),
+                    height: 0,
+                })
+                .await;
+        }
+
         while !shutdown.load(Ordering::Relaxed) {
             tokio::select! {
                 // Db only produces CallTxn events, that should be propogated
