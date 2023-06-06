@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secret-keys-setup
+data:
+  run.sh: |
+    #!/bin/sh
+    SET_INDEX=${HOSTNAME##*-}
+    echo "Starting initializing for pod $SET_INDEX"
+    mkdir -p /polybase/config/
+    cp /mnt/secret_keys/secret-key-${SET_INDEX} /polybase/config/secret_key

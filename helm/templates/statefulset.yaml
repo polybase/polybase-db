@@ -60,6 +60,21 @@ spec:
       {{- if .Values.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- end }}
+      initContainers:
+      - name: init-set
+        image: alpine:latest
+        command:
+        - /mnt/scripts/run.sh
+        volumeMounts:
+        - name: data
+          mountPath: /polybase
+        {{- range $i := until (.Values.replicaCount | int) }}
+        - name: secret-key-{{$i}}
+          mountPath: /mnt/secret_keys/secret-key-{{$i}}
+          subPath: secret-key-{{$i}}
+        {{- end }}
+        - name: scripts-vol
+          mountPath: /mnt/scripts
       containers:
         - name: polybase
           command:
@@ -152,6 +167,17 @@ spec:
             {{- include "polybase.render" (dict "value" .Values.extraVolumeMounts "context" $) | nindent 12 }}
             {{- end }}
       volumes:
+<<<<<<< HEAD
+=======
+      - name: scripts-vol
+        configMap:
+          name: secret-keys-setup
+          defaultMode: 0555
+      {{- range $i := until (.Values.replicaCount | int) }}
+      - name: secret-key-{{$i}}
+        secret: 
+          secretName: secret-key-{{$i}}
+>>>>>>> main
       {{- end }}
   {{- if not .Values.persistence.enabled }}
         - name: data
