@@ -23,6 +23,9 @@ pub use record::{
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 
+pub type Result<T> = std::result::Result<T, IndexerError>;
+
+// TODO: errors should be named Error and imported as indexer::Error
 #[derive(Debug, thiserror::Error)]
 pub enum IndexerError {
     #[error("collection error")]
@@ -53,24 +56,42 @@ pub struct Indexer {
 }
 
 impl Indexer {
-    pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> store::Result<Self> {
+    pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> Result<Self> {
         let store = store::Store::open(path)?;
         Ok(Self { logger, store })
     }
 
-    pub fn destroy(self) -> store::Result<()> {
-        self.store.destroy()
+    pub fn destroy(self) -> Result<()> {
+        Ok(self.store.destroy()?)
     }
 
-    pub fn snapshot(&self) -> store::Result<Vec<u8>> {
-        self.store.snapshot()
+    pub fn snapshot(&self) -> Result<Vec<u8>> {
+        Ok(self.store.snapshot()?)
     }
 
-    pub fn restore(&self, data: Vec<u8>) -> store::Result<()> {
-        self.store.restore(data)
+    pub fn restore(&self, data: Vec<u8>) -> Result<()> {
+        Ok(self.store.restore(data)?)
     }
 
-    pub async fn collection(&self, id: String) -> collection::Result<Collection> {
-        Collection::load(self.logger.clone(), &self.store, id).await
+    pub async fn collection(&self, id: String) -> Result<Collection> {
+        Ok(Collection::load(self.logger.clone(), &self.store, id).await?)
+    }
+
+    pub async fn commit(&self) -> Result<()> {
+        Ok(self.store.commit().await?)
+    }
+
+    pub async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
+        let system_key = keys::Key::new_system_data(key)?;
+
+        Ok(self
+            .store
+            .set(&system_key, &store::Value::DataValue(data))
+            .await?)
+    }
+
+    pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
+        let system_key = keys::Key::new_system_data(key)?;
+        Ok(self.store.get(&system_key).await?)
     }
 }

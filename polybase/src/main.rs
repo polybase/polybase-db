@@ -11,516 +11,62 @@ mod config;
 mod db;
 mod errors;
 mod hash;
-mod pending;
-mod raft;
+mod mempool;
+mod network;
 mod rollup;
+mod rpc;
+mod txn;
 
-use actix_cors::Cors;
-use actix_web::{
-    get, http::StatusCode, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
-};
+use crate::config::{Command, Config, LogFormat};
+use crate::db::{Db, DbConfig};
+use crate::errors::AppError;
+use crate::rpc::create_rpc_server;
 use chrono::Utc;
 use clap::Parser;
-use futures::TryStreamExt;
-use indexer::{AuthUser, Indexer, IndexerError};
-use serde::{de::IntoDeserializer, Deserialize, Serialize};
-use serde_with::serde_as;
+use ed25519_dalek::{self as ed25519};
+use futures::StreamExt;
+use indexer::{Indexer, IndexerError};
+use libp2p::PeerId;
+use libp2p::{identity, Multiaddr};
+use network::{events::NetworkEvent, Network, NetworkPeerId};
+use rand::RngCore;
 use slog::Drain;
+use solid::config::SolidConfig;
+use solid::event::SolidEvent;
+use solid::proposal::ProposalManifest;
+use std::time::Duration;
 use std::{
-    borrow::Cow,
-    cmp::min,
+    fs::{create_dir_all, File, OpenOptions},
+    io::{Read, Write},
     path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
-use tokio::select;
 
-use crate::config::{Config, LogFormat};
-use crate::db::Db;
-use crate::errors::http::HTTPError;
-use crate::errors::logger::SlogMiddleware;
-use crate::errors::metrics::MetricsData;
-use crate::errors::reason::ReasonCode;
-use crate::raft::Raft;
-
-struct RouteState {
-    db: Arc<Db>,
-    indexer: Arc<Indexer>,
-    raft: Arc<Raft>,
-    whitelist: Option<Vec<String>>,
-}
-
-#[derive(Debug, thiserror::Error)]
-enum AppError {
-    #[error("failed to initialize indexer")]
-    Indexer(#[from] IndexerError),
-
-    #[error("failed to join task")]
-    JoinError(#[from] tokio::task::JoinError),
-
-    #[error("raft failed unexpectedly")]
-    Raft(#[from] raft::RaftError),
-
-    #[error("server failed unexpectedly")]
-    HttpServer(#[from] actix_web::Error),
-
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-
-    #[error("public key not included in allowed whitelist")]
-    Whitelist,
-}
-
-#[get("/")]
-async fn root() -> impl Responder {
-    HttpResponse::Ok()
-        .content_type("application/json")
-        .body(format!(
-            "{{ \"server\": \"Polybase\", \"version\": \"{}\" }}",
-            env!("CARGO_PKG_VERSION")
-        ))
-}
-
-#[derive(Default)]
-struct PrefixedHex([u8; 32]);
-
-impl Serialize for PrefixedHex {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut hex = hex::encode(self.0);
-        hex.insert_str(0, "0x");
-
-        serializer.serialize_str(&hex)
-    }
-}
-
-#[derive(Default, Serialize)]
-struct Block {
-    hash: PrefixedHex,
-}
-
-#[derive(Deserialize)]
-struct GetRecordQuery {
-    since: Option<f64>,
-    #[serde(rename = "waitFor", default = "Seconds::sixty")]
-    wait_for: Seconds,
-    format: Option<String>,
-}
-
-#[derive(Serialize)]
-struct GetRecordResponse {
-    data: serde_json::Value,
-    block: Block,
-}
-
-#[get("/{collection}/records/{id}")]
-async fn get_record(
-    state: web::Data<RouteState>,
-    path: web::Path<(String, String)>,
-    query: web::Query<GetRecordQuery>,
-    body: auth::SignedJSON<()>,
-) -> Result<impl Responder, HTTPError> {
-    let (collection, id) = path.into_inner();
-    let auth = body.auth;
-
-    let collection = state.indexer.collection(collection).await?;
-
-    if let Some(since) = query.since {
-        enum UpdateCheckResult {
-            Updated,
-            NotFound,
-            NotModified,
-        }
-
-        let was_updated: Result<UpdateCheckResult, HTTPError> = async {
-            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
-            let wait_until = SystemTime::now() + wait_for;
-            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
-
-            let mut record_exists = false;
-            while wait_until > SystemTime::now() {
-                if let Some(metadata) = collection.get_record_metadata(&id).await? {
-                    record_exists = true;
-                    if metadata.updated_at > since {
-                        return Ok(UpdateCheckResult::Updated);
-                    }
-                }
-
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
-
-            Ok(if record_exists {
-                UpdateCheckResult::NotModified
-            } else {
-                UpdateCheckResult::NotFound
-            })
-        }
-        .await;
-
-        match was_updated? {
-            UpdateCheckResult::Updated => {}
-            UpdateCheckResult::NotModified => {
-                return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish())
-            }
-            UpdateCheckResult::NotFound => return Ok(HttpResponse::NotFound().finish()),
-        }
-    }
-
-    let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await?;
-
-    match record {
-        Some(record) => {
-            let data = indexer::record_to_json(record).map_err(indexer::IndexerError::from)?;
-            if let Some(f) = &query.format {
-                if f == "nft" {
-                    return Ok(HttpResponse::Ok().json(data));
-                }
-            }
-
-            Ok(HttpResponse::Ok().json(GetRecordResponse {
-                data,
-                block: Default::default(),
-            }))
-        }
-        None => Err(HTTPError::new(ReasonCode::RecordNotFound, None)),
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-enum Direction {
-    #[serde(rename = "asc")]
-    Ascending,
-    #[serde(rename = "desc")]
-    Descending,
-}
-
-impl From<Direction> for indexer::Direction {
-    fn from(dir: Direction) -> Self {
-        match dir {
-            Direction::Ascending => indexer::Direction::Ascending,
-            Direction::Descending => indexer::Direction::Descending,
-        }
-    }
-}
-
-/// Deserialized from "<number>s"
-#[derive(Debug, Clone, Copy)]
-struct Seconds(u64);
-
-impl Seconds {
-    fn sixty() -> Self {
-        Self(60)
-    }
-}
-
-impl From<Seconds> for std::time::Duration {
-    fn from(s: Seconds) -> Self {
-        std::time::Duration::from_secs(s.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for Seconds {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        if !s.ends_with('s') {
-            return Err(serde::de::Error::custom("missing 's'"));
-        }
-        let s = &s[..s.len() - 1];
-        let s = s.parse::<u64>().map_err(serde::de::Error::custom)?;
-
-        Ok(Seconds(s))
-    }
-}
-
-#[derive(Debug)]
-struct OptionalCursor(Option<indexer::Cursor>);
-
-impl<'de> Deserialize<'de> for OptionalCursor {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        // if there's nothing or it's an empty string, return None
-        // if there's a string, delegate to Cursor::deserialize
-
-        let cursor = Option::<String>::deserialize(deserializer)?
-            .filter(|s| !s.is_empty())
-            .map(|s| indexer::Cursor::deserialize(s.into_deserializer()))
-            .transpose()?;
-
-        Ok(OptionalCursor(cursor))
-    }
-}
-
-#[serde_as]
-#[derive(Debug, Deserialize)]
-struct ListQuery {
-    limit: Option<usize>,
-    #[serde(default, rename = "where")]
-    #[serde_as(as = "serde_with::json::JsonString")]
-    where_query: indexer::WhereQuery,
-    #[serde(default)]
-    #[serde_as(as = "serde_with::json::JsonString")]
-    sort: Vec<(String, Direction)>,
-    before: OptionalCursor,
-    after: OptionalCursor,
-    /// UNIX timestamp in seconds
-    since: Option<f64>,
-    #[serde(rename = "waitFor", default = "Seconds::sixty")]
-    wait_for: Seconds,
-}
-
-#[derive(Debug, Serialize)]
-struct Cursors {
-    before: Option<indexer::Cursor>,
-    after: Option<indexer::Cursor>,
-}
-
-#[derive(Serialize)]
-struct ListResponse {
-    data: Vec<GetRecordResponse>,
-    cursor: Cursors,
-}
-
-#[get("/{collection}/records")]
-async fn get_records(
-    req: HttpRequest,
-    state: web::Data<RouteState>,
-    path: web::Path<String>,
-    query: web::Query<ListQuery>,
-    body: auth::SignedJSON<()>,
-) -> Result<impl Responder, HTTPError> {
-    let collection = path.into_inner();
-    let auth = body.auth;
-    let collection = state.indexer.collection(collection).await?;
-
-    let sort_indexes = query
-        .sort
-        .iter()
-        .map(|(path, dir)| {
-            indexer::CollectionIndexField::new(
-                path.split('.').map(|p| Cow::Owned(p.to_string())).collect(),
-                (*dir).into(),
-            )
-        })
-        .collect::<Vec<_>>();
-
-    if let Some(since) = query.since {
-        let was_updated = async {
-            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
-            let wait_until = SystemTime::now() + wait_for;
-            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
-
-            while wait_until > SystemTime::now() {
-                if collection
-                    .get_metadata()
-                    .await?
-                    .map(|m| m.last_record_updated_at > since)
-                    .unwrap_or(false)
-                {
-                    return Ok(true);
-                }
-
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
-
-            Ok(false)
-        }
-        .await;
-
-        match was_updated {
-            Ok(true) => {}
-            Ok(false) => return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish()),
-            Err(e) => return Err(e),
-        }
-    }
-
-    // for metrics data collection
-    let req_uri = req.uri().to_string();
-    let mut num_records = 0;
-
-    let list_response: Result<ListResponse, HTTPError> = async {
-        let records = collection
-            .list(
-                indexer::ListQuery {
-                    limit: Some(min(1000, query.limit.unwrap_or(100))),
-                    where_query: query.where_query.clone(),
-                    order_by: &sort_indexes,
-                    cursor_after: query.after.0.clone(),
-                    cursor_before: query.before.0.clone(),
-                },
-                &auth.map(indexer::AuthUser::from).as_ref(),
-            )
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?;
-
-        num_records = records.len();
-
-        Ok(ListResponse {
-            cursor: Cursors {
-                before: records
-                    .first()
-                    .map(|(c, _)| c.clone())
-                    .or_else(|| query.before.0.clone())
-                    // TODO: is this right?
-                    // The `after` cursor is the key of the last record the user received,
-                    // if they don't receive any records,
-                    // then querying again with the returned `before` should return the `after` record,
-                    // not just records before it.
-                    .or_else(|| {
-                        query.after.0.clone().map(|a| {
-                            #[allow(clippy::unwrap_used)]
-                            // Unwrap is safe because `a` is an index key, immediate_sucessor works on index keys
-                            a.immediate_successor().unwrap()
-                        })
-                    }),
-                after: records
-                    .last()
-                    .map(|(c, _)| c.clone())
-                    .or_else(|| query.after.0.clone()),
-            },
-            data: records
-                .into_iter()
-                .map(|(_, r)| {
-                    Ok(GetRecordResponse {
-                        data: indexer::record_to_json(r)?,
-                        block: Default::default(),
-                    })
-                })
-                .collect::<Result<_, indexer::RecordError>>()
-                .map_err(indexer::IndexerError::from)?,
-        })
-    }
-    .await;
-
-    let mut resp = HttpResponse::Ok()
-        .content_type("application/json")
-        .json(list_response?);
-
-    // update metrics data
-    resp.extensions_mut()
-        .insert(MetricsData::NumberOfRecordsBeingReturned {
-            req_uri,
-            num_records,
-        });
-
-    Ok(resp)
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FunctionCall {
-    args: Vec<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct FunctionResponse {
-    data: serde_json::Value,
-}
-
-#[post("/{collection}/records")]
-async fn post_record(
-    state: web::Data<RouteState>,
-    path: web::Path<String>,
-    body: auth::SignedJSON<FunctionCall>,
-) -> Result<web::Json<FunctionResponse>, HTTPError> {
-    let collection_id = path.into_inner();
-
-    let auth = body.auth.map(|a| a.into());
-    let raft = Arc::clone(&state.raft);
-
-    // Check whitelist
-    if collection_id == "Collection" {
-        validate_whitelist(&state.whitelist, &auth)?;
-    }
-
-    let record_id = raft
-        .call(
-            collection_id.clone(),
-            "constructor".to_string(),
-            "".to_string(),
-            body.data.args,
-            auth.as_ref(),
-        )
-        .await?;
-
-    let Some(record) = state.db.get(collection_id, record_id).await? else {
-        return Err(HTTPError::new(
-            ReasonCode::RecordNotFound,
-            None,
-        ));
-    };
-
-    Ok(web::Json(FunctionResponse {
-        data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
-    }))
-}
-
-#[post("/{collection}/records/{record}/call/{function}")]
-async fn call_function(
-    state: web::Data<RouteState>,
-    path: web::Path<(String, String, String)>,
-    body: auth::SignedJSON<FunctionCall>,
-) -> Result<web::Json<FunctionResponse>, HTTPError> {
-    let (collection_id, record_id, function) = path.into_inner();
-
-    let auth = body.auth.map(indexer::AuthUser::from);
-    let raft = Arc::clone(&state.raft);
-
-    let record_id = raft
-        .call(
-            collection_id.clone(),
-            function,
-            record_id,
-            body.data.args,
-            auth.as_ref(),
-        )
-        .await?;
-
-    let record = state.db.get(collection_id, record_id).await?;
-
-    Ok(web::Json(FunctionResponse {
-        data: match record {
-            Some(record) => indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
-            None => serde_json::Value::Null,
-        },
-    }))
-}
-
-#[get("/v0/health")]
-async fn health() -> impl Responder {
-    HttpResponse::Ok()
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StatusResponse {
-    status: String,
-    root: String,
-    peers: usize,
-    leader: usize,
-}
-
-#[get("/v0/status")]
-async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
-    Ok(web::Json(StatusResponse {
-        status: "OK".to_string(),
-        root: hex::encode(state.db.rollup.root()?),
-        peers: 23,
-        leader: 12,
-    }))
-}
+type Result<T> = std::result::Result<T, AppError>;
 
 #[tokio::main]
-async fn main() -> Result<(), AppError> {
+async fn main() -> Result<()> {
     let config = Config::parse();
-    #[allow(clippy::unwrap_used)]
-    let indexer_dir = get_indexer_dir(&config.root_dir).unwrap();
 
+    if let Some(Command::GenerateKey) = config.command {
+        let (keypair, bytes) = generate_key();
+        #[allow(clippy::unwrap_used)]
+        let key = ed25519::SecretKey::from_bytes(&bytes).unwrap();
+        let public: ed25519::PublicKey = (&key).into();
+        #[allow(clippy::unwrap_used)]
+        let local_peer_id = PeerId::from(keypair.public());
+        println!(" ");
+        println!("  Public Key: 0x{}", hex::encode(public.to_bytes()));
+        println!("  Secret Key: 0x{}", hex::encode(bytes));
+        println!("  PeerId: {}", local_peer_id);
+        println!(" ");
+        return Ok(());
+    }
+
+    // Setup Sentry logging
     let _guard;
     if let Some(dsn) = config.sentry_dsn {
         _guard = sentry::init((
@@ -578,67 +124,384 @@ async fn main() -> Result<(), AppError> {
         slog_o!("version" => env!("CARGO_PKG_VERSION")),
     );
 
+    // Indexer is responsible for indexing db data
+    #[allow(clippy::unwrap_used)]
+    let indexer_dir = get_indexer_dir(&config.root_dir).unwrap();
     let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).map_err(IndexerError::from)?);
 
-    let db = Arc::new(Db::new(Arc::clone(&indexer), logger.clone()));
+    // Database combines various components into a single interface
+    // that is thread safe
+    let db: Arc<Db> = Arc::new(Db::new(
+        Arc::clone(&indexer),
+        logger.clone(),
+        DbConfig::default(),
+    ));
 
-    let (raft, commit_interval_handle) = Raft::new(Arc::clone(&db), logger.clone());
+    // Get the keypair (provided or auto-generated)
+    // TODO: store keypair if auto-generated
+    let keypair = match config.secret_key {
+        Some(key) => {
+            let key = match key.strip_prefix("0x") {
+                Some(key) => key,
+                None => &key,
+            };
+            let key_bytes = hex::decode(key)?;
+            identity::Keypair::ed25519_from_bytes(key_bytes)?
+        }
+        None => {
+            #[allow(clippy::expect_used)]
+            let key_path = get_key_path(&config.root_dir).expect("failed to get key path");
+            if key_path.exists() {
+                let mut file = File::open(key_path)?;
+                let mut content = String::new();
+                file.read_to_string(&mut content)?;
+                let key_bytes = hex::decode(content.trim())?;
+                identity::Keypair::ed25519_from_bytes(key_bytes)?
+            } else {
+                warn!(logger, "Automatically generating keypair, keep this secret"; "path" => key_path.to_str());
+                if let Some(dir) = key_path.parent() {
+                    if !dir.exists() {
+                        // Create the directory and all its parent directories if they do not exist
+                        create_dir_all(dir)?;
+                    }
+                }
+                let (keypair, bytes) = generate_key();
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .open(&key_path)?;
+                file.write_all(hex::encode(bytes).as_bytes())?;
+                keypair
+            }
+        }
+    };
+    let local_peer_id = PeerId::from(keypair.public());
 
-    let raft = Arc::new(raft);
-    let server_raft = Arc::clone(&raft);
-    let server_logger = logger.clone();
+    // Log the peer id
+    info!(
+        logger,
+        "Peer starting";
+        "peer_id" => local_peer_id.to_string()
+    );
 
-    let server = HttpServer::new(move || {
-        let cors = Cors::permissive();
+    // Interface for sending messages to peers, runs in its own thread
+    // and can be polled for events
+    let network_laddr: Vec<Multiaddr> = config
+        .network_laddr
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(|p| Ok(p.to_owned().parse()?))
+        .collect::<Result<Vec<_>>>()?;
 
-        App::new()
-            .app_data(web::Data::new(RouteState {
-                db: Arc::clone(&db),
-                indexer: Arc::clone(&indexer),
-                raft: Arc::clone(&server_raft),
-                whitelist: config.whitelist.clone(),
-            }))
-            .wrap(SlogMiddleware::new(server_logger.clone()))
-            .wrap(cors)
-            .service(root)
-            .service(health)
-            .service(status)
-            .service(
-                web::scope("/v0/collections")
-                    .service(get_record)
-                    .service(get_records)
-                    .service(post_record)
-                    .service(call_function),
-            )
-    })
-    .bind(config.rpc_laddr)?
-    .run();
+    let peers_addr: Vec<Multiaddr> = config
+        .dial_addr
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(|p| Ok(p.to_owned().parse()?))
+        .collect::<Result<Vec<_>>>()?;
 
-    let raft = Arc::clone(&raft);
-    let logger = logger.clone();
+    let mut solid_peers = config
+        .peers
+        .iter()
+        .filter(|p| !p.is_empty())
+        .map(to_peer_id)
+        .collect::<Result<Vec<solid::peer::PeerId>>>()?;
 
-    select!(
+    let mut network = Network::new(
+        &keypair,
+        network_laddr.into_iter(),
+        peers_addr.into_iter(),
+        logger.clone(),
+    )?;
+
+    let local_peer_solid = solid::peer::PeerId(local_peer_id.to_bytes());
+    solid_peers.push(local_peer_solid.clone());
+    solid_peers.sort_unstable();
+    solid_peers.dedup();
+
+    // TODO: load solid state from disk state
+    let mut solid = match db.get_manifest().await? {
+        Some(manifest) => solid::Solid::with_last_confirmed(
+            local_peer_solid,
+            manifest,
+            SolidConfig {
+                max_proposal_history: config.block_cache_count,
+                ..SolidConfig::default()
+            },
+        ),
+        None => solid::Solid::genesis(
+            local_peer_solid,
+            solid_peers.clone(),
+            SolidConfig {
+                max_proposal_history: config.block_cache_count,
+                ..SolidConfig::default()
+            },
+        ),
+    };
+
+    // Run the RPC server
+    let server = create_rpc_server(
+        config.rpc_laddr,
+        Arc::clone(&indexer),
+        Arc::clone(&db),
+        Arc::new(config.whitelist.clone()),
+        logger.clone(),
+    )?;
+
+    let solid_handle = solid.run();
+
+    let logger_clone = logger.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let shutdown_clone = Arc::clone(&shutdown);
+
+    let main_handle = tokio::spawn(async move {
+        let logger = logger_clone;
+        let shutdown = shutdown_clone;
+        let mut restore_height = solid.height();
+        while !shutdown.load(Ordering::Relaxed) {
+            tokio::select! {
+                // Db only produces CallTxn events, that should be propogated
+                // to other nodes
+                Some(txn) = db.next() => {
+                    network.send_all(NetworkEvent::Txn { txn }).await;
+                },
+
+                Some((network_peer_id, event)) = network.next() => {
+                    match event {
+                        NetworkEvent::Ping => {
+                            info!(logger, "Ping received");
+                        },
+                        NetworkEvent::OutOfSync { peer_id, height } => {
+                            info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
+                            if height + config.block_cache_count < solid.height() {
+                                let snapshot = match db.snapshot() {
+                                    Ok(snapshot) => snapshot,
+                                    Err(err) => {
+                                        error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                        continue;
+                                    }
+                                };
+                                network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
+                            } else {
+                                for proposal in solid.confirmed_proposals_from(height) {
+                                    network.send(
+                                        &network_peer_id,
+                                        NetworkEvent::Proposal {
+                                            manifest: proposal.clone(),
+                                        },
+                                    )
+                                    .await;
+                                }
+                            }
+                        }
+
+                        NetworkEvent::SnapshotRequest{ peer_id, ..  } => {
+                            let snapshot = match db.snapshot() {
+                                Ok(snapshot) => snapshot,
+                                Err(err) => {
+                                    error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                    continue;
+                                }
+                            };
+                            network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
+                        }
+
+                        NetworkEvent::Snapshot { snapshot } => {
+                            // Check if we have already advanced since our request
+                            if solid.height() > restore_height  {
+                                debug!(logger, "Skipping restore, already advanced"; "restore_height" => restore_height, "current_height" => solid.height());
+                                continue;
+                            }
+
+                            info!(logger, "Restoring db from snapshot");
+
+                            // We should panic if we are unable to restore
+                            #[allow(clippy::unwrap_used)]
+                            db.restore(&snapshot).unwrap();
+
+                            // Reset solid with the new proposal state from the snapshot
+                            #[allow(clippy::unwrap_used)]
+                            let manifest = db.get_manifest().await.unwrap().unwrap();
+                            solid.reset(manifest);
+
+                            info!(logger, "Restore db from snapshot complete");
+                        }
+
+                        NetworkEvent::Accept { accept } => {
+                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                            solid.receive_accept(&accept, &network_peer_id.into());
+                        }
+
+                        NetworkEvent::Proposal { manifest } => {
+                            info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
+                            solid.receive_proposal(manifest);
+                        }
+
+                        NetworkEvent::Txn { txn } => {
+                            info!(logger, "Received txn"; "collection" => &txn.collection_id);
+                            match db.add_txn(txn).await {
+                                Ok(_) => (),
+                                Err(err) => {
+                                    error!(logger, "Error adding txn"; "err" => format!("{:?}", err));
+                                }
+                            }
+                        }
+                    }
+                },
+
+                Some(event) = solid.next() => {
+                    match event {
+                        // Node should send accept for an active proposal
+                        // to another peer
+                        SolidEvent::Accept { accept } => {
+                            info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                            // let leader = &accept.leader_id;
+
+                            network.send(
+                                &NetworkPeerId::from(accept.leader_id.clone()),
+                                NetworkEvent::Accept { accept },
+                            )
+                            .await;
+                        }
+
+                        // Node should create and send a new proposal
+                        SolidEvent::Propose {
+                            last_proposal_hash,
+                            height,
+                            skips,
+                        } => {
+                            // Get changes from the pending changes cache, if we have an error
+                            // skip being the leader and just continue
+                            let txns = match db.propose_txns(height) {
+                                Ok(txns) => txns,
+                                Err(err) => {
+                                    error!(logger, "Error getting pending changes"; "err" => format!("{:?}", err));
+                                    continue;
+                                }
+                            };
+
+                            // Simulate delay
+                            tokio::time::sleep(Duration::from_millis(300)).await;
+
+                            // Create the proposl manfiest
+                            let manifest = ProposalManifest {
+                                last_proposal_hash,
+                                skips,
+                                height,
+                                leader_id: NetworkPeerId(local_peer_id).into(),
+                                txns,
+
+                                // TODO: get peers from start
+                                peers: solid_peers.clone(),
+                            };
+                            let proposal_hash = manifest.hash();
+
+                            info!(logger, "Propose"; "leader_id" => manifest.leader_id.prefix(), "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips);
+
+                            // Add proposal to own register, this will trigger an accept
+                            solid.receive_proposal(manifest.clone());
+
+                            // // Send proposal to all other nodes
+                            network.send_all(
+                                NetworkEvent::Proposal { manifest: manifest.clone() }
+                            )
+                            .await;
+                        }
+
+                        // Commit a confirmed proposal changes
+                        SolidEvent::Commit { manifest } => {
+                            info!(logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
+
+                            // We should panic here, because there is really no way to recover from
+                            // an error once a value is committed
+                            #[allow(clippy::expect_used)]
+                            db.commit(manifest).await.expect("Error committing proposal");
+                        }
+
+                        SolidEvent::OutOfSync {
+                            height,
+                            max_seen_height,
+                            accepts_sent,
+                        } => {
+                            info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
+                            restore_height = height;
+                            if solid.height() == 0 {
+                                network.send_all(NetworkEvent::SnapshotRequest { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
+                            } else {
+                                network.send_all(NetworkEvent::OutOfSync { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
+                            }
+                        }
+
+                        SolidEvent::OutOfDate {
+                            local_height,
+                            proposal_height,
+                            proposal_hash,
+                            peer_id,
+                        } => {
+                            info!(logger, "Out of date proposal"; "local_height" => local_height, "proposal_height" => proposal_height, "proposal_hash" => proposal_hash.to_string(), "from" => peer_id.prefix());
+                        }
+
+                        SolidEvent::DuplicateProposal { proposal_hash } => {
+                            info!(logger, "Duplicate proposal"; "hash" => proposal_hash.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Check for deadlocks
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(10));
+        let deadlocks = parking_lot::deadlock::check_deadlock();
+        if deadlocks.is_empty() {
+            continue;
+        }
+
+        println!("{} deadlocks detected", deadlocks.len());
+        for (i, threads) in deadlocks.iter().enumerate() {
+            println!("Deadlock #{}", i);
+            for t in threads {
+                println!("Thread Id {:#?}", t.thread_id());
+                println!("{:#?}", t.backtrace());
+            }
+        }
+    });
+
+    tokio::select!(
         res = server => { // TODO: check if err
-            // res
             error!(logger, "HTTP server exited unexpectedly {res:#?}");
             res?
         }
-        res = commit_interval_handle => {
-            error!(logger, "Commit interval exited unexpectedly: {res:#?}");
-            res??
+        res = solid_handle => {
+            error!(logger, "Solid handle exited unexpectedly {res:#?}");
+            res?
+        },
+        res = main_handle => {
+            error!(logger, "Main handle exited unexpectedly {res:#?}");
+            res?
         },
         _ = tokio::signal::ctrl_c() => {
-            match raft.clone().shutdown().await {
-                Ok(_) => info!(logger, "Raft shutdown successfully"),
-                Err(e) => error!(logger, "Error shutting down raft"; "error" => ?e),
-            }
+            shutdown.store(true, Ordering::Relaxed);
         },
     );
 
     Ok(())
 }
 
+fn get_key_path(dir: &str) -> Option<PathBuf> {
+    let mut path_buf = get_base_dir(dir)?;
+    path_buf.push("config/secret_key");
+    Some(path_buf)
+}
+
 fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
+    let mut path_buf = get_base_dir(dir)?;
+    path_buf.push("data/indexer.db");
+    Some(path_buf)
+}
+
+fn get_base_dir(dir: &str) -> Option<PathBuf> {
     let mut path_buf = PathBuf::new();
     if dir.starts_with("~/") {
         if let Some(home_dir) = dirs::home_dir() {
@@ -648,31 +511,18 @@ fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
     } else {
         path_buf.push(dir);
     }
-    path_buf.push("data/indexer.db");
     Some(path_buf)
 }
 
-fn validate_whitelist(
-    whitelist: &Option<Vec<String>>,
-    auth: &Option<AuthUser>,
-) -> Result<(), HTTPError> {
-    // Check whitelist
-    if let Some(whitelist) = whitelist {
-        if let Some(auth_user) = auth {
-            // Convert the key to hex for easier comparison
-            let pk = auth_user.public_key().to_hex().unwrap_or("".to_string());
-            if pk.is_empty() || !whitelist.contains(&pk) {
-                return Err(HTTPError::new(
-                    ReasonCode::Unauthorized,
-                    Some(Box::new(AppError::Whitelist)),
-                ));
-            }
-        } else {
-            return Err(HTTPError::new(
-                ReasonCode::Unauthorized,
-                Some(Box::new(AppError::Whitelist)),
-            ));
-        }
-    }
-    Ok(())
+fn to_peer_id(base58_string: &String) -> Result<solid::peer::PeerId> {
+    let decoded = bs58::decode(base58_string).into_vec()?;
+    Ok(solid::peer::PeerId::new(decoded))
+}
+
+fn generate_key() -> (identity::Keypair, [u8; 32]) {
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    #[allow(clippy::unwrap_used)]
+    let keypair = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
+    (keypair, bytes)
 }

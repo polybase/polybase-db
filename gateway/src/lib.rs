@@ -1284,6 +1284,8 @@ mod tests {
             .await
             .unwrap();
 
+        indexer.commit().await.unwrap();
+
         let user_collection = indexer.collection("ns/User".to_string()).await.unwrap();
         user_collection
             .set(
@@ -1296,6 +1298,8 @@ mod tests {
             )
             .await
             .unwrap();
+
+        indexer.commit().await.unwrap();
 
         let gateway = initialize(logger());
         let changes = gateway

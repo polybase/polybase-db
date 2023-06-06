@@ -1,20 +1,23 @@
-use std::sync::Arc;
-
+use crate::hash;
+use crate::mempool::Mempool;
+use crate::rollup::Rollup;
+use crate::txn::{self, CallTxn};
 use gateway::{Change, Gateway};
 use indexer::collection::validate_collection_record;
 use indexer::{validate_schema_change, Indexer, RecordRoot};
+use serde::{Deserialize, Serialize};
+use solid::proposal::{self};
+use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio::sync::Mutex as AsyncMutex;
 
-use crate::hash;
-use crate::pending::{PendingQueue, PendingQueueError};
-use crate::rollup::Rollup;
-
-pub type Result<T> = std::result::Result<T, DbError>;
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum DbError {
-    #[error("existing change for this record exists")]
-    RecordChangeExists,
-
+pub enum Error {
+    // #[error("existing change for this record exists")]
+    // RecordChangeExists,
     #[error("collection not found")]
     CollectionNotFound,
 
@@ -28,225 +31,151 @@ pub enum DbError {
     CollectionCollectionRecordUpdate,
 
     #[error(transparent)]
-    GatewayError(#[from] gateway::GatewayError),
+    Gateway(#[from] gateway::GatewayError),
 
     #[error("indexer error")]
-    IndexerError(#[from] indexer::IndexerError),
+    Indexer(#[from] indexer::IndexerError),
+
+    #[error("collection error")]
+    Collection(#[from] indexer::collection::CollectionError),
 
     #[error("serialize error")]
-    SerializerError(#[from] bincode::Error),
+    Serializer(#[from] bincode::Error),
 
     #[error("serde_json error")]
-    SerdeJsonError(#[from] serde_json::Error),
+    SerdeJson(#[from] serde_json::Error),
 
-    #[error("rollup error")]
-    RollupError,
+    #[error("call txn error")]
+    CallTxn(#[from] txn::CallTxnError),
+
+    // #[error("rollup error")]
+    // RollupError,
+    #[error("tokio send error")]
+    TokioSend(#[from] mpsc::error::SendError<CallTxn>),
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DbSnapshot {
+    pub index: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct DbConfig {
+    block_txns_count: usize,
+}
+
+impl Default for DbConfig {
+    fn default() -> Self {
+        DbConfig {
+            block_txns_count: 100,
+        }
+    }
 }
 
 pub struct Db {
-    pending: PendingQueue<[u8; 32], Change>,
+    mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
     pub rollup: Rollup,
     pub indexer: Arc<Indexer>,
-    logger: slog::Logger,
+    // logger: slog::Logger,
+    sender: AsyncMutex<mpsc::Sender<CallTxn>>,
+    receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
+    config: DbConfig,
 }
 
 impl Db {
-    pub fn new(indexer: Arc<Indexer>, logger: slog::Logger) -> Self {
+    pub fn new(indexer: Arc<Indexer>, logger: slog::Logger, config: DbConfig) -> Self {
+        let (sender, receiver) = mpsc::channel::<CallTxn>(100);
+
         Self {
-            pending: PendingQueue::new(),
+            mempool: Mempool::new(),
             rollup: Rollup::new(),
             gateway: gateway::initialize(logger.clone()),
             indexer,
-            logger,
+            // logger,
+            sender: AsyncMutex::new(sender),
+            receiver: AsyncMutex::new(receiver),
+            config,
         }
     }
 
-    pub fn last_record_id(&self) -> Option<[u8; 32]> {
-        self.pending.back_key()
+    pub async fn next(&self) -> Option<CallTxn> {
+        let mut receiver = self.receiver.lock().await;
+        receiver.recv().await
     }
 
+    /// Gets a record from the database
     pub async fn get(
         &self,
         collection_id: String,
         record_id: String,
     ) -> Result<Option<RecordRoot>> {
-        let collection = match self.indexer.collection(collection_id.clone()).await {
-            Ok(collection) => collection,
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        };
+        let collection = self.indexer.collection(collection_id.clone()).await?;
 
         let record = collection.get_without_auth_check(record_id).await;
-        record.map_err(|e| DbError::IndexerError(e.into()))
+        record.map_err(|e| Error::Indexer(e.into()))
     }
 
-    pub async fn commit(&self, commit_until_key: [u8; 32]) {
-        // TODO: If there is a commit to collection metadata, we should ignore other changes?
+    /// Applies a call txn
+    pub async fn call(&self, txn: CallTxn) -> Result<String> {
+        let (record_id, changes) = self.validate_call(&txn).await?;
+        let hash = txn.hash()?;
 
-        // Cachce collections
-        while let Some(value) = self.pending.pop() {
-            let (key, change) = value;
+        // Send txn event
+        self.sender.lock().await.send(txn.clone()).await?;
 
-            // Insert into indexer
-            let res = match change {
-                Change::Create {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(key, collection_id, record_id, record).await,
-                Change::Update {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(key, collection_id, record_id, record).await,
-                Change::Delete {
-                    record_id,
-                    collection_id,
-                } => self.delete(key, collection_id, record_id).await,
-            };
+        // Wait for txn to be committed
+        self.mempool.add_wait(hash, txn, changes).await;
 
-            // TODO: is the best way to handle an error in commit?
-            match res {
-                Ok(_) => {}
-                Err(e) => warn!(self.logger, "error committing change: {:?}", e),
-            }
-
-            // Commit up until this point
-            if key == commit_until_key {
-                break;
-            }
-        }
-
-        // match self.rollup.commit() {
-        //     Ok(_) => {}
-        //     Err(e) => warn!(self.logger, "error committing rollup: {:?}", e),
-        // }
+        Ok(record_id)
     }
 
-    async fn delete(&self, _: [u8; 32], collection_id: String, record_id: String) -> Result<()> {
-        let collection = match self.indexer.collection(collection_id.clone()).await {
-            Ok(collection) => collection,
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        };
+    pub async fn add_txn(&self, txn: CallTxn) -> Result<String> {
+        let (record_id, changes) = self.validate_call(&txn).await?;
+        let hash = txn.hash()?;
 
-        // Update the indexer
-        match collection.delete(record_id.clone()).await {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        }
+        // Send txn event
+        self.sender.lock().await.send(txn.clone()).await?;
 
-        Ok(())
+        // Wait for txn to be committed
+        self.mempool.add(hash, txn, changes);
 
-        // Remove from rollup
-        // match self.rollup.delete(key) {
-        //     Ok(_) => Ok(()),
-        //     Err(_) => Err(DbError::RollupError),
-        // }
+        Ok(record_id)
     }
 
-    async fn set(
-        &self,
-        _: [u8; 32],
-        collection_id: String,
-        record_id: String,
-        record: RecordRoot,
-    ) -> Result<()> {
-        // Get the indexer collection instance
-        let collection = match self.indexer.collection(collection_id.clone()).await {
-            Ok(collection) => collection,
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        };
-
-        // Update the indexer
-        match collection.set(record_id.clone(), &record).await {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        }
-
-        Ok(())
-
-        // Add to the rollup
-        // match self.rollup.insert(key, &record) {
-        //     Ok(_) => Ok(()),
-        //     Err(_) => Err(DbError::RollupError),
-        // }
-    }
-
-    pub async fn validate_call(
-        &self,
-        collection_id: String,
-        function_name: &str,
-        record_id: String,
-        args: Vec<serde_json::Value>,
-        auth: Option<&indexer::AuthUser>,
-    ) -> Result<()> {
-        let indexer = Arc::clone(&self.indexer);
-
-        // Get changes
-        let changes = self
-            .gateway
-            .call(
-                &indexer,
-                collection_id,
-                function_name,
-                record_id,
-                args,
-                auth,
-            )
-            .await?;
-
-        for change in changes {
-            let (collection_id, record_id) = change.get_path();
-            let k = get_key(collection_id, record_id);
-
-            if self.pending.has(&k) {
-                return Err(DbError::RecordChangeExists);
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn call(
-        &self,
-        collection_id: String,
-        function_name: &str,
-        record_id: String,
-        args: Vec<serde_json::Value>,
-        auth: Option<&indexer::AuthUser>,
-    ) -> Result<String> {
+    async fn validate_call(&self, txn: &CallTxn) -> Result<(String, Vec<[u8; 32]>)> {
+        let CallTxn {
+            collection_id,
+            function_name,
+            record_id,
+            args,
+            auth,
+        } = txn;
         let indexer = Arc::clone(&self.indexer);
         let mut output_record_id = record_id.clone();
+        let mut output_records = HashSet::new();
 
         // Get changes
         let changes = self
             .gateway
             .call(
                 &indexer,
-                collection_id,
+                collection_id.clone(),
                 function_name,
-                record_id,
-                args,
-                auth,
+                record_id.clone(),
+                args.clone(),
+                auth.as_ref(),
             )
             .await?;
 
         // First we cache the result, as it will be committed later
-        for change in changes {
+        for change in changes.iter() {
             let (collection_id, record_id) = change.get_path();
-            let k = get_key(collection_id, record_id);
+            let key = get_key(collection_id, record_id);
+            output_records.insert(key);
 
-            // Get the ID of created record
+            // If we're creating a record then we need to get the record_id from
+            // the output from the contstructor call.
             if let Change::Create {
                 collection_id: _,
                 record_id,
@@ -266,23 +195,171 @@ impl Db {
             {
                 if collection_id == "Collection" {
                     if record_id == "Collection" {
-                        return Err(DbError::CollectionCollectionRecordUpdate);
+                        return Err(Error::CollectionCollectionRecordUpdate);
                     }
 
-                    self.validate_schema_update(collection_id, record_id, record, auth)
+                    self.validate_schema_update(collection_id, record_id, record, auth.as_ref())
                         .await?;
-                }
-            }
-
-            match self.pending.insert(k, change) {
-                Ok(_) => {}
-                Err(PendingQueueError::KeyExists) => {
-                    return Err(DbError::RecordChangeExists);
                 }
             }
         }
 
-        Ok(output_record_id)
+        Ok((output_record_id, output_records.into_iter().collect()))
+    }
+
+    pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
+        // TODO: check txns do not affect the same record
+        self.mempool
+            .lease(height, self.config.block_txns_count)
+            .into_iter()
+            .map(|(id, call_txn)| {
+                Ok(solid::txn::Txn {
+                    // TODO: remove unwrap
+                    id: id.to_vec(),
+                    data: call_txn.serialize()?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()
+    }
+
+    pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
+        let txns = &manifest.txns;
+        let mut keys = vec![];
+        for txn in txns.iter() {
+            let call_txn = CallTxn::deserialize(&txn.data)?;
+            let hash = call_txn.hash()?;
+            self.commit_txn(call_txn).await?;
+            keys.push(hash);
+        }
+
+        let height = manifest.height;
+
+        // Update the txn manifest in rocksdb
+        self.set_manifest(manifest).await?;
+
+        // Commit all txns
+        self.indexer.commit().await?;
+
+        // Commit changes in mempool (releasing unused txns and removing used ones). This will
+        // also release all requests that were waiting for these txns to be committed.
+        self.mempool.commit(height, keys.iter().collect());
+
+        Ok(())
+    }
+
+    pub async fn commit_txn(&self, txn: CallTxn) -> Result<()> {
+        let CallTxn {
+            collection_id,
+            function_name,
+            record_id,
+            args,
+            auth,
+        } = &txn;
+        let indexer = Arc::clone(&self.indexer);
+        // let output_record_id = record_id.clone();
+
+        // Get changes
+        let changes = self
+            .gateway
+            .call(
+                &indexer,
+                collection_id.clone(),
+                function_name,
+                record_id.clone(),
+                args.clone(),
+                auth.as_ref(),
+            )
+            .await?;
+
+        for change in changes {
+            let (collection_id, record_id) = change.get_path();
+            let key = get_key(collection_id, record_id);
+
+            // Insert into indexer
+            match change {
+                Change::Create {
+                    record,
+                    collection_id,
+                    record_id,
+                } => self.set(key, collection_id, record_id, record).await?,
+                Change::Update {
+                    record,
+                    collection_id,
+                    record_id,
+                } => self.set(key, collection_id, record_id, record).await?,
+                Change::Delete {
+                    record_id,
+                    collection_id,
+                } => self.delete(key, collection_id, record_id).await?,
+            };
+        }
+
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> Result<Vec<u8>> {
+        let index = self.indexer.snapshot()?;
+        let snapshot = DbSnapshot { index };
+        let data = bincode::serialize(&snapshot)?;
+        Ok(data)
+    }
+
+    pub fn restore(&self, data: &[u8]) -> Result<()> {
+        let snapshot: DbSnapshot = bincode::deserialize(data)?;
+        self.indexer.restore(snapshot.index)?;
+        Ok(())
+    }
+
+    pub async fn set_manifest(&self, manifest: proposal::ProposalManifest) -> Result<()> {
+        let b = bincode::serialize(&manifest)?;
+        let value = indexer::RecordValue::Bytes(b);
+        let mut record = indexer::RecordRoot::new();
+        record.insert("manifest".to_string(), value);
+        Ok(self
+            .indexer
+            .set_system_key("manifest".to_string(), &record)
+            .await?)
+    }
+
+    pub async fn get_manifest(&self) -> Result<Option<proposal::ProposalManifest>> {
+        let record = self.indexer.get_system_key("manifest".to_string()).await?;
+        let value = match record.and_then(|mut r| r.remove("manifest")) {
+            Some(indexer::RecordValue::Bytes(b)) => b,
+            _ => return Ok(None),
+        };
+        let manifest: proposal::ProposalManifest = bincode::deserialize(&value)?;
+        Ok(Some(manifest))
+    }
+
+    pub async fn delete(
+        &self,
+        _: [u8; 32],
+        collection_id: String,
+        record_id: String,
+    ) -> Result<()> {
+        // Get the indexer collection instance
+        let collection = self.indexer.collection(collection_id.clone()).await?;
+
+        // Update the indexer
+        collection.delete(record_id.clone()).await?;
+
+        Ok(())
+    }
+
+    async fn set(
+        &self,
+        _: [u8; 32],
+        collection_id: String,
+        record_id: String,
+        record: RecordRoot,
+    ) -> Result<()> {
+        // Get the indexer collection instance
+        let collection = self.indexer.collection(collection_id.clone()).await?;
+
+        // Update the indexer
+        collection.set(record_id.clone(), &record).await?;
+
+        Ok(())
     }
 
     async fn validate_schema_update(
@@ -292,32 +369,25 @@ impl Db {
         record: &RecordRoot,
         auth: Option<&indexer::AuthUser>,
     ) -> Result<()> {
-        let collection = match self.indexer.collection(collection_id.to_owned()).await {
-            Ok(collection) => collection,
-            Err(e) => {
-                return Err(DbError::IndexerError(e.into()));
-            }
-        };
+        let collection = self.indexer.collection(collection_id.to_owned()).await?;
 
         let old_record = collection
             .get(record_id.to_owned(), auth)
             .await
             .map_err(indexer::IndexerError::from)?
-            .ok_or(DbError::CollectionNotFound)?;
+            .ok_or(Error::CollectionNotFound)?;
 
-        let old_ast = old_record
-            .get("ast")
-            .ok_or(DbError::CollectionASTNotFound)?;
+        let old_ast = old_record.get("ast").ok_or(Error::CollectionASTNotFound)?;
 
         let indexer::RecordValue::String(old_ast) = old_ast
             else {
-                return Err(DbError::CollectionASTInvalid("Collection AST in old record is not a string".into()));
+                return Err(Error::CollectionASTInvalid("Collection AST in old record is not a string".into()));
             };
 
         let indexer::RecordValue::String(new_ast) = record
                 .get("ast")
-                .ok_or(DbError::CollectionASTNotFound)? else {
-            return Err(DbError::CollectionASTInvalid("Collection AST in new record is not a string".into()));
+                .ok_or(Error::CollectionASTNotFound)? else {
+            return Err(Error::CollectionASTInvalid("Collection AST in new record is not a string".into()));
         };
 
         validate_schema_change(

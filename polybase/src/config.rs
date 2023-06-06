@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 
 /// Polybase is a p2p decentralized database
 #[derive(Parser, Debug)]
@@ -7,6 +7,9 @@ use clap::{Parser, ValueEnum};
 #[command(author, version, about = "The p2p decentralized database", long_about = None)]
 #[command(propagate_version = true)]
 pub struct Config {
+    #[command(subcommand)]
+    pub command: Option<Command>,
+
     /// ID of the node
     #[arg(long, env = "ID")]
     pub id: Option<u64>,
@@ -27,13 +30,47 @@ pub struct Config {
     #[arg(long, env = "RPC_LADDR", default_value = "0.0.0.0:8080")]
     pub rpc_laddr: String,
 
-    /// RAFT listen address
-    #[arg(long, env = "RAFT_LADDR", default_value = "0.0.0.0:5001")]
-    pub raft_laddr: String,
+    /// Secret key encoded as hex
+    #[arg(long, env = "SECRET_KEY")]
+    pub secret_key: Option<String>,
 
-    /// RAFT peer addresses
-    #[arg(long, env = "RAFT_PEERS", default_value = "")]
-    pub raft_peers: String,
+    /// Peer listen address
+    #[arg(
+        long,
+        env = "NETWORK_LADDR",
+        value_parser,
+        value_delimiter = ',',
+        default_value = "/ip4/0.0.0.0/tcp/0"
+    )]
+    pub network_laddr: Vec<String>,
+
+    /// Peers to dial
+    #[arg(
+        long,
+        env = "DIAL_ADDR",
+        default_value = "",
+        value_parser,
+        value_delimiter = ','
+    )]
+    pub dial_addr: Vec<String>,
+
+    /// Validator peers
+    #[arg(
+        long,
+        env = "PEERS",
+        default_value = "",
+        value_parser,
+        value_delimiter = ','
+    )]
+    pub peers: Vec<String>,
+
+    // Maximum history of blocks to keep in memory
+    #[arg(long, env = "BLOCK_CACHE_SIZE", default_value = "1024")]
+    pub block_cache_count: usize,
+
+    /// Maximum number of txns to include in a block
+    #[arg(long, env = "BLOCK_TXN_COUNT", default_value = "1024")]
+    pub block_txns_count: usize,
 
     /// Sentry DSN
     #[arg(long, env = "SENTRY_DSN", default_value = "")]
@@ -42,6 +79,15 @@ pub struct Config {
     /// Public key whitelist
     #[arg(long, env = "WHITELIST", value_parser, value_delimiter = ',')]
     pub whitelist: Option<Vec<String>>,
+}
+
+#[derive(Subcommand, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
+#[clap(rename_all = "SNAKE_CASE")]
+pub enum Command {
+    /// Start the server
+    Start,
+    /// Generate a new secret key
+    GenerateKey,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
