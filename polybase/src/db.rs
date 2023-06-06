@@ -104,6 +104,12 @@ impl Db {
         receiver.recv().await
     }
 
+    pub async fn is_empty(&self) -> Result<bool> {
+        let collection = self.indexer.collection("Collection".to_string()).await?;
+        let meta = collection.get_metadata().await?;
+        Ok(meta.is_none())
+    }
+
     /// Gets a record from the database
     pub async fn get(
         &self,
