@@ -4931,6 +4931,7 @@ name = "solid"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "bs58 0.5.0",
  "futures",
  "futures-timer",
  "hex",

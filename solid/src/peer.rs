@@ -27,7 +27,7 @@ impl PeerId {
     pub fn prefix(&self) -> String {
         let string = self.to_string();
         if string.len() > 4 {
-            string[..4].to_string()
+            string[string.len() - 4..].to_string()
         } else {
             string
         }
@@ -36,7 +36,7 @@ impl PeerId {
 
 impl Display for PeerId {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(&self.0))
+        write!(f, "{}", bs58::encode(&self.0).into_string())
     }
 }
 
