@@ -8,5 +8,4 @@ data:
     SET_INDEX=${HOSTNAME##*-}
     echo "Starting initializing for pod $SET_INDEX"
     mkdir -p /polybase/config/
-    ls /mnt/secret_keys/
     cp /mnt/secret_keys/secret-key-${SET_INDEX} /polybase/config/secret_key
