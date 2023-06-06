@@ -60,27 +60,21 @@ spec:
       {{- if .Values.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- end }}
-      # initContainers:
-      # - name: init-set
-      #   image: alpine:latest
-      #   command:
-      #   - /mnt/scripts/run.sh
-      #   volumeMounts:
-      #   - name: data
-      #     mountPath: /polybase
-      #   - name: genesis
-      #     mountPath: /mnt/tendermint_files/genesis.json
-      #     subPath: genesis.json
-      #   {{- range $i := until (.Values.replicaCount | int) }}
-      #   - name: node-key{{$i}}
-      #     mountPath: /mnt/tendermint_files/node_key{{$i}}.json
-      #     subPath: node_key{{$i}}.json
-      #   - name: priv-validator-key{{$i}}
-      #     mountPath: /mnt/tendermint_files/priv_validator_key{{$i}}.json
-      #     subPath: priv_validator_key{{$i}}.json
-      #   {{- end }}
-      #   - name: scripts-vol
-      #     mountPath: /mnt/scripts
+      initContainers:
+      - name: init-set
+        image: alpine:latest
+        command:
+        - /mnt/scripts/run.sh
+        volumeMounts:
+        - name: data
+          mountPath: /polybase
+        {{- range $i := until (.Values.replicaCount | int) }}
+        - name: secret-key-{{$i}}
+          mountPath: /mnt/secret-keys/secret-key-{{$i}}
+          subPath: secret-key-{{$i}}
+        {{- end }}
+        - name: scripts-vol
+          mountPath: /mnt/scripts
       # - name: migration
       #   image: {{ include "polybase.main_image" . }}
       #   command:
@@ -189,23 +183,14 @@ spec:
             {{- include "polybase.render" (dict "value" .Values.extraVolumeMounts "context" $) | nindent 12 }}
             {{- end }}
       volumes:
-      # - name: scripts-vol
-      #   configMap:
-      #     name: validator-keys
-      #     defaultMode: 0555
-      #   {{- if .Values.extraVolumes }}
-      #   {{- include "polybase.render" (dict "value" .Values.extraVolumes "context" $) | nindent 8 }}
-      #   {{- end }}
-      # - name: genesis
-      #   secret:
-      #     secretName: genesis
-      # {{- range $i := until (.Values.replicaCount | int) }}
-      # - name: node-key{{$i}}
-      #   secret: 
-      #     secretName: node-key{{$i}}
-      # - name: priv-validator-key{{$i}}
-      #   secret:
-      #     secretName: priv-validator-key{{$i}}
+      - name: scripts-vol
+        configMap:
+          name: secret-keys-setup
+          defaultMode: 0555
+      {{- range $i := until (.Values.replicaCount | int) }}
+      - name: secret-node-key{{$i}}
+        secret: 
+          secretName: secret-key-{{$i}}
       {{- end }}
   {{- if not .Values.persistence.enabled }}
         - name: data
@@ -228,3 +213,4 @@ spec:
             storage: {{ .Values.persistence.size | quote }}
     {{- include "polybase.storageClass" (dict "persistence" .Values.persistence "global" .Values.global) | nindent 8 }}
     {{- end }}
+    
