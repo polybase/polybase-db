@@ -5,6 +5,7 @@ use libp2p::{
         transport::{Boxed, OrTransport},
         upgrade,
     },
+    dns,
     identity::Keypair,
     noise, tcp, yamux, PeerId, Transport,
 };
@@ -23,8 +24,12 @@ pub fn create_transport(keypair: &Keypair) -> BoxedTransport {
         .timeout(std::time::Duration::from_secs(20))
         .boxed();
 
+    #[allow(clippy::expect_used)]
+    let dns_tcp_transport =
+        dns::TokioDnsConfig::system(tcp_transport).expect("Failed to create DNS transport");
+
     let quic_transport = quic::tokio::Transport::new(quic::Config::new(keypair));
-    OrTransport::new(quic_transport, tcp_transport)
+    OrTransport::new(quic_transport, dns_tcp_transport)
         .map(|either_output, _| match either_output {
             Either::Left((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
             Either::Right((peer_id, muxer)) => (peer_id, StreamMuxerBox::new(muxer)),
