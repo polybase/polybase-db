@@ -450,8 +450,12 @@ async fn call_function(
 }
 
 #[get("/v0/health")]
-async fn health() -> impl Responder {
-    HttpResponse::Ok()
+async fn health(state: web::Data<RouteState>) -> impl Responder {
+    if state.db.is_healthy() {
+        HttpResponse::Ok()
+    } else {
+        HttpResponse::ServiceUnavailable()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

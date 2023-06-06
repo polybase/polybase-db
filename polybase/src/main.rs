@@ -440,6 +440,7 @@ async fn main() -> Result<()> {
                         } => {
                             info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
                             restore_height = height;
+                            db.out_of_sync(height);
                             if solid.height() == 0 {
                                 network.send_all(NetworkEvent::SnapshotRequest { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
                             } else {
