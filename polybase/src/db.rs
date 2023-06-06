@@ -5,6 +5,7 @@ use crate::txn::{self, CallTxn};
 use gateway::{Change, Gateway};
 use indexer::collection::validate_collection_record;
 use indexer::{validate_schema_change, Indexer, RecordRoot};
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
 use std::collections::HashSet;
@@ -81,6 +82,7 @@ pub struct Db {
     sender: AsyncMutex<mpsc::Sender<CallTxn>>,
     receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
     config: DbConfig,
+    out_of_sync_height: Mutex<Option<usize>>,
 }
 
 impl Db {
@@ -96,6 +98,7 @@ impl Db {
             sender: AsyncMutex::new(sender),
             receiver: AsyncMutex::new(receiver),
             config,
+            out_of_sync_height: Mutex::new(None),
         }
     }
 
@@ -114,6 +117,16 @@ impl Db {
 
         let record = collection.get_without_auth_check(record_id).await;
         record.map_err(|e| Error::Indexer(e.into()))
+    }
+
+    /// Is the node healthy and up to date
+    pub fn is_healthy(&self) -> bool {
+        self.out_of_sync_height.lock().is_none()
+    }
+
+    /// Set the node as out of sync
+    pub fn out_of_sync(&self, height: usize) {
+        self.out_of_sync_height.lock().replace(height);
     }
 
     /// Applies a call txn
@@ -243,6 +256,14 @@ impl Db {
         // Commit changes in mempool (releasing unused txns and removing used ones). This will
         // also release all requests that were waiting for these txns to be committed.
         self.mempool.commit(height, keys.iter().collect());
+
+        // Reset out of sync height if we have now committed beyond the out of sync height
+        let mut out_of_sync_height_opt = self.out_of_sync_height.lock();
+        if let Some(out_of_sync_height) = *out_of_sync_height_opt {
+            if height + 1 >= out_of_sync_height {
+                *out_of_sync_height_opt = None;
+            }
+        }
 
         Ok(())
     }
