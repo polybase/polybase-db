@@ -7,7 +7,7 @@
     naersk.url = "github:nix-community/naersk";
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay, ... } @ inputs:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }@inputs:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -16,23 +16,20 @@
         };
 
       in
-
       {
         devShells.default = pkgs.mkShell {
-
-          buildInputs = with pkgs; [
-            clang # required for rocksdb
-          ];
-
-          nativeBuildInputs = with pkgs; [
+          packages = with pkgs; [
             rust-bin.stable.latest.default
 
             pkg-config
             openssl
             protobuf
+
+            clang # required for rocksdb
           ];
 
-          LIBCLANG_PATH = pkgs.libclang.lib + "/lib/";
+          LIBCLANG_PATH = "${pkgs.libclang.lib}/lib/";
+          RUST_SRC_PATH = "${pkgs.rust-bin.stable.latest.default}/lib/rustlib/src/rust/library";
         };
       });
 }
