@@ -153,9 +153,13 @@ async fn main() -> Result<()> {
             let key_path = get_key_path(&config.root_dir).expect("failed to get key path");
             if key_path.exists() {
                 let mut file = File::open(key_path)?;
-                let mut content = String::new();
-                file.read_to_string(&mut content)?;
-                let key_bytes = hex::decode(content.trim())?;
+                let mut key = String::new();
+                file.read_to_string(&mut key)?;
+                let key = match key.trim().strip_prefix("0x") {
+                    Some(key) => key,
+                    None => &key,
+                };
+                let key_bytes = hex::decode(key)?;
                 identity::Keypair::ed25519_from_bytes(key_bytes)?
             } else {
                 warn!(logger, "Automatically generating keypair, keep this secret"; "path" => key_path.to_str());
