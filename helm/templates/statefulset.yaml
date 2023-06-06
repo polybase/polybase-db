@@ -167,8 +167,6 @@ spec:
             {{- include "polybase.render" (dict "value" .Values.extraVolumeMounts "context" $) | nindent 12 }}
             {{- end }}
       volumes:
-<<<<<<< HEAD
-=======
       - name: scripts-vol
         configMap:
           name: secret-keys-setup
@@ -177,7 +175,6 @@ spec:
       - name: secret-key-{{$i}}
         secret: 
           secretName: secret-key-{{$i}}
->>>>>>> main
       {{- end }}
   {{- if not .Values.persistence.enabled }}
         - name: data
