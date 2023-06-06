@@ -257,6 +257,7 @@ async fn main() -> Result<()> {
     let main_handle = tokio::spawn(async move {
         let logger = logger_clone;
         let shutdown = shutdown_clone;
+        let mut restore_height = solid.height();
         while !shutdown.load(Ordering::Relaxed) {
             tokio::select! {
                 // Db only produces CallTxn events, that should be propogated
@@ -294,7 +295,7 @@ async fn main() -> Result<()> {
                             }
                         }
 
-                        NetworkEvent::SnapshotRequest{ peer_id, .. } => {
+                        NetworkEvent::SnapshotRequest{ peer_id, ..  } => {
                             let snapshot = match db.snapshot() {
                                 Ok(snapshot) => snapshot,
                                 Err(err) => {
@@ -306,6 +307,12 @@ async fn main() -> Result<()> {
                         }
 
                         NetworkEvent::Snapshot { snapshot } => {
+                            // Check if we have already advanced since our request
+                            if solid.height() > restore_height  {
+                                debug!(logger, "Skipping restore, already advanced"; "restore_height" => restore_height, "current_height" => solid.height());
+                                continue;
+                            }
+
                             info!(logger, "Restoring db from snapshot");
 
                             // We should panic if we are unable to restore
@@ -316,6 +323,8 @@ async fn main() -> Result<()> {
                             #[allow(clippy::unwrap_used)]
                             let manifest = db.get_manifest().await.unwrap().unwrap();
                             solid.reset(manifest);
+
+                            info!(logger, "Restore db from snapshot complete");
                         }
 
                         NetworkEvent::Accept { accept } => {
@@ -415,6 +424,7 @@ async fn main() -> Result<()> {
                             accepts_sent,
                         } => {
                             info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
+                            restore_height = height;
                             if solid.height() == 0 {
                                 network.send_all(NetworkEvent::SnapshotRequest { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
                             } else {
