@@ -32,6 +32,9 @@ pub enum StoreError {
 
     #[error("snapshot error")]
     SnapshotError(#[from] crate::snapshot::Error),
+
+    #[error("job engine error")]
+    JobEngineError(#[from] job_engine::JobEngineError),
 }
 
 #[derive(Debug)]

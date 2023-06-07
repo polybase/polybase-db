@@ -4,6 +4,7 @@ use std::path::Path;
 
 pub mod collection;
 mod index;
+mod job_engine;
 pub mod keys;
 mod proto;
 pub mod publickey;
@@ -15,6 +16,7 @@ pub mod where_query;
 
 pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
 pub use index::CollectionIndexField;
+use job_engine::JobEngine;
 pub use keys::Direction;
 pub use publickey::PublicKey;
 pub use record::{
@@ -59,8 +61,14 @@ pub struct Indexer {
 
 impl Indexer {
     pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> Result<Self> {
+        let job_engine = JobEngine::new(path.as_ref(), logger.clone())?;
         let store = store::Store::open(path)?;
-        Ok(Self { logger, store })
+
+        Ok(Self {
+            logger,
+            store,
+            job_engine,
+        })
     }
 
     pub fn destroy(self) -> Result<()> {
