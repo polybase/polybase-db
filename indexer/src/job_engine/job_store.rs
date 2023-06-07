@@ -2,6 +2,7 @@ use bincode::{deserialize, serialize};
 use rocksdb::{
     Options, SingleThreaded, TransactionDB, TransactionDBOptions, WriteBatchWithTransaction,
 };
+use slog::SingleKV;
 use std::collections::{HashMap, VecDeque};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
@@ -41,16 +42,27 @@ impl JobStore {
         let mut options = Options::default();
         options.create_if_missing(true);
 
-        let mut txn_db = TransactionDB::<SingleThreaded>::open_cf(
-            &options,
-            &TransactionDBOptions::default(),
-            path,
-            vec!["metadata"],
-        )?;
+        let cf_names = TransactionDB::<SingleThreaded>::list_cf(&Options::default(), &path);
 
-        //let mut cf_opts = Options::default();
-        //cf_opts.create_if_missing(true);
-        //txn_db.create_cf("metadata", &cf_opts)?;
+        let txn_db = if cf_names.is_err() || !cf_names.unwrap().contains(&"metadata".to_string()) {
+            let mut txn_db = TransactionDB::<SingleThreaded>::open(
+                &options,
+                &TransactionDBOptions::default(),
+                path,
+            )?;
+
+            let mut cf_opts = Options::default();
+            cf_opts.create_if_missing(true);
+            txn_db.create_cf("metadata", &cf_opts)?;
+            txn_db
+        } else {
+            TransactionDB::open_cf(
+                &options,
+                &TransactionDBOptions::default(),
+                path.as_ref(),
+                vec!["metadata"],
+            )?
+        };
 
         Ok(Self {
             db: Arc::new(txn_db),
