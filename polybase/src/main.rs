@@ -16,6 +16,7 @@ mod network;
 mod rollup;
 mod rpc;
 mod txn;
+mod util;
 
 use crate::config::{Command, Config, LogFormat};
 use crate::db::{Db, DbConfig};
@@ -25,11 +26,9 @@ use chrono::Utc;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
-use indexer::{Indexer, IndexerError};
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
-use rand::RngCore;
 use slog::Drain;
 use solid::config::SolidConfig;
 use solid::event::SolidEvent;
@@ -38,7 +37,6 @@ use std::time::Duration;
 use std::{
     fs::{create_dir_all, File, OpenOptions},
     io::{Read, Write},
-    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -52,7 +50,7 @@ async fn main() -> Result<()> {
     let config = Config::parse();
 
     if let Some(Command::GenerateKey) = config.command {
-        let (keypair, bytes) = generate_key();
+        let (keypair, bytes) = util::generate_key();
         #[allow(clippy::unwrap_used)]
         let key = ed25519::SecretKey::from_bytes(&bytes).unwrap();
         let public: ed25519::PublicKey = (&key).into();
@@ -124,18 +122,11 @@ async fn main() -> Result<()> {
         slog_o!("version" => env!("CARGO_PKG_VERSION")),
     );
 
-    // Indexer is responsible for indexing db data
-    #[allow(clippy::unwrap_used)]
-    let indexer_dir = get_indexer_dir(&config.root_dir).unwrap();
-    let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).map_err(IndexerError::from)?);
-
     // Database combines various components into a single interface
     // that is thread safe
-    let db: Arc<Db> = Arc::new(Db::new(
-        Arc::clone(&indexer),
-        logger.clone(),
-        DbConfig::default(),
-    ));
+    #[allow(clippy::unwrap_used)]
+    let db: Arc<Db> =
+        Arc::new(Db::new(config.root_dir.clone(), logger.clone(), DbConfig::default()).unwrap());
 
     // Get the keypair (provided or auto-generated)
     // TODO: store keypair if auto-generated
@@ -150,7 +141,8 @@ async fn main() -> Result<()> {
         }
         None => {
             #[allow(clippy::expect_used)]
-            let key_path = get_key_path(&config.root_dir).expect("failed to get key path");
+            let key_path: std::path::PathBuf =
+                util::get_key_path(&config.root_dir).expect("failed to get key path");
             if key_path.exists() {
                 let mut file = File::open(key_path)?;
                 let mut key = String::new();
@@ -169,7 +161,7 @@ async fn main() -> Result<()> {
                         create_dir_all(dir)?;
                     }
                 }
-                let (keypair, bytes) = generate_key();
+                let (keypair, bytes) = util::generate_key();
                 let mut file = OpenOptions::new()
                     .create(true)
                     .write(true)
@@ -208,7 +200,7 @@ async fn main() -> Result<()> {
         .peers
         .iter()
         .filter(|p| !p.is_empty())
-        .map(to_peer_id)
+        .map(util::to_peer_id)
         .collect::<Result<Vec<solid::peer::PeerId>>>()?;
 
     let mut network = Network::new(
@@ -223,7 +215,6 @@ async fn main() -> Result<()> {
     solid_peers.sort_unstable();
     solid_peers.dedup();
 
-    // TODO: load solid state from disk state
     let mut solid = match db.get_manifest().await? {
         Some(manifest) => solid::Solid::with_last_confirmed(
             local_peer_solid,
@@ -246,7 +237,6 @@ async fn main() -> Result<()> {
     // Run the RPC server
     let server = create_rpc_server(
         config.rpc_laddr,
-        Arc::clone(&indexer),
         Arc::clone(&db),
         Arc::new(config.whitelist.clone()),
         logger.clone(),
@@ -504,42 +494,4 @@ async fn main() -> Result<()> {
     );
 
     Ok(())
-}
-
-fn get_key_path(dir: &str) -> Option<PathBuf> {
-    let mut path_buf = get_base_dir(dir)?;
-    path_buf.push("config/secret_key");
-    Some(path_buf)
-}
-
-fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
-    let mut path_buf = get_base_dir(dir)?;
-    path_buf.push("data/indexer.db");
-    Some(path_buf)
-}
-
-fn get_base_dir(dir: &str) -> Option<PathBuf> {
-    let mut path_buf = PathBuf::new();
-    if dir.starts_with("~/") {
-        if let Some(home_dir) = dirs::home_dir() {
-            path_buf.push(home_dir);
-            path_buf.push(dir.strip_prefix("~/")?);
-        }
-    } else {
-        path_buf.push(dir);
-    }
-    Some(path_buf)
-}
-
-fn to_peer_id(base58_string: &String) -> Result<solid::peer::PeerId> {
-    let decoded = bs58::decode(base58_string).into_vec()?;
-    Ok(solid::peer::PeerId::new(decoded))
-}
-
-fn generate_key() -> (identity::Keypair, [u8; 32]) {
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    #[allow(clippy::unwrap_used)]
-    let keypair = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
-    (keypair, bytes)
 }
