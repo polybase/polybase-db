@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    index, json_to_record, keys, proto,
+    index, job_engine, json_to_record, keys, proto,
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
@@ -214,6 +214,7 @@ pub(crate) struct Authorization {
 pub struct Collection<'a> {
     logger: slog::Logger,
     store: &'a store::Store,
+    job_engine: &'a job_engine::JobEngine,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
     authorization: Authorization,
@@ -498,6 +499,7 @@ impl<'a> Collection<'a> {
     fn new(
         logger: slog::Logger,
         store: &'a store::Store,
+        job_engine: &'a job_engine::JobEngine,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
         authorization: Authorization,
@@ -505,6 +507,7 @@ impl<'a> Collection<'a> {
         Self {
             logger: logger.new(slog::o!("collection" => collection_id.clone())),
             store,
+            job_engine,
             collection_id,
             indexes,
             authorization,
@@ -514,11 +517,13 @@ impl<'a> Collection<'a> {
     pub(crate) async fn load(
         logger: slog::Logger,
         store: &'a store::Store,
+        job_engine: &'a job_engine::JobEngine,
         id: String,
-    ) -> Result<Collection<'_>> {
+    ) -> Result<Collection<'a>> {
         let collection_collection = Self::new(
             logger.clone(),
             store,
+            job_engine,
             "Collection".to_string(),
             vec![
                 index::CollectionIndex::new(vec![index::CollectionIndexField::new(
@@ -630,6 +635,7 @@ impl<'a> Collection<'a> {
         Ok(Self {
             logger: logger.clone(),
             store,
+            job_engine,
             collection_id: id.to_string(),
             indexes,
             authorization: Authorization {
@@ -672,7 +678,7 @@ impl<'a> Collection<'a> {
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.logger.clone(), self.store, "Collection".to_owned())
+        let Some(record) = Self::load(self.logger.clone(), self.store, self.job_engine, "Collection".to_owned())
             .await?
             .get(self.collection_id.clone(), None)
             .await? else {
@@ -801,6 +807,7 @@ impl<'a> Collection<'a> {
                 let collection = Collection::load(
                     self.logger.clone(),
                     self.store,
+                    self.job_engine,
                     foreign_record_reference.collection_id,
                 )
                 .await?;
@@ -872,6 +879,7 @@ impl<'a> Collection<'a> {
                         let collection = Collection::load(
                             self_col.logger.clone(),
                             self_col.store,
+                            self_col.job_engine,
                             fr.collection_id.clone(),
                         )
                         .await?;
@@ -1016,7 +1024,9 @@ impl<'a> Collection<'a> {
         }
 
         let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.logger.clone(), self.store, id.clone()).await {
+            match Collection::load(self.logger.clone(), self.store, self.job_engine, id.clone())
+                .await
+            {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -1052,7 +1062,8 @@ impl<'a> Collection<'a> {
                 #[allow(clippy::unwrap_used)]
                 let old_value = old_value.unwrap();
 
-                let target_col = Collection::load(self.logger.clone(), self.store, id).await?;
+                let target_col =
+                    Collection::load(self.logger.clone(), self.store, self.job_engine, id).await?;
 
                 target_col.rebuild(collection_before, &old_value).await?;
             }
@@ -1274,8 +1285,13 @@ impl<'a> Collection<'a> {
         old_collection: Collection<'async_recursion>,
         old_collection_record: &RecordRoot,
     ) -> Result<()> {
-        let collection_collection =
-            Collection::load(self.logger.clone(), self.store, "Collection".to_string()).await?;
+        let collection_collection = Collection::load(
+            self.logger.clone(),
+            self.store,
+            self.job_engine,
+            "Collection".to_string(),
+        )
+        .await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;
@@ -1338,6 +1354,7 @@ mod tests {
     use futures::TryStreamExt;
     use slog::Drain;
 
+    use crate::job_engine::tests::TestJobEngine;
     use crate::store::tests::TestStore;
 
     use super::*;
@@ -1351,7 +1368,8 @@ mod tests {
     #[tokio::test]
     async fn test_collection_collection_load() {
         let store = TestStore::default();
-        let collection = Collection::load(logger(), &store, "Collection".to_string())
+        let job_engine = TestJobEngine::default();
+        let collection = Collection::load(logger(), &store, &job_engine, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1377,11 +1395,13 @@ mod tests {
 
     async fn create_collection<'a>(
         store: &'a TestStore,
+        job_engine: &'a TestJobEngine,
         ast: stableast::Root<'_>,
     ) -> Vec<Collection<'a>> {
-        let collection_collection = Collection::load(logger(), store, "Collection".to_string())
-            .await
-            .unwrap();
+        let collection_collection =
+            Collection::load(logger(), store, job_engine, "Collection".to_string())
+                .await
+                .unwrap();
 
         let ast_json = serde_json::to_string(&ast).unwrap();
 
@@ -1411,7 +1431,11 @@ mod tests {
 
             store.commit().await.unwrap();
 
-            collections.push(Collection::load(logger(), store, id).await.unwrap());
+            collections.push(
+                Collection::load(logger(), store, job_engine, id)
+                    .await
+                    .unwrap(),
+            );
         }
 
         collections
@@ -1420,9 +1444,11 @@ mod tests {
     #[tokio::test]
     async fn test_create_collection() {
         let store = TestStore::default();
+        let job_engine = TestJobEngine::default();
 
         let collection_account = create_collection(
             &store,
+            &job_engine,
             stableast::Root(vec![stableast::RootNode::Collection(
                 stableast::Collection {
                     namespace: stableast::Namespace { value: "ns".into() },
@@ -1506,9 +1532,11 @@ mod tests {
     #[tokio::test]
     async fn test_collection_set_get() {
         let store = TestStore::default();
+        let job_engine = TestJobEngine::default();
         let collection = Collection::new(
             logger(),
             &store,
+            &job_engine,
             "test".to_string(),
             vec![],
             Authorization {
@@ -1538,11 +1566,13 @@ mod tests {
     #[tokio::test]
     async fn test_collection_set_list() {
         let store = TestStore::default();
+        let job_engine = TestJobEngine::default();
 
         {
-            let collection = Collection::load(logger(), &store, "Collection".to_owned())
-                .await
-                .unwrap();
+            let collection =
+                Collection::load(logger(), &store, &job_engine, "Collection".to_owned())
+                    .await
+                    .unwrap();
             collection
                 .set(
                     "test/test".to_owned(),
@@ -1602,7 +1632,7 @@ mod tests {
 
         store.commit().await.unwrap();
 
-        let collection = Collection::load(logger(), &store, "test/test".to_owned())
+        let collection = Collection::load(logger(), &store, &job_engine, "test/test".to_owned())
             .await
             .unwrap();
 

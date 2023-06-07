@@ -132,3 +132,55 @@ fn get_job_store_path(path: &Path) -> PathBuf {
     #[allow(clippy::unwrap_used)]
     path.parent().unwrap().join("jobs.db")
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use futures::executor::block_on;
+    use slog::Drain;
+    use std::ops::{Deref, DerefMut};
+
+    pub(crate) struct TestJobEngine(Option<JobEngine>);
+
+    fn logger() -> slog::Logger {
+        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        slog::Logger::root(drain, slog::o!())
+    }
+
+    impl Default for TestJobEngine {
+        fn default() -> Self {
+            let temp_dir = std::env::temp_dir();
+            let indexer_path = temp_dir.join(format!(
+                "test-indexer-job-engine-store-{}",
+                rand::random::<u32>(),
+            ));
+
+            Self(Some(JobEngine::new(indexer_path, logger()).unwrap()))
+        }
+    }
+
+    impl Drop for TestJobEngine {
+        fn drop(&mut self) {
+            if let Some(job_engine) = self.0.take() {
+                block_on(async {
+                    let _ = job_engine.shutdown().await;
+                });
+            }
+        }
+    }
+
+    impl Deref for TestJobEngine {
+        type Target = JobEngine;
+
+        fn deref(&self) -> &Self::Target {
+            self.0.as_ref().unwrap()
+        }
+    }
+
+    impl DerefMut for TestJobEngine {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.0.as_mut().unwrap()
+        }
+    }
+}

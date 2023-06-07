@@ -92,7 +92,7 @@ impl Indexer {
     }
 
     pub async fn collection(&self, id: String) -> Result<Collection> {
-        Ok(Collection::load(self.logger.clone(), &self.store, id).await?)
+        Ok(Collection::load(self.logger.clone(), &self.store, &self.job_engine, id).await?)
     }
 
     pub async fn commit(&self) -> Result<()> {
