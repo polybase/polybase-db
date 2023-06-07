@@ -1,7 +1,7 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
 use crate::auth;
-use crate::db::Db;
+use crate::db::{Db, DbWaitResult};
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
 use crate::errors::metrics::MetricsData;
@@ -81,53 +81,28 @@ async fn get_record(
     query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
 ) -> Result<impl Responder, HTTPError> {
-    let (collection, id) = path.into_inner();
+    let (collection, record_id) = path.into_inner();
     let auth = body.auth;
+    let auth: Option<indexer::AuthUser> = auth.map(|a| a.into());
 
-    let collection = state.indexer.collection(collection).await?;
-
-    if let Some(since) = query.since {
-        enum UpdateCheckResult {
-            Updated,
-            NotFound,
-            NotModified,
+    let record = if let Some(since) = query.since {
+        match state
+            .db
+            .get_wait(
+                collection,
+                record_id,
+                auth,
+                since,
+                Duration::from(query.wait_for),
+            )
+            .await?
+        {
+            DbWaitResult::Updated(record) => record,
+            DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
-
-        let was_updated: Result<UpdateCheckResult, HTTPError> = async {
-            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
-            let wait_until = SystemTime::now() + wait_for;
-            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
-
-            let mut record_exists = false;
-            while wait_until > SystemTime::now() {
-                if let Some(metadata) = collection.get_record_metadata(&id).await? {
-                    record_exists = true;
-                    if metadata.updated_at > since {
-                        return Ok(UpdateCheckResult::Updated);
-                    }
-                }
-
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
-
-            Ok(if record_exists {
-                UpdateCheckResult::NotModified
-            } else {
-                UpdateCheckResult::NotFound
-            })
-        }
-        .await;
-
-        match was_updated? {
-            UpdateCheckResult::Updated => {}
-            UpdateCheckResult::NotModified => {
-                return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish())
-            }
-            UpdateCheckResult::NotFound => return Ok(HttpResponse::NotFound().finish()),
-        }
-    }
-
-    let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await?;
+    } else {
+        state.db.get(collection, record_id, auth).await?
+    };
 
     match record {
         Some(record) => {
@@ -407,7 +382,7 @@ async fn post_record(
 
     let record_id = db.call(txn).await?;
 
-    let Some(record) = state.db.get(collection_id, record_id).await? else {
+    let Some(record) = state.db.get_without_auth_check(collection_id, record_id).await? else {
         return Err(HTTPError::new(
             ReasonCode::RecordNotFound,
             None,
@@ -439,7 +414,10 @@ async fn call_function(
     );
 
     let record_id = db.call(txn).await?;
-    let record = state.db.get(collection_id, record_id).await?;
+    let record = state
+        .db
+        .get_without_auth_check(collection_id, record_id)
+        .await?;
 
     Ok(web::Json(FunctionResponse {
         data: match record {

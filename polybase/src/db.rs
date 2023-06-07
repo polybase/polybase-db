@@ -8,8 +8,10 @@ use indexer::{validate_schema_change, Indexer, RecordRoot};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
+use std::cmp::min;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -58,6 +60,11 @@ pub enum Error {
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DbSnapshot {
     pub index: Vec<u8>,
+}
+
+pub enum DbWaitResult<T> {
+    Updated(T),
+    NotModified,
 }
 
 #[derive(Debug)]
@@ -114,7 +121,7 @@ impl Db {
     }
 
     /// Gets a record from the database
-    pub async fn get(
+    pub async fn get_without_auth_check(
         &self,
         collection_id: String,
         record_id: String,
@@ -123,6 +130,43 @@ impl Db {
 
         let record = collection.get_without_auth_check(record_id).await;
         record.map_err(|e| Error::Indexer(e.into()))
+    }
+
+    pub async fn get(
+        &self,
+        collection_id: String,
+        record_id: String,
+        auth: Option<indexer::AuthUser>,
+    ) -> Result<Option<RecordRoot>> {
+        let collection = self.indexer.collection(collection_id.clone()).await?;
+        Ok(collection.get(record_id, auth.as_ref()).await?)
+    }
+
+    pub async fn get_wait(
+        &self,
+        collection_id: String,
+        record_id: String,
+        auth: Option<indexer::AuthUser>,
+        since: f64,
+        wait_for: Duration,
+    ) -> Result<DbWaitResult<Option<RecordRoot>>> {
+        let collection = self.indexer.collection(collection_id.clone()).await?;
+
+        // Wait for a record to create/update for a given amount of time, returns true if the record was created or
+        // updated within the given time.
+        let updated = wait_for_update(since, wait_for, || async {
+            Ok(collection
+                .get_record_metadata(&record_id)
+                .await?
+                .map(|m| m.updated_at))
+        })
+        .await?;
+
+        Ok(if updated {
+            DbWaitResult::Updated(collection.get(record_id, auth.as_ref()).await?)
+        } else {
+            DbWaitResult::NotModified
+        })
     }
 
     /// Is the node healthy and up to date
@@ -434,4 +478,33 @@ impl Db {
 fn get_key(namespace: &String, id: &String) -> [u8; 32] {
     let b = [namespace.as_bytes(), id.as_bytes()].concat();
     hash::hash_bytes(b)
+}
+
+async fn wait_for_update<F, Fut>(since: f64, wait_for: Duration, check_updated: F) -> Result<bool>
+where
+    F: Fn() -> Fut,
+    Fut: futures::Future<Output = Result<Option<SystemTime>>>,
+{
+    // Wait for a maximum of 60 seconds
+    let wait_for = min(wait_for, Duration::from_secs(60));
+
+    // Calculate the time to wait until
+    let wait_until = SystemTime::now() + wait_for;
+
+    // Last time a check was made by the client
+    let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
+
+    // Loop until the record is updated or the time is up
+    while wait_until > SystemTime::now() {
+        if let Some(updated_at) = check_updated().await? {
+            if updated_at > since {
+                return Ok(true);
+            }
+        }
+
+        // Only check once per second
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+    }
+
+    Ok(false)
 }
