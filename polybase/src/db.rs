@@ -180,6 +180,7 @@ impl Db {
     ) -> Result<Vec<(Cursor, RecordRoot)>> {
         let collection = self.indexer.collection(collection_id.clone()).await?;
 
+        #[allow(clippy::let_and_return)]
         let records = Ok(collection
             .list(query, &auth.as_ref())
             .await?
