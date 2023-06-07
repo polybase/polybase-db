@@ -2,7 +2,6 @@ use bincode::{deserialize, serialize};
 use rocksdb::{
     Options, SingleThreaded, TransactionDB, TransactionDBOptions, WriteBatchWithTransaction,
 };
-use slog::SingleKV;
 use std::collections::{HashMap, VecDeque};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
@@ -44,7 +43,7 @@ impl JobStore {
 
         let cf_names = TransactionDB::<SingleThreaded>::list_cf(&Options::default(), &path);
 
-        let txn_db = if cf_names.is_err() || !cf_names.unwrap().contains(&"metadata".to_string()) {
+        let txn_db = if cf_names.is_err() || !cf_names?.contains(&"metadata".to_string()) {
             let mut txn_db = TransactionDB::<SingleThreaded>::open(
                 &options,
                 &TransactionDBOptions::default(),
@@ -75,7 +74,7 @@ impl JobStore {
         let job_bytes = serialize(&job)?;
 
         // check if there is metadata for this job group. If not, add it.
-        let job_group_metadata_key = job.job_group.clone().into_bytes();
+        let job_group_metadata_key = job.job_group.into_bytes();
         let job_group_metadata_cf = self
             .db
             .cf_handle("metadata")
@@ -117,7 +116,7 @@ impl JobStore {
                 .value()
                 .ok_or(JobStoreError::InvalidOrCorruptedJobValue)?;
 
-            let job: Job = deserialize(&value)?;
+            let job: Job = deserialize(value)?;
             let job_group = job.job_group.clone();
 
             let jobs_list = jobs_map.entry(job_group).or_insert(VecDeque::new());
@@ -131,17 +130,17 @@ impl JobStore {
     /// Delete the persisted job from the `jobs.db` rocksdb database.
     pub(crate) async fn delete_job(&self, job: Job) -> Result<()> {
         let job_key = format!("{}|{}", job.job_group, job.id).into_bytes();
-        self.db.delete(&job_key)?;
+        self.db.delete(job_key)?;
 
         // Check if it is the last job in the group and delete the metadata for the job  group if so
         if job.is_last_job {
-            let job_group_metadata_key = job.job_group.clone().into_bytes();
+            let job_group_metadata_key = job.job_group.into_bytes();
             let job_group_metadata_cf = self
                 .db
                 .cf_handle("metadata")
                 .ok_or(JobStoreError::UnableToQueryJobGroupCompletion)?;
             self.db
-                .delete_cf(job_group_metadata_cf, &job_group_metadata_key)?;
+                .delete_cf(job_group_metadata_cf, job_group_metadata_key)?;
         }
 
         Ok(())
@@ -158,7 +157,7 @@ impl JobStore {
             .ok_or(JobStoreError::UnableToQueryJobGroupCompletion)?;
         Ok(self
             .db
-            .get_cf(job_group_metadata_cf, &job_group_metadata_key)?
+            .get_cf(job_group_metadata_cf, job_group_metadata_key)?
             .is_none())
     }
 
@@ -265,8 +264,8 @@ mod tests {
         assert_eq!(group2_jobs.pop_front(), None);
 
         // delete jobs
-        job_store.delete_job(job11.clone()).await;
-        job_store.delete_job(job22.clone()).await;
+        job_store.delete_job(job11.clone()).await.unwrap();
+        job_store.delete_job(job22.clone()).await.unwrap();
 
         let mut jobs_after_deletion = job_store.get_jobs().await.unwrap();
 
@@ -280,9 +279,9 @@ mod tests {
         assert_eq!(group2_jobs.pop_front(), None);
 
         // delete all jobs
-        job_store.delete_job(job12).await;
-        job_store.delete_job(job13).await;
-        job_store.delete_job(job21).await;
+        job_store.delete_job(job12).await.unwrap();
+        job_store.delete_job(job13).await.unwrap();
+        job_store.delete_job(job21).await.unwrap();
 
         jobs_after_deletion = job_store.get_jobs().await.unwrap();
         assert!(jobs_after_deletion.is_empty());

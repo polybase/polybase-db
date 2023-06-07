@@ -9,6 +9,7 @@ use std::{
 };
 
 use futures::future;
+use std::collections::HashMap;
 use tokio::{sync::Mutex, time};
 
 use jobs::{Job, JobState};
@@ -58,7 +59,7 @@ impl JobEngine {
 
                 let jobs_map = {
                     let store = shared_job_store.lock().await;
-                    store.get_jobs().await.unwrap() // todo
+                    store.get_jobs().await.unwrap_or(HashMap::new())
                 };
 
                 let mut tasks = Vec::new();
@@ -71,15 +72,15 @@ impl JobEngine {
                             match job.job_state {
                                 JobState::JobType1 { num } => println!("Got a num {num:?}"),
                                 JobState::JobType2 { ref string, num } => {
-                                    println!("Got a string [string:?] and a number {num:?}")
+                                    println!("Got a string {string:?} and a number {num:?}")
                                 }
                                 JobState::JobType3 { b } => println!("Got a bool: {b:?}"),
                             }
 
                             // delete the job
                             {
-                                let mut store = store.lock().await;
-                                store.delete_job(job).await;
+                                let store = store.lock().await;
+                                let _ = store.delete_job(job).await;
                             }
                         }
                     }));
@@ -113,7 +114,7 @@ impl JobEngine {
     pub async fn enqueue_job(&self, job: Job) -> Result<()> {
         let store = self.job_store.clone();
         let store = store.lock().await;
-        store.save_job(job).await;
+        store.save_job(job).await?;
 
         Ok(())
     }
@@ -127,5 +128,7 @@ impl JobEngine {
 }
 
 fn get_job_store_path(path: &Path) -> PathBuf {
+    // this is always guaranteed to be present if it's reached this far
+    #[allow(clippy::unwrap_used)]
     path.parent().unwrap().join("jobs.db")
 }
