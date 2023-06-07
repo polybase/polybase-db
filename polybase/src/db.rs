@@ -2,6 +2,7 @@ use crate::hash;
 use crate::mempool::Mempool;
 use crate::rollup::Rollup;
 use crate::txn::{self, CallTxn};
+use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
 use indexer::{
@@ -96,10 +97,15 @@ pub struct Db {
 }
 
 impl Db {
-    pub fn new(indexer: Arc<Indexer>, logger: slog::Logger, config: DbConfig) -> Self {
+    pub fn new(root_dir: String, logger: slog::Logger, config: DbConfig) -> Result<Self> {
         let (sender, receiver) = mpsc::channel::<CallTxn>(100);
 
-        Self {
+        // Create the indexer
+        #[allow(clippy::unwrap_used)]
+        let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
+        let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir)?);
+
+        Ok(Self {
             mempool: Mempool::new(),
             rollup: Rollup::new(),
             gateway: gateway::initialize(logger.clone()),
@@ -109,7 +115,7 @@ impl Db {
             receiver: AsyncMutex::new(receiver),
             config,
             out_of_sync_height: Mutex::new(None),
-        }
+        })
     }
 
     pub async fn is_empty(&self) -> Result<bool> {
