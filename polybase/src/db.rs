@@ -2,9 +2,12 @@ use crate::hash;
 use crate::mempool::Mempool;
 use crate::rollup::Rollup;
 use crate::txn::{self, CallTxn};
+use futures::TryStreamExt;
 use gateway::{Change, Gateway};
-use indexer::collection::validate_collection_record;
-use indexer::{validate_schema_change, Indexer, RecordRoot};
+use indexer::{
+    collection::validate_collection_record, validate_schema_change, Cursor, Indexer, ListQuery,
+    RecordRoot,
+};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
@@ -109,15 +112,15 @@ impl Db {
         }
     }
 
-    pub async fn next(&self) -> Option<CallTxn> {
-        let mut receiver = self.receiver.lock().await;
-        receiver.recv().await
-    }
-
     pub async fn is_empty(&self) -> Result<bool> {
         let collection = self.indexer.collection("Collection".to_string()).await?;
         let meta = collection.get_metadata().await?;
         Ok(meta.is_none())
+    }
+
+    pub async fn next(&self) -> Option<CallTxn> {
+        let mut receiver = self.receiver.lock().await;
+        receiver.recv().await
     }
 
     /// Gets a record from the database
@@ -164,6 +167,50 @@ impl Db {
 
         Ok(if updated {
             DbWaitResult::Updated(collection.get(record_id, auth.as_ref()).await?)
+        } else {
+            DbWaitResult::NotModified
+        })
+    }
+
+    pub async fn list(
+        &self,
+        collection_id: String,
+        query: ListQuery<'_>,
+        auth: Option<indexer::AuthUser>,
+    ) -> Result<Vec<(Cursor, RecordRoot)>> {
+        let collection = self.indexer.collection(collection_id.clone()).await?;
+
+        let records = Ok(collection
+            .list(query, &auth.as_ref())
+            .await?
+            .try_collect::<Vec<_>>()
+            .await?);
+
+        records
+    }
+
+    pub async fn list_wait(
+        &self,
+        collection_id: String,
+        query: ListQuery<'_>,
+        auth: Option<indexer::AuthUser>,
+        since: f64,
+        wait_for: Duration,
+    ) -> Result<DbWaitResult<Vec<(Cursor, RecordRoot)>>> {
+        let collection = self.indexer.collection(collection_id.clone()).await?;
+
+        // Wait for a record to create/update for a given amount of time, returns true if the record was created or
+        // updated within the given time.
+        let updated = wait_for_update(since, wait_for, || async {
+            Ok(collection
+                .get_metadata()
+                .await?
+                .map(|m| m.last_record_updated_at))
+        })
+        .await?;
+
+        Ok(if updated {
+            DbWaitResult::Updated(self.list(collection_id, query, auth).await?)
         } else {
             DbWaitResult::NotModified
         })

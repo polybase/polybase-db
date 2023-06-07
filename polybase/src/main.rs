@@ -246,7 +246,6 @@ async fn main() -> Result<()> {
     // Run the RPC server
     let server = create_rpc_server(
         config.rpc_laddr,
-        Arc::clone(&indexer),
         Arc::clone(&db),
         Arc::new(config.whitelist.clone()),
         logger.clone(),

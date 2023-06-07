@@ -10,23 +10,14 @@ use crate::errors::AppError;
 use crate::txn::CallTxn;
 use actix_cors::Cors;
 use actix_server::Server;
-use actix_web::{
-    get, http::StatusCode, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
-};
-use futures::TryStreamExt;
-use indexer::{AuthUser, Indexer};
+use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use indexer::AuthUser;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
-use std::{
-    borrow::Cow,
-    cmp::min,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
 
 struct RouteState {
     db: Arc<Db>,
-    indexer: Arc<Indexer>,
     whitelist: Arc<Option<Vec<String>>>,
 }
 
@@ -230,7 +221,7 @@ async fn get_records(
 ) -> Result<impl Responder, HTTPError> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let collection = state.indexer.collection(collection).await?;
+    let auth: Option<indexer::AuthUser> = auth.map(|a| a.into());
 
     let sort_indexes = query
         .sort
@@ -243,56 +234,38 @@ async fn get_records(
         })
         .collect::<Vec<_>>();
 
-    if let Some(since) = query.since {
-        let was_updated = async {
-            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
-            let wait_until = SystemTime::now() + wait_for;
-            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
+    let list_query = indexer::ListQuery {
+        limit: Some(min(1000, query.limit.unwrap_or(100))),
+        where_query: query.where_query.clone(),
+        order_by: &sort_indexes,
+        cursor_after: query.after.0.clone(),
+        cursor_before: query.before.0.clone(),
+    };
 
-            while wait_until > SystemTime::now() {
-                if collection
-                    .get_metadata()
-                    .await?
-                    .map(|m| m.last_record_updated_at > since)
-                    .unwrap_or(false)
-                {
-                    return Ok(true);
-                }
-
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
-
-            Ok(false)
+    let records = if let Some(since) = query.since {
+        match state
+            .db
+            .list_wait(
+                collection,
+                list_query,
+                auth,
+                since,
+                Duration::from(query.wait_for),
+            )
+            .await?
+        {
+            DbWaitResult::Updated(record) => record,
+            DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
-        .await;
-
-        match was_updated {
-            Ok(true) => {}
-            Ok(false) => return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish()),
-            Err(e) => return Err(e),
-        }
-    }
+    } else {
+        state.db.list(collection, list_query, auth).await?
+    };
 
     // for metrics data collection
     let req_uri = req.uri().to_string();
     let mut num_records = 0;
 
     let list_response: Result<ListResponse, HTTPError> = async {
-        let records = collection
-            .list(
-                indexer::ListQuery {
-                    limit: Some(min(1000, query.limit.unwrap_or(100))),
-                    where_query: query.where_query.clone(),
-                    order_by: &sort_indexes,
-                    cursor_after: query.after.0.clone(),
-                    cursor_before: query.before.0.clone(),
-                },
-                &auth.map(indexer::AuthUser::from).as_ref(),
-            )
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?;
-
         num_records = records.len();
 
         Ok(ListResponse {
@@ -456,7 +429,6 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
 
 pub fn create_rpc_server(
     rpc_laddr: String,
-    indexer: Arc<indexer::Indexer>,
     db: Arc<Db>,
     whitelist: Arc<Option<Vec<String>>>,
     logger: slog::Logger,
@@ -467,7 +439,6 @@ pub fn create_rpc_server(
         App::new()
             .app_data(web::Data::new(RouteState {
                 db: Arc::clone(&db),
-                indexer: Arc::clone(&indexer),
                 whitelist: Arc::clone(&whitelist),
             }))
             .wrap(SlogMiddleware::new(logger.clone()))
