@@ -52,11 +52,15 @@ pub enum IndexerError {
 
     #[error("where query error")]
     WhereQuery(#[from] where_query::WhereQueryError),
+
+    #[error("job engine error")]
+    JobEngineError(#[from] job_engine::JobEngineError),
 }
 
 pub struct Indexer {
     logger: slog::Logger,
     store: store::Store,
+    job_engine: JobEngine,
 }
 
 impl Indexer {

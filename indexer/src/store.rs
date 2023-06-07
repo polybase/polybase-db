@@ -6,6 +6,7 @@ use std::mem;
 use std::{convert::AsRef, path::Path, sync::Arc};
 
 use crate::{
+    job_engine,
     keys::{self, Key},
     proto,
     record::RecordRoot,
