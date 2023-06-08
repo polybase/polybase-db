@@ -1,8 +1,7 @@
-use bincode::{deserialize, serialize};
+use crate::snapshot::{SnapshotChunk, SnapshotIterator};
 use parking_lot::Mutex;
 use prost::Message;
 use rocksdb::WriteBatch;
-use serde::{Deserialize, Serialize};
 use std::mem;
 use std::{convert::AsRef, path::Path, sync::Arc};
 
@@ -30,21 +29,15 @@ pub enum StoreError {
 
     #[error("tokio task join error")]
     TokioTaskJoinError(#[from] tokio::task::JoinError),
+
+    #[error("snapshot error")]
+    SnapshotError(#[from] crate::snapshot::Error),
 }
 
 #[derive(Debug)]
 pub(crate) enum Value<'a> {
     DataValue(&'a RecordRoot),
     IndexValue(proto::IndexRecord),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Snapshot(Vec<SnapshotValue>);
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SnapshotValue {
-    key: Vec<u8>,
-    value: Vec<u8>,
 }
 
 impl<'a> Value<'a> {
@@ -62,7 +55,7 @@ pub(crate) struct Store {
 }
 
 pub(crate) struct StoreState {
-    batch: rocksdb::WriteBatch,
+    batch: WriteBatch,
 }
 
 impl Store {
@@ -164,34 +157,32 @@ impl Store {
 
     pub(crate) fn destroy(self) -> Result<()> {
         let path = self.db.path().to_path_buf();
-
         drop(self.db);
         rocksdb::DB::destroy(&rocksdb::Options::default(), path)?;
+        Ok(())
+    }
+
+    pub fn reset(&self) -> Result<()> {
+        let iter = SnapshotIterator::new(&self.db, 100 * 1024 * 1024);
+        for entry in iter {
+            let mut batch = WriteBatch::default();
+            for entry in entry? {
+                batch.delete(entry.key);
+            }
+            self.db.write(batch)?;
+        }
 
         Ok(())
     }
 
-    pub fn snapshot(&self) -> Result<Vec<u8>> {
-        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
-
-        let mut values: Vec<SnapshotValue> = Vec::new();
-
-        // Iterate through every key-value pair in the database
-        for entry in iter {
-            let (key, value) = entry?;
-            values.push(SnapshotValue {
-                key: key.to_vec(),
-                value: value.to_vec(),
-            });
-        }
-
-        Ok(serialize(&Snapshot(values))?)
+    pub fn snapshot(&self, chunk_size: usize) -> SnapshotIterator {
+        SnapshotIterator::new(&self.db, chunk_size)
     }
 
-    pub fn restore(&self, data: Vec<u8>) -> Result<()> {
-        let mut batch = rocksdb::WriteBatch::default();
-        let snapshot: Snapshot = deserialize(&data)?;
-        for entry in snapshot.0 {
+    // TODO:
+    pub fn restore(&self, chunk: SnapshotChunk) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        for entry in chunk {
             batch.put(entry.key, entry.value);
         }
         self.db.write(batch)?;

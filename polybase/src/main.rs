@@ -203,12 +203,12 @@ async fn main() -> Result<()> {
         .map(util::to_peer_id)
         .collect::<Result<Vec<solid::peer::PeerId>>>()?;
 
-    let mut network = Network::new(
+    let network = Arc::new(Network::new(
         &keypair,
         network_laddr.into_iter(),
         peers_addr.into_iter(),
         logger.clone(),
-    )?;
+    )?);
 
     let local_peer_solid = solid::peer::PeerId(local_peer_id.to_bytes());
     solid_peers.push(local_peer_solid.clone());
@@ -247,24 +247,31 @@ async fn main() -> Result<()> {
     let logger_clone = logger.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = Arc::clone(&shutdown);
+    let network_clone = Arc::clone(&network);
 
     let main_handle = tokio::spawn(async move {
-        let logger = logger_clone;
+        let network = network_clone;
+        let logger = logger_clone.clone();
+
         let shutdown = shutdown_clone;
-        let mut restore_height = solid.height();
+        let mut snapshot_from = None;
 
         // For migration only, check if DB is empty
         if db.is_empty().await.unwrap_or(true) {
+            info!(logger, "DB is empty, requesting snapshot");
             network
                 .send_all(NetworkEvent::SnapshotRequest {
-                    peer_id: NetworkPeerId(local_peer_id).into(),
                     height: 0,
+                    id: util::unix_now(),
                 })
                 .await;
             db.out_of_sync(1);
         }
 
         while !shutdown.load(Ordering::Relaxed) {
+            let network = Arc::clone(&network);
+            let logger = logger_clone.clone();
+
             tokio::select! {
                 // Db only produces CallTxn events, that should be propogated
                 // to other nodes
@@ -273,22 +280,14 @@ async fn main() -> Result<()> {
                 },
 
                 Some((network_peer_id, event)) = network.next() => {
+                    let peer_id: solid::peer::PeerId = network_peer_id.clone().into();
                     match event {
                         NetworkEvent::Ping => {
                             info!(logger, "Ping received");
                         },
-                        NetworkEvent::OutOfSync { peer_id, height } => {
-                            info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
-                            if height + config.block_cache_count < solid.height() {
-                                let snapshot = match db.snapshot() {
-                                    Ok(snapshot) => snapshot,
-                                    Err(err) => {
-                                        error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
-                                        continue;
-                                    }
-                                };
-                                network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
-                            } else {
+                        NetworkEvent::OutOfSync { height } => {
+                            if height + config.block_cache_count > solid.height() {
+                                info!(logger, "Peer is out of sync, sending proposals"; "peer_id" => peer_id.prefix(), "height" => height);
                                 for proposal in solid.confirmed_proposals_from(height) {
                                     network.send(
                                         &network_peer_id,
@@ -298,44 +297,125 @@ async fn main() -> Result<()> {
                                     )
                                     .await;
                                 }
+                            } else {
+                                error!(logger, "Peer is out of sync, peer should request full snapshot"; "peer_id" => peer_id.prefix(), "height" => height);
                             }
                         }
 
-                        NetworkEvent::SnapshotRequest{ peer_id, ..  } => {
-                            let snapshot = match db.snapshot() {
-                                Ok(snapshot) => snapshot,
-                                Err(err) => {
-                                    error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
-                                    continue;
-                                }
-                            };
-                            network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
-                        }
+                        // We've received a request for a snapshot from another peer, if we are healthy we should offer
+                        // to provide them with a snapshot
+                        NetworkEvent::SnapshotRequest{ id, height } => {
+                            if db.is_healthy() {
+                                info!(logger, "Peer requested snapshot, sending offer"; "peer_id" => peer_id.prefix(), "height" => height);
+                                network.send(
+                                    &network_peer_id,
+                                    NetworkEvent::SnapshotOffer {
+                                        id,
+                                    },
+                                ).await;
+                            } else {
+                                info!(logger, "Peer requested snapshot, unable to provide snapshot due to unhealty state"; "peer_id" => peer_id.prefix(), "height" => height);
+                            }
+                        },
 
-                        NetworkEvent::Snapshot { snapshot } => {
-                            // Check if we have already advanced since our request
-                            if solid.height() > restore_height  {
-                                debug!(logger, "Skipping restore, already advanced"; "restore_height" => restore_height, "current_height" => solid.height());
+                        // We've been offered a snapshot from another peer, we should accept this offer if we
+                        // don't already have an ongoing snapshot in progress
+                        NetworkEvent::SnapshotOffer{ id } => {
+                            info!(logger, "Peer offered snapshot, sending accept"; "peer_id" => peer_id.prefix());
+
+                            if snapshot_from.is_some() {
+                                debug!(logger, "Already have snapshot in progress, ignoring offer"; "peer_id" => peer_id.prefix());
                                 continue;
                             }
 
-                            info!(logger, "Restoring db from snapshot");
+                            // Save who the snapshot is from
+                            snapshot_from = Some((network_peer_id.clone(), id));
 
-                            // We should panic if we are unable to restore
-                            #[allow(clippy::unwrap_used)]
-                            db.restore(&snapshot).unwrap();
+                            // Reset the database
+                            #[allow(clippy::expect_used)]
+                            db.reset().expect("Failed to reset database");
 
-                            // Reset solid with the new proposal state from the snapshot
-                            #[allow(clippy::unwrap_used)]
-                            let manifest = db.get_manifest().await.unwrap().unwrap();
-                            solid.reset(manifest);
+                            network.send(
+                                &network_peer_id,
+                                NetworkEvent::SnapshotAccept {
+                                    id,
+                                },
+                            ).await;
+                        },
 
-                            info!(logger, "Restore db from snapshot complete");
+                        // A node has accepted our offer to provide a snapshot, therefore we should start sending them
+                        // chunks of the snapshot
+                        NetworkEvent::SnapshotAccept{ id  } => {
+                            let db = Arc::clone(&db);
+
+                            // Spawn a task, as we don't want to block the thread while we send network events,
+                            // and this snapshot may take a while to complete
+                            tokio::spawn(async move {
+                                // 100MB chunks
+                                let snapshot_iter = db.snapshot_iter(100 * 1024 * 1024);
+                                for chunk in snapshot_iter {
+                                    let peer_id = peer_id.clone();
+                                    match chunk {
+                                        Ok(chunk) => {
+                                            if let Some(tx) = network.send(
+                                                &peer_id.into(),
+                                                NetworkEvent::SnapshotChunk { id, chunk: Some(chunk) },
+                                            ).await {
+                                                // Wait for the send to complete
+                                                tx.await.ok();
+                                            }
+                                        },
+                                        Err(err) => {
+                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                            return;
+                                        }
+                                    }
+                                }
+
+                                // Send end of snapshot event
+                                network.send(
+                                    &peer_id.into(),
+                                    NetworkEvent::SnapshotChunk { id, chunk: None },
+                                ).await;
+                            });
+                        },
+
+                        // We've received a chunk of a snapshot from another peer, we should load this into
+                        // our db
+                        NetworkEvent::SnapshotChunk { id, chunk } => {
+                            if let Some((peer_id, snapshot_id)) = &snapshot_from {
+                                if peer_id != &network_peer_id || snapshot_id != &id  {
+                                    error!(logger, "Received invalid snapshot chunk");
+                                    continue;
+                                }
+                            } else {
+                                // We're not expecting a snapshot
+                                error!(logger, "Received invalid snapshot chunk");
+                                continue;
+                            }
+
+                            if let Some(chunk) = chunk {
+                                info!(logger, "Received snapshot with {} records", chunk.len());
+
+                                // We should panic if we are unable to restore
+                                #[allow(clippy::unwrap_used)]
+                                db.restore_chunk(chunk).unwrap();
+                            } else {
+                                // Reset snapshot from
+                                snapshot_from = None;
+
+                                // We are finished, reset solid with the new proposal state from the snapshot
+                                #[allow(clippy::unwrap_used)]
+                                let manifest = db.get_manifest().await.unwrap().unwrap();
+                                solid.reset(manifest);
+
+                                info!(logger, "Restore db from snapshot complete");
+                            }
                         }
 
                         NetworkEvent::Accept { accept } => {
                             info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
-                            solid.receive_accept(&accept, &network_peer_id.into());
+                            solid.receive_accept(&accept, &peer_id);
                         }
 
                         NetworkEvent::Proposal { manifest } => {
@@ -430,13 +510,17 @@ async fn main() -> Result<()> {
                             accepts_sent,
                         } => {
                             info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
-                            restore_height = height;
+
+                            // Set as out of sync, so we mark the node as unhealthy immediately
                             db.out_of_sync(height);
-                            if solid.height() == 0 {
-                                network.send_all(NetworkEvent::SnapshotRequest { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
+
+                            // Check how far behind we are, to determine if we request proposals or a full snapshot
+                            if height + config.block_cache_count < solid.height() {
+                                network.send_all(NetworkEvent::SnapshotRequest { height, id: util::unix_now() }).await;
                             } else {
-                                network.send_all(NetworkEvent::OutOfSync { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
+                                network.send_all(NetworkEvent::OutOfSync { height }).await;
                             }
+
                         }
 
                         SolidEvent::OutOfDate {
