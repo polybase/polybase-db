@@ -109,6 +109,7 @@ impl Solid {
         );
         let mut events = self.shared.events.lock();
         events.clear();
+        self.reset_skip_timeout();
     }
 
     pub fn run(&self) -> tokio::task::JoinHandle<()> {

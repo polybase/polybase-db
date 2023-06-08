@@ -13,7 +13,6 @@ mod errors;
 mod hash;
 mod mempool;
 mod network;
-mod rollup;
 mod rpc;
 mod txn;
 mod util;
@@ -258,7 +257,7 @@ async fn main() -> Result<()> {
         let mut last_commit = Instant::now();
 
         // For migration only, check if DB is empty
-        if db.is_empty().await.unwrap_or(true) {
+        if db.is_empty().await.unwrap_or(true) && solid.height() == 0 {
             info!(logger, "DB is empty, requesting snapshot");
             network
                 .send_all(NetworkEvent::SnapshotRequest {
@@ -337,8 +336,6 @@ async fn main() -> Result<()> {
                         // We've been offered a snapshot from another peer, we should accept this offer if we
                         // don't already have an ongoing snapshot in progress
                         NetworkEvent::SnapshotOffer{ id } => {
-                            info!(logger, "Peer offered snapshot, sending accept"; "peer_id" => peer_id.prefix());
-
                             if snapshot_from.is_some() {
                                 debug!(logger, "Already have snapshot in progress, ignoring offer"; "peer_id" => peer_id.prefix(),  "id" => id);
                                 continue;
@@ -348,6 +345,8 @@ async fn main() -> Result<()> {
                                 debug!(logger, "Peer offered snapshot, ignoring as already healthy"; "peer_id" => peer_id.prefix(), "id" => id);
                                 continue;
                             }
+
+                            info!(logger, "Peer offered snapshot, sending accept"; "peer_id" => peer_id.prefix(), "id" => id);
 
                             // Save who the snapshot is from
                             snapshot_from = Some((network_peer_id.clone(), id));
@@ -428,20 +427,21 @@ async fn main() -> Result<()> {
                                 #[allow(clippy::unwrap_used)]
                                 db.restore_chunk(chunk).unwrap();
                             } else {
-                                // Reset snapshot from
-                                snapshot_from = None;
-
                                 // We are finished, reset solid with the new proposal state from the snapshot
                                 #[allow(clippy::unwrap_used)]
                                 let manifest = db.get_manifest().await.unwrap().unwrap();
+                                let height = manifest.height;
                                 solid.reset(manifest);
 
-                                info!(logger, "Restore db from snapshot complete");
+                                // Reset snapshot from
+                                snapshot_from = None;
+
+                                info!(logger, "Restore db from snapshot complete"; "height" => height);
                             }
                         }
 
                         NetworkEvent::Accept { accept } => {
-                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string(), "local_height" => solid.height());
                             solid.receive_accept(&accept, &peer_id);
                         }
 
