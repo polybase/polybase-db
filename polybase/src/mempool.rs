@@ -60,8 +60,6 @@ where
 
     /// Internal add function, used by both add and add_wait
     fn _add(&self, key: K, txn: V, changes: Vec<C>, tx: Option<Vec<oneshot::Sender<()>>>) {
-        println!("add txn: {:?} {:?}", key, txn);
-
         let mut state = self.state.lock();
 
         if state.txns.contains_key(&key) {
@@ -84,7 +82,6 @@ where
         let mut state = self.state.lock();
 
         for key in keys {
-            println!("commit txn: {:?} {:?}", lease, key);
             if let Some(mem_txn) = state.txns.remove(key) {
                 if let Some(senders) = mem_txn.senders {
                     for sender in senders {
@@ -123,14 +120,12 @@ where
             .unwrap_or_default()
             .into_iter()
             .for_each(|k| {
-                println!("free txn: {:?} {:?}", lease, k);
                 state.pool.push_front(k);
             });
     }
 
     /// Lease a specific key (based on another commit)
     pub fn lease_txn(&self, lease: &L, key: &K) {
-        println!("lease txn: {:?} {:?}", lease, key);
         let mut state = self.state.lock();
 
         // Remove from pool if exists

@@ -175,10 +175,10 @@ impl Network {
             return None;
         }
 
-        if !self.shared.state.lock().connected_peers.contains(peer) {
-            debug!(self.logger, "Attempt to send to disconnected peer"; "peer_id" => format!("{:?}", peer));
-            return None;
-        }
+        // if !self.shared.state.lock().connected_peers.contains(peer) {
+        //     debug!(self.logger, "Attempt to send to disconnected peer"; "peer_id" => format!("{:?}", peer));
+        //     return None;
+        // }
 
         let (tx, rx) = oneshot::channel();
 
