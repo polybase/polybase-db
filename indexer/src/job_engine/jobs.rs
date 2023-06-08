@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::RecordRoot;
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Job {
     pub job_group: String,
@@ -27,7 +29,19 @@ impl Job {
 // todo - change these dummy types to actual job types for the Job Engine
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum JobState {
-    JobType1 { num: i32 },
-    JobType2 { string: String, num: i32 },
-    JobType3 { b: bool },
+    AddIndexes {
+        collection_id: String,
+        id: String,
+        record: RecordRoot,
+    },
+    JobType1 {
+        num: i32,
+    },
+    JobType2 {
+        string: String,
+        num: i32,
+    },
+    JobType3 {
+        b: bool,
+    },
 }

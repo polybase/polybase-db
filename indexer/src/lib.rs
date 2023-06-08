@@ -1,5 +1,6 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
+use futures::executor::block_on;
 use std::path::Path;
 
 pub mod collection;
@@ -60,19 +61,32 @@ pub enum IndexerError {
 pub struct Indexer {
     logger: slog::Logger,
     store: store::Store,
-    job_engine: JobEngine,
+    job_engine: Option<JobEngine>,
 }
 
 impl Indexer {
     pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> Result<Self> {
-        let job_engine = JobEngine::new(path.as_ref(), logger.clone())?;
+        let job_engine_path = path.as_ref().to_path_buf();
+        let job_engine_logger = logger.clone();
+
         let store = store::Store::open(path)?;
 
-        Ok(Self {
+        let mut indexer = Self {
             logger,
             store,
-            job_engine,
-        })
+            job_engine: None,
+        };
+
+        let job_engine = block_on(async {
+            match JobEngine::new(job_engine_path, job_engine_logger, &indexer).await {
+                Ok(engine) => Ok(engine),
+                Err(error) => Err(IndexerError::from(error)),
+            }
+        })?;
+
+        indexer.job_engine = Some(job_engine);
+
+        Ok(indexer)
     }
 
     pub fn destroy(self) -> Result<()> {
@@ -92,7 +106,8 @@ impl Indexer {
     }
 
     pub async fn collection(&self, id: String) -> Result<Collection> {
-        Ok(Collection::load(self.logger.clone(), &self.store, &self.job_engine, id).await?)
+        let job_engine = self.job_engine.as_ref().unwrap();
+        Ok(Collection::load(self.logger.clone(), &self.store, &job_engine, id).await?)
     }
 
     pub async fn commit(&self) -> Result<()> {

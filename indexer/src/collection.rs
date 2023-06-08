@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::{
-    index, job_engine, json_to_record, keys, proto,
+    index,
+    job_engine::{self, jobs},
+    json_to_record, keys, proto,
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
@@ -1054,6 +1056,28 @@ impl<'a> Collection<'a> {
             self.delete_indexes(&id, old_value).await;
         }
 
+        //self.job_engine
+        //    .enqueue_job(jobs::Job::new(
+        //        self.collection_id.clone(),
+        //        1,
+        //        jobs::JobState::AddIndexes {
+        //            collection_id: self.collection_id.clone(),
+        //            id: id.clone(),
+        //            record: value.clone(),
+        //        },
+        //        true, // is_last_job
+        //    ))
+        //    .await;
+
+        //while !self
+        //    .job_engine
+        //    .check_job_group_completion(self.collection_id.clone())
+        //    .await
+        //    .unwrap()
+        //{
+        //    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        //}
+
         self.add_indexes(&id, &data_key, value).await;
 
         if self.collection_id == "Collection" && id != "Collection" {
@@ -1102,7 +1126,12 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
-    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
+    pub(crate) async fn add_indexes(
+        &self,
+        record_id: &str,
+        data_key: &keys::Key<'_>,
+        record: &RecordRoot,
+    ) {
         let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: match data_key.serialize() {
                 Ok(data) => data,

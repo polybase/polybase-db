@@ -1,17 +1,20 @@
-use slog::debug;
-
 mod job_store;
 pub mod jobs;
+
+use slog::debug;
+use std::collections::VecDeque;
 
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use futures::future;
 use std::collections::HashMap;
 use tokio::{sync::Mutex, time};
 
+use crate::keys::KeysError;
+use crate::{keys, Indexer, IndexerError};
+use job_store::JobStore;
 use jobs::{Job, JobState};
 
 pub(crate) type Result<T> = std::result::Result<T, JobEngineError>;
@@ -27,6 +30,22 @@ pub enum JobEngineError {
 
 const JOBS_CHECK_INTERVAL: u64 = 100;
 
+#[derive(Debug, thiserror::Error)]
+pub enum JobExecutionError {
+    #[error("job execution error: indexer error")]
+    IndexerError(#[from] IndexerError),
+
+    #[error("job execution error: keys error")]
+    KeysError(#[from] KeysError),
+}
+
+pub enum JobExecutionResultState {
+    Okay,
+    Shutdown,
+}
+
+pub type JobExecutionResult = std::result::Result<JobExecutionResultState, JobExecutionError>;
+
 /// The indexer Job Engine
 pub struct JobEngine {
     job_store: Arc<Mutex<job_store::JobStore>>,
@@ -35,7 +54,11 @@ pub struct JobEngine {
 }
 
 impl JobEngine {
-    pub(crate) fn new(indexer_store_path: impl AsRef<Path>, logger: slog::Logger) -> Result<Self> {
+    pub(crate) async fn new(
+        indexer_store_path: impl AsRef<Path>,
+        logger: slog::Logger,
+        indexer: &Indexer,
+    ) -> Result<Self> {
         // initialise the job store
         let job_store_path = get_job_store_path(indexer_store_path.as_ref());
         let job_store = job_store::JobStore::open(job_store_path)?;
@@ -43,59 +66,99 @@ impl JobEngine {
 
         let shared_job_store = job_store.clone();
         let shutdown = Arc::new(Mutex::new(false));
-
-        // todo - move this into a function
         let shared_shutdown = shutdown.clone();
-        tokio::spawn(async move {
-            let mut interval = time::interval(time::Duration::from_millis(JOBS_CHECK_INTERVAL));
 
-            loop {
-                let shutdown = shared_shutdown.lock().await;
-                if *shutdown {
-                    break;
-                }
-
-                interval.tick().await;
-
-                let jobs_map = {
-                    let store = shared_job_store.lock().await;
-                    store.get_jobs().await.unwrap_or(HashMap::new())
-                };
-
-                let mut tasks = Vec::new();
-                for (_job_group, jobs) in jobs_map {
-                    let store = shared_job_store.clone();
-
-                    tasks.push(tokio::spawn(async move {
-                        for job in jobs {
-                            // todo - change these when the JobState enum is properly defined, and
-                            match job.job_state {
-                                JobState::JobType1 { num } => println!("Got a num {num:?}"),
-                                JobState::JobType2 { ref string, num } => {
-                                    println!("Got a string {string:?} and a number {num:?}")
-                                }
-                                JobState::JobType3 { b } => println!("Got a bool: {b:?}"),
-                            }
-
-                            // delete the job
-                            {
-                                let store = store.lock().await;
-                                let _ = store.delete_job(job).await;
-                            }
-                        }
-                    }));
-                }
-
-                // wait for all the tasks to finish
-                future::join_all(tasks).await;
-            }
-        });
-
-        Ok(Self {
+        let job_engine = Self {
             job_store,
             shutdown,
             logger: logger.clone(),
-        })
+        };
+
+        // TODO - figure out a way to make this work - `await`ing here will block the
+        // constructor, but not awaiting it will not run the jobs!
+        // The constructor itself needs to be async because other wise the `process_job_groups`
+        // method will block, and that needs to be async because if we spawn tasks for the jobs, we
+        // cannot get a handle to the `indexer`!.
+        job_engine.process_job_groups(shared_job_store, shared_shutdown, &indexer);
+
+        Ok(job_engine)
+    }
+
+    async fn delete_job(&self, job: Job) {
+        let store = self.job_store.clone();
+        let store = store.lock().await;
+        let _ = store.delete_job(job).await;
+    }
+
+    async fn process_job(&self, indexer: &Indexer, job: Job) -> JobExecutionResult {
+        match job.job_state {
+            JobState::JobType1 { num } => {
+                println!("Got a num {num:?}");
+                Ok(JobExecutionResultState::Okay)
+            }
+            JobState::JobType2 { ref string, num } => {
+                println!("Got a string {string:?} and a number {num:?}");
+                Ok(JobExecutionResultState::Okay)
+            }
+            JobState::JobType3 { b } => {
+                println!("Got a bool: {b:?}");
+                Ok(JobExecutionResultState::Okay)
+            }
+
+            JobState::AddIndexes {
+                ref collection_id,
+                ref id,
+                ref record,
+            } => {
+                let collection = indexer.collection(collection_id.clone()).await?;
+                let data_key = keys::Key::new_data(collection_id.clone(), id.clone())?;
+                collection.add_indexes(&id, &data_key, &record).await;
+                Ok(JobExecutionResultState::Okay)
+            }
+        }
+    }
+
+    async fn process_jobs(
+        &self,
+        indexer: &Indexer,
+        store: Arc<Mutex<JobStore>>,
+        jobs: VecDeque<Job>,
+    ) -> Vec<JobExecutionResult> {
+        let mut results = Vec::new();
+        for job in jobs {
+            results.push(self.process_job(indexer, job.clone()).await);
+            self.delete_job(job).await;
+        }
+
+        results
+    }
+
+    async fn process_job_groups(
+        &self,
+        shared_job_store: Arc<Mutex<job_store::JobStore>>,
+        shared_shutdown: Arc<Mutex<bool>>,
+        indexer: &Indexer,
+    ) -> JobExecutionResult {
+        let mut interval = time::interval(time::Duration::from_millis(JOBS_CHECK_INTERVAL));
+
+        loop {
+            let shutdown = shared_shutdown.lock().await;
+            if *shutdown {
+                return Ok(JobExecutionResultState::Shutdown);
+            }
+
+            interval.tick().await;
+
+            let jobs_map = {
+                let store = shared_job_store.lock().await;
+                store.get_jobs().await.unwrap_or(HashMap::new())
+            };
+
+            for (_job_group, jobs) in jobs_map {
+                let store = shared_job_store.clone();
+                let results = self.process_jobs(indexer, store, jobs).await;
+            }
+        }
     }
 
     /// Shut down the Job Engine.
@@ -120,10 +183,10 @@ impl JobEngine {
     }
 
     /// Check if the job group has finished executing
-    pub(crate) async fn check_job_group_completion(&self, job: Job) -> Result<bool> {
+    pub(crate) async fn check_job_group_completion(&self, job_group: String) -> Result<bool> {
         let store = self.job_store.clone();
         let store = store.lock().await;
-        Ok(store.is_job_group_complete(&job.job_group).await?)
+        Ok(store.is_job_group_complete(&job_group).await?)
     }
 }
 
@@ -139,6 +202,42 @@ pub(crate) mod tests {
     use futures::executor::block_on;
     use slog::Drain;
     use std::ops::{Deref, DerefMut};
+
+    pub(crate) struct TestIndexer(Option<Indexer>);
+
+    impl Default for TestIndexer {
+        fn default() -> Self {
+            let temp_dir = std::env::temp_dir();
+            let path = temp_dir.join(format!(
+                "test-gateway-rocksdb-store-{}",
+                rand::random::<u32>()
+            ));
+
+            Self(Some(Indexer::new(logger(), path).unwrap()))
+        }
+    }
+
+    impl Drop for TestIndexer {
+        fn drop(&mut self) {
+            if let Some(indexer) = self.0.take() {
+                indexer.destroy().unwrap();
+            }
+        }
+    }
+
+    impl Deref for TestIndexer {
+        type Target = Indexer;
+
+        fn deref(&self) -> &Self::Target {
+            self.0.as_ref().unwrap()
+        }
+    }
+
+    impl DerefMut for TestIndexer {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            self.0.as_mut().unwrap()
+        }
+    }
 
     pub(crate) struct TestJobEngine(Option<JobEngine>);
 
@@ -156,7 +255,13 @@ pub(crate) mod tests {
                 rand::random::<u32>(),
             ));
 
-            Self(Some(JobEngine::new(indexer_path, logger()).unwrap()))
+            Self(block_on(async {
+                Some(
+                    JobEngine::new(indexer_path, logger(), &TestIndexer::default())
+                        .await
+                        .unwrap(),
+                )
+            }))
         }
     }
 
