@@ -77,7 +77,7 @@ pub struct Config {
     pub snapshot_chunk_size: usize,
 
     /// Size of the chunks of data sent during snapshot load
-    #[arg(long, env = "MIN_BLOCK_DURATION", default_value = "1000")]
+    #[arg(long, env = "MIN_BLOCK_DURATION", default_value = "500")]
     pub min_block_duration: u64,
 
     /// Sentry DSN

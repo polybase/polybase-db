@@ -6,7 +6,7 @@ use actix_web::{
     Error,
 };
 use futures_util::future::LocalBoxFuture;
-use slog::{crit, debug, error, Logger};
+use slog::{crit, error, info, Logger};
 use std::future::{ready, Ready};
 
 pub struct SlogMiddleware {
@@ -91,7 +91,7 @@ where
                     {
                         if let Some(metrics_data) = res.response().extensions().get::<MetricsData>()
                         {
-                            debug!(logger, "{}", metrics_data; metrics_data);
+                            info!(logger, "{}", metrics_data; metrics_data);
                         }
                     }
                     Ok(res)

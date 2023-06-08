@@ -447,6 +447,11 @@ async fn main() -> Result<()> {
 
                         NetworkEvent::Proposal { manifest } => {
                             info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
+
+                            // Lease the proposal changes
+                            #[allow(clippy::expect_used)]
+                            db.lease(&manifest).await.expect("execpted to lease txns");
+
                             solid.receive_proposal(manifest);
                         }
 
@@ -483,6 +488,12 @@ async fn main() -> Result<()> {
                             height,
                             skips,
                         } => {
+                            // Wait minimum period
+                            if last_commit + Duration::from_millis(config.min_block_duration) > Instant::now() {
+                                let delay = last_commit + Duration::from_millis(config.min_block_duration) - Instant::now();
+                                tokio::time::sleep(delay).await;
+                            }
+
                             // Get changes from the pending changes cache, if we have an error
                             // skip being the leader and just continue
                             let txns = match db.propose_txns(height) {
@@ -492,12 +503,6 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
                             };
-
-                            // Wait minimum period
-                            if last_commit + Duration::from_millis(config.min_block_duration) > Instant::now() {
-                                let delay = last_commit + Duration::from_millis(config.min_block_duration) - Instant::now();
-                                tokio::time::sleep(delay).await;
-                            }
 
                             // Create the proposl manfiest
                             let manifest = ProposalManifest {

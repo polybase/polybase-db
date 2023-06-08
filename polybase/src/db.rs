@@ -323,9 +323,10 @@ impl Db {
     pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
         // TODO: check txns do not affect the same record
         self.mempool
-            .lease(height, self.config.block_txns_count)
+            .lease_batch(height, self.config.block_txns_count)
             .into_iter()
             .map(|(id, call_txn)| {
+                println!("propose txn: {:?} {:?}", height, id);
                 Ok(solid::txn::Txn {
                     // TODO: remove unwrap
                     id: id.to_vec(),
@@ -335,13 +336,36 @@ impl Db {
             .collect::<Result<Vec<_>>>()
     }
 
+    pub async fn lease(&self, manifest: &proposal::ProposalManifest) -> Result<()> {
+        let txns = &manifest.txns;
+        for txn in txns {
+            let call_txn = CallTxn::deserialize(&txn.data)?;
+            let hash: [u8; 32] = call_txn.hash()?;
+
+            // Add the txn if not existing
+            if !self.mempool.contains(&hash) {
+                self.add_txn(call_txn).await?;
+            }
+
+            self.mempool.lease_txn(&manifest.height, &hash);
+        }
+        Ok(())
+    }
+
     pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let txns = &manifest.txns;
         let mut keys = vec![];
+
         for txn in txns.iter() {
             let call_txn = CallTxn::deserialize(&txn.data)?;
-            let hash = call_txn.hash()?;
-            self.commit_txn(call_txn).await?;
+            let hash: [u8; 32] = call_txn.hash()?;
+            match self.commit_txn(call_txn).await {
+                Ok(_) => {}
+                Err(err) => {
+                    println!("error txn: {:?}", hash);
+                    return Err(err);
+                }
+            };
             keys.push(hash);
         }
 
