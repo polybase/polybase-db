@@ -413,17 +413,23 @@ async fn health(state: web::Data<RouteState>) -> impl Responder {
 struct StatusResponse {
     status: String,
     root: String,
+    height: usize,
     peers: usize,
-    leader: usize,
 }
 
 #[get("/v0/status")]
 async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
+    let manifest = state.db.get_manifest().await?;
+    let height = manifest.as_ref().map(|m| m.height).unwrap_or(0);
+    let hash = manifest
+        .as_ref()
+        .map(|m| m.hash().to_string())
+        .unwrap_or("0x0".to_string());
     Ok(web::Json(StatusResponse {
         status: "OK".to_string(),
-        root: hex::encode(state.db.rollup.root()?),
+        root: hash,
+        height,
         peers: 23,
-        leader: 12,
     }))
 }
 

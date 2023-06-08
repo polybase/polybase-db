@@ -1,6 +1,5 @@
 use crate::hash;
 use crate::mempool::Mempool;
-use crate::rollup::Rollup;
 use crate::txn::{self, CallTxn};
 use crate::util;
 use futures::TryStreamExt;
@@ -87,8 +86,6 @@ impl Default for DbConfig {
 pub struct Db {
     mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
-    // TODO: remove this pub
-    pub rollup: Rollup,
     indexer: Indexer,
     sender: AsyncMutex<mpsc::Sender<CallTxn>>,
     receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
@@ -107,7 +104,6 @@ impl Db {
 
         Ok(Self {
             mempool: Mempool::new(),
-            rollup: Rollup::new(),
             gateway: gateway::initialize(logger.clone()),
             indexer,
             sender: AsyncMutex::new(sender),

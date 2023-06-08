@@ -41,7 +41,7 @@ extraEnvVarsSecret: ""
 
 ## @param replicaCount Number of Polybase replicas
 ##
-replicaCount: 1
+replicaCount: 3
 ## @param updateStrategy.type updateStrategy for Polybase statefulset
 ## ref: https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#update-strategies
 ##
