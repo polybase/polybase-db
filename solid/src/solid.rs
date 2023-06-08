@@ -138,6 +138,10 @@ impl Solid {
             .to_vec()
     }
 
+    pub fn min_proposal_height(&self) -> usize {
+        self.shared.store.lock().min_proposal_height()
+    }
+
     /// Receive a new proposal from an external source, we do some basic validation
     /// to make sure this is a valid proposal that could be confirmed.
     pub fn receive_proposal(&mut self, manifest: ProposalManifest) {

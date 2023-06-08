@@ -79,7 +79,7 @@ pub struct DbConfig {
 impl Default for DbConfig {
     fn default() -> Self {
         DbConfig {
-            block_txns_count: 100,
+            block_txns_count: 2000,
         }
     }
 }
@@ -249,9 +249,6 @@ impl Db {
     pub async fn add_txn(&self, txn: CallTxn) -> Result<String> {
         let (record_id, changes) = self.validate_call(&txn).await?;
         let hash = txn.hash()?;
-
-        // Send txn event
-        self.sender.lock().await.send(txn.clone()).await?;
 
         // Wait for txn to be committed
         self.mempool.add(hash, txn, changes);

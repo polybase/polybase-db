@@ -106,12 +106,7 @@ impl Network {
                                 request_response::Message::Response{ request_id, .. } => {
                                     // Notify sender that request/response process is complete
                                     if let Some(tx) = requests.remove(&request_id) {
-                                        match tx.send(()) {
-                                            Ok(_) => {},
-                                            Err(_) => {
-                                                error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
-                                            }
-                                        }
+                                        tx.send(()).ok();
                                     }
                                 },
                                 request_response::Message::Request{ request, channel, .. } => {
