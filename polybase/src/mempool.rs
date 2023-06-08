@@ -23,9 +23,9 @@ pub struct MempoolState<K, V, L, C> {
 
 impl<K, V, L, C> Mempool<K, V, L, C>
 where
-    K: Eq + PartialEq + Hash + Clone,
-    V: Clone,
-    L: Eq + PartialEq + Hash + Clone,
+    K: Eq + PartialEq + Hash + Clone + std::fmt::Debug,
+    V: Clone + std::fmt::Debug,
+    L: Eq + PartialEq + Hash + Clone + std::fmt::Debug,
     C: Eq + PartialEq + Hash + Clone,
 {
     pub fn new() -> Self {
@@ -45,13 +45,13 @@ where
         self._add(key, txn, changes, None);
     }
 
-    // #[cfg(test)]
-    // pub fn has(&self, key: &K) -> bool {
-    //     self.txns.lock().contains_key(key)
-    // }
+    pub fn contains(&self, key: &K) -> bool {
+        self.state.lock().txns.contains_key(key)
+    }
 
     /// Add a transaction to the mempool and wait for it to be committed. This will only
     /// be called where the txn is directly submitted to this node from a client
+    // TODO: handle duplicate add_wait, so we properly await
     pub async fn add_wait(&self, key: K, txn: V, changes: Vec<C>) {
         let (tx, rx) = oneshot::channel();
         self._add(key, txn, changes, Some(vec![tx]));
@@ -60,7 +60,13 @@ where
 
     /// Internal add function, used by both add and add_wait
     fn _add(&self, key: K, txn: V, changes: Vec<C>, tx: Option<Vec<oneshot::Sender<()>>>) {
+        println!("add txn: {:?} {:?}", key, txn);
+
         let mut state = self.state.lock();
+
+        if state.txns.contains_key(&key) {
+            return;
+        }
 
         state.txns.entry(key.clone()).or_insert(MempoolTxn {
             txn,
@@ -78,6 +84,7 @@ where
         let mut state = self.state.lock();
 
         for key in keys {
+            println!("commit txn: {:?} {:?}", lease, key);
             if let Some(mem_txn) = state.txns.remove(key) {
                 if let Some(senders) = mem_txn.senders {
                     for sender in senders {
@@ -115,12 +122,38 @@ where
             .remove(&lease)
             .unwrap_or_default()
             .into_iter()
-            .for_each(|k| state.pool.push_front(k));
+            .for_each(|k| {
+                println!("free txn: {:?} {:?}", lease, k);
+                state.pool.push_front(k);
+            });
+    }
+
+    /// Lease a specific key (based on another commit)
+    pub fn lease_txn(&self, lease: &L, key: &K) {
+        println!("lease txn: {:?} {:?}", lease, key);
+        let mut state = self.state.lock();
+
+        // Remove from pool if exists
+        let k = state
+            .pool
+            .iter()
+            .position(|x| x == key)
+            .and_then(|p| state.pool.remove(p));
+
+        // Get an owned version of the key
+        let key = if let Some(k) = k { k } else { key.clone() };
+
+        // Add it to the lease
+        state
+            .leased
+            .entry(lease.clone())
+            .or_insert(HashSet::new())
+            .insert(key);
     }
 
     /// Lease a set of txns, these txns will now be locked until the lease
     /// is committed
-    pub fn lease(&self, lease: L, max_count: usize) -> Vec<(K, V)> {
+    pub fn lease_batch(&self, lease: L, max_count: usize) -> Vec<(K, V)> {
         let mut state = self.state.lock();
         let mut txns = vec![];
         let mut discard = vec![];
@@ -188,6 +221,7 @@ mod tests {
         {
             let state = mempool.state.lock();
             assert_eq!(state.txns.len(), 1);
+            assert_eq!(state.pool.len(), 1);
             assert_eq!(state.txns.get("key1").unwrap().txn, 42);
         }
 
@@ -233,13 +267,13 @@ mod tests {
     }
 
     #[test]
-    fn test_lease() {
+    fn test_lease_batch() {
         let mempool: Mempool<String, u32, usize, usize> = Mempool::new();
         mempool.add("key1".to_string(), 42, vec![]);
         mempool.add("key2".to_string(), 24, vec![]);
         mempool.add("key3".to_string(), 15, vec![]);
 
-        let batch = mempool.lease(2, 2);
+        let batch = mempool.lease_batch(2, 2);
         assert_eq!(batch.len(), 2);
 
         {
@@ -249,7 +283,7 @@ mod tests {
 
         mempool.commit(2, vec![&"key1".to_string()]);
 
-        let batch = mempool.lease(2, 2);
+        let batch = mempool.lease_batch(2, 2);
         assert_eq!(batch.len(), 2);
 
         // assert_eq!(batch[1], ("key2".to_string(), 24));
@@ -263,7 +297,7 @@ mod tests {
         mempool.add("key2".to_string(), 24, vec![3, 4, 5]);
         mempool.add("key3".to_string(), 15, vec![6, 7, 8]);
 
-        let batch = mempool.lease(2, 3);
+        let batch = mempool.lease_batch(2, 3);
         assert_eq!(batch.len(), 2);
 
         {

@@ -1,4 +1,7 @@
+extern crate chrono;
+
 use crate::errors::Result;
+use chrono::prelude::*;
 use libp2p::identity;
 use rand::RngCore;
 use std::path::PathBuf;
@@ -39,4 +42,10 @@ pub(crate) fn generate_key() -> (identity::Keypair, [u8; 32]) {
     #[allow(clippy::unwrap_used)]
     let keypair = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
     (keypair, bytes)
+}
+
+pub(crate) fn unix_now() -> usize {
+    let now = Utc::now();
+    let timestamp = now.timestamp();
+    timestamp as usize
 }

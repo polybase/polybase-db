@@ -12,7 +12,7 @@ use protocol::PolyProtocol;
 use slog::{debug, info};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::{select, sync::mpsc, sync::oneshot};
+use tokio::{select, sync::mpsc, sync::oneshot, sync::Mutex as AsyncMutex};
 use transport::create_transport;
 
 mod behaviour;
@@ -35,7 +35,7 @@ pub enum Error {
 }
 
 pub struct Network {
-    netin_rx: mpsc::UnboundedReceiver<(NetworkPeerId, NetworkEvent)>,
+    netin_rx: AsyncMutex<mpsc::UnboundedReceiver<(NetworkPeerId, NetworkEvent)>>,
     netout_tx: mpsc::UnboundedSender<(PeerId, NetworkEvent, oneshot::Sender<()>)>,
     local_peer_id: PeerId,
     shared: Arc<NetworkShared>,
@@ -106,12 +106,7 @@ impl Network {
                                 request_response::Message::Response{ request_id, .. } => {
                                     // Notify sender that request/response process is complete
                                     if let Some(tx) = requests.remove(&request_id) {
-                                        match tx.send(()) {
-                                            Ok(_) => {},
-                                            Err(_) => {
-                                                error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
-                                            }
-                                        }
+                                        tx.send(()).ok();
                                     }
                                 },
                                 request_response::Message::Request{ request, channel, .. } => {
@@ -143,7 +138,7 @@ impl Network {
         });
 
         Ok(Network {
-            netin_rx,
+            netin_rx: AsyncMutex::new(netin_rx),
             netout_tx,
             local_peer_id,
             shared,
@@ -197,8 +192,8 @@ impl Network {
         Some(rx)
     }
 
-    pub async fn next(&mut self) -> Option<(NetworkPeerId, NetworkEvent)> {
-        self.netin_rx.recv().await
+    pub async fn next(&self) -> Option<(NetworkPeerId, NetworkEvent)> {
+        self.netin_rx.lock().await.recv().await
     }
 }
 
@@ -228,7 +223,7 @@ struct NetworkSharedState {
     connected_peers: HashSet<PeerId>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NetworkPeerId(pub PeerId);
 
 impl From<solid::peer::PeerId> for NetworkPeerId {

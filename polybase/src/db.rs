@@ -5,6 +5,7 @@ use crate::txn::{self, CallTxn};
 use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
+use indexer::snapshot::{SnapshotChunk, SnapshotIterator};
 use indexer::{
     collection::validate_collection_record, validate_schema_change, Cursor, Indexer, ListQuery,
     RecordRoot,
@@ -14,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
 use std::cmp::min;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
@@ -79,7 +79,7 @@ pub struct DbConfig {
 impl Default for DbConfig {
     fn default() -> Self {
         DbConfig {
-            block_txns_count: 100,
+            block_txns_count: 2000,
         }
     }
 }
@@ -87,9 +87,9 @@ impl Default for DbConfig {
 pub struct Db {
     mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
+    // TODO: remove this pub
     pub rollup: Rollup,
-    pub indexer: Arc<Indexer>,
-    // logger: slog::Logger,
+    indexer: Indexer,
     sender: AsyncMutex<mpsc::Sender<CallTxn>>,
     receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
     config: DbConfig,
@@ -103,19 +103,28 @@ impl Db {
         // Create the indexer
         #[allow(clippy::unwrap_used)]
         let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
-        let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir)?);
+        let indexer = Indexer::new(logger.clone(), indexer_dir)?;
 
         Ok(Self {
             mempool: Mempool::new(),
             rollup: Rollup::new(),
             gateway: gateway::initialize(logger.clone()),
             indexer,
-            // logger,
             sender: AsyncMutex::new(sender),
             receiver: AsyncMutex::new(receiver),
             config,
             out_of_sync_height: Mutex::new(None),
         })
+    }
+
+    /// Is the node healthy and up to date
+    pub fn is_healthy(&self) -> bool {
+        self.out_of_sync_height.lock().is_none()
+    }
+
+    /// Set the node as out of sync
+    pub fn out_of_sync(&self, height: usize) {
+        self.out_of_sync_height.lock().replace(height);
     }
 
     pub async fn is_empty(&self) -> Result<bool> {
@@ -223,16 +232,6 @@ impl Db {
         })
     }
 
-    /// Is the node healthy and up to date
-    pub fn is_healthy(&self) -> bool {
-        self.out_of_sync_height.lock().is_none()
-    }
-
-    /// Set the node as out of sync
-    pub fn out_of_sync(&self, height: usize) {
-        self.out_of_sync_height.lock().replace(height);
-    }
-
     /// Applies a call txn
     pub async fn call(&self, txn: CallTxn) -> Result<String> {
         let (record_id, changes) = self.validate_call(&txn).await?;
@@ -251,9 +250,6 @@ impl Db {
         let (record_id, changes) = self.validate_call(&txn).await?;
         let hash = txn.hash()?;
 
-        // Send txn event
-        self.sender.lock().await.send(txn.clone()).await?;
-
         // Wait for txn to be committed
         self.mempool.add(hash, txn, changes);
 
@@ -268,7 +264,7 @@ impl Db {
             args,
             auth,
         } = txn;
-        let indexer = Arc::clone(&self.indexer);
+        // let indexer = Arc::clone(&self.indexer);
         let mut output_record_id = record_id.clone();
         let mut output_records = HashSet::new();
 
@@ -276,7 +272,7 @@ impl Db {
         let changes = self
             .gateway
             .call(
-                &indexer,
+                &self.indexer,
                 collection_id.clone(),
                 function_name,
                 record_id.clone(),
@@ -327,9 +323,10 @@ impl Db {
     pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
         // TODO: check txns do not affect the same record
         self.mempool
-            .lease(height, self.config.block_txns_count)
+            .lease_batch(height, self.config.block_txns_count)
             .into_iter()
             .map(|(id, call_txn)| {
+                println!("propose txn: {:?} {:?}", height, id);
                 Ok(solid::txn::Txn {
                     // TODO: remove unwrap
                     id: id.to_vec(),
@@ -339,13 +336,36 @@ impl Db {
             .collect::<Result<Vec<_>>>()
     }
 
+    pub async fn lease(&self, manifest: &proposal::ProposalManifest) -> Result<()> {
+        let txns = &manifest.txns;
+        for txn in txns {
+            let call_txn = CallTxn::deserialize(&txn.data)?;
+            let hash: [u8; 32] = call_txn.hash()?;
+
+            // Add the txn if not existing
+            if !self.mempool.contains(&hash) {
+                self.add_txn(call_txn).await?;
+            }
+
+            self.mempool.lease_txn(&manifest.height, &hash);
+        }
+        Ok(())
+    }
+
     pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let txns = &manifest.txns;
         let mut keys = vec![];
+
         for txn in txns.iter() {
             let call_txn = CallTxn::deserialize(&txn.data)?;
-            let hash = call_txn.hash()?;
-            self.commit_txn(call_txn).await?;
+            let hash: [u8; 32] = call_txn.hash()?;
+            match self.commit_txn(call_txn).await {
+                Ok(_) => {}
+                Err(err) => {
+                    println!("error txn: {:?}", hash);
+                    return Err(err);
+                }
+            };
             keys.push(hash);
         }
 
@@ -380,14 +400,13 @@ impl Db {
             args,
             auth,
         } = &txn;
-        let indexer = Arc::clone(&self.indexer);
         // let output_record_id = record_id.clone();
 
         // Get changes
         let changes = self
             .gateway
             .call(
-                &indexer,
+                &self.indexer,
                 collection_id.clone(),
                 function_name,
                 record_id.clone(),
@@ -422,16 +441,19 @@ impl Db {
         Ok(())
     }
 
-    pub fn snapshot(&self) -> Result<Vec<u8>> {
-        let index = self.indexer.snapshot()?;
-        let snapshot = DbSnapshot { index };
-        let data = bincode::serialize(&snapshot)?;
-        Ok(data)
+    /// Reset all data in the database
+    pub fn reset(&self) -> Result<()> {
+        Ok(self.indexer.reset()?)
     }
 
-    pub fn restore(&self, data: &[u8]) -> Result<()> {
-        let snapshot: DbSnapshot = bincode::deserialize(data)?;
-        self.indexer.restore(snapshot.index)?;
+    /// Create a snapshot iterator, that can be used to iterate over the
+    /// entire database in chunks
+    pub fn snapshot_iter(&self, chunk_size: usize) -> SnapshotIterator {
+        self.indexer.snapshot(chunk_size)
+    }
+
+    pub fn restore_chunk(&self, chunk: SnapshotChunk) -> Result<()> {
+        self.indexer.restore(chunk)?;
         Ok(())
     }
 
