@@ -326,7 +326,6 @@ impl Db {
             .lease_batch(height, self.config.block_txns_count)
             .into_iter()
             .map(|(id, call_txn)| {
-                println!("propose txn: {:?} {:?}", height, id);
                 Ok(solid::txn::Txn {
                     // TODO: remove unwrap
                     id: id.to_vec(),
@@ -362,7 +361,6 @@ impl Db {
             match self.commit_txn(call_txn).await {
                 Ok(_) => {}
                 Err(err) => {
-                    println!("error txn: {:?}", hash);
                     return Err(err);
                 }
             };

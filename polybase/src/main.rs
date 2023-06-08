@@ -449,8 +449,9 @@ async fn main() -> Result<()> {
                             info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
 
                             // Lease the proposal changes
-                            #[allow(clippy::expect_used)]
-                            db.lease(&manifest).await.expect("execpted to lease txns");
+                            // #[allow(clippy::expect_used)]
+                            // TODO: handle the error better
+                            db.lease(&manifest).await.ok();
 
                             solid.receive_proposal(manifest);
                         }
