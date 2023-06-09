@@ -1,7 +1,6 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-use futures::executor::block_on;
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 pub mod collection;
 mod index;
@@ -61,32 +60,24 @@ pub enum IndexerError {
 pub struct Indexer {
     logger: slog::Logger,
     store: store::Store,
-    job_engine: Option<JobEngine>,
 }
 
 impl Indexer {
-    pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> Result<Self> {
-        let job_engine_path = path.as_ref().to_path_buf();
-        let job_engine_logger = logger.clone();
-
+    pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> Result<Arc<Self>> {
         let store = store::Store::open(path)?;
+        let indexer = Arc::new(Self { logger, store });
 
-        let mut indexer = Self {
-            logger,
-            store,
-            job_engine: None,
-        };
-
-        let job_engine = block_on(async {
-            match JobEngine::new(job_engine_path, job_engine_logger, &indexer).await {
-                Ok(engine) => Ok(engine),
-                Err(error) => Err(IndexerError::from(error)),
-            }
-        })?;
-
-        indexer.job_engine = Some(job_engine);
+        let shared_indexer = indexer.clone();
+        tokio::spawn(Indexer::some_concurrent_task(shared_indexer));
 
         Ok(indexer)
+    }
+
+    async fn some_concurrent_task(indexer: Arc<Indexer>) {
+        loop {
+            println!("Hello!");
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
     }
 
     pub fn destroy(self) -> Result<()> {
@@ -106,8 +97,7 @@ impl Indexer {
     }
 
     pub async fn collection(&self, id: String) -> Result<Collection> {
-        let job_engine = self.job_engine.as_ref().unwrap();
-        Ok(Collection::load(self.logger.clone(), &self.store, &job_engine, id).await?)
+        Ok(Collection::load(self.logger.clone(), &self, &self.store, id).await?)
     }
 
     pub async fn commit(&self) -> Result<()> {

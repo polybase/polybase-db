@@ -201,9 +201,12 @@ pub(crate) mod tests {
     use super::*;
     use futures::executor::block_on;
     use slog::Drain;
-    use std::ops::{Deref, DerefMut};
+    use std::{
+        ops::{Deref, DerefMut},
+        sync::Arc,
+    };
 
-    pub(crate) struct TestIndexer(Option<Indexer>);
+    pub(crate) struct TestIndexer(Option<Arc<Indexer>>);
 
     impl Default for TestIndexer {
         fn default() -> Self {
@@ -220,7 +223,9 @@ pub(crate) mod tests {
     impl Drop for TestIndexer {
         fn drop(&mut self) {
             if let Some(indexer) = self.0.take() {
-                indexer.destroy().unwrap();
+                if let Ok(indexer) = Arc::try_unwrap(indexer) {
+                    indexer.destroy().unwrap();
+                }
             }
         }
     }
@@ -230,12 +235,6 @@ pub(crate) mod tests {
 
         fn deref(&self) -> &Self::Target {
             self.0.as_ref().unwrap()
-        }
-    }
-
-    impl DerefMut for TestIndexer {
-        fn deref_mut(&mut self) -> &mut Self::Target {
-            self.0.as_mut().unwrap()
         }
     }
 

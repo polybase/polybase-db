@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use slog::Drain;
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
 use url::form_urlencoded::byte_serialize;
 
 use crate::config::Config;
@@ -65,7 +66,9 @@ async fn main() -> Result<()> {
     println!("Indexer store path: {}", indexer_dir.display());
 
     let indexer = indexer::Indexer::new(logger.clone(), indexer_dir.clone()).unwrap();
-    indexer.destroy().unwrap();
+    if let Ok(indexer) = Arc::try_unwrap(indexer) {
+        indexer.destroy().unwrap();
+    }
 
     println!("Database reset");
 
