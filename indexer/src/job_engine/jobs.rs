@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::RecordRoot;
 
@@ -12,13 +13,13 @@ pub struct Job {
 
 impl Job {
     pub fn new(
-        job_group: impl Into<String>,
+        job_group: impl AsRef<str>,
         id: usize,
         job_state: JobState,
         is_last_job: bool,
     ) -> Self {
         Self {
-            job_group: job_group.into(),
+            job_group: job_group.as_ref().to_owned(),
             id,
             job_state,
             is_last_job,
@@ -26,11 +27,28 @@ impl Job {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum JobState {
     AddIndexes {
         collection_id: String,
         id: String,
         record: RecordRoot,
     },
+}
+
+impl fmt::Debug for JobState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JobState::AddIndexes {
+                ref collection_id,
+                ref id,
+                ref record,
+            } => {
+                write!(
+                    f,
+                    "AddIndexes {{ collection_id: {collection_id:?}, id: {id:?} }}"
+                )
+            }
+        }
+    }
 }

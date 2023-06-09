@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::{
-    index, json_to_record, keys, proto,
+    index,
+    job_engine::jobs,
+    json_to_record, keys, proto,
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
@@ -1053,29 +1055,25 @@ impl<'a> Collection<'a> {
             self.delete_indexes(&id, old_value).await;
         }
 
-        //self.indexer
-        //    .enqueue_job(jobs::Job::new(
-        //        self.collection_id.clone(),
-        //        1,
-        //        jobs::JobState::AddIndexes {
-        //            collection_id: self.collection_id.clone(),
-        //            id: id.clone(),
-        //            record: value.clone(),
-        //        },
-        //        true, // is_last_job
-        //    ))
-        //    .await;
+        self.indexer
+            .enqueue_job(jobs::Job::new(
+                self.collection_id.clone(),
+                1,
+                jobs::JobState::AddIndexes {
+                    collection_id: self.collection_id.clone(),
+                    id: id.clone(),
+                    record: value.clone(),
+                },
+                true, // is_last_job
+            ))
+            .await;
 
-        //while !self
-        //    .indexer
-        //    .check_job_group_completion(self.collection_id.clone())
-        //    .await
-        //    .unwrap()
-        //{
-        //    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        //}
+        println!("waiting for add_indexes job completion");
 
-        self.add_indexes(&id, &data_key, value).await;
+        self.indexer
+            .await_job_completion(self.collection_id.clone())
+            .await
+            .unwrap(); // TODO - error handling?
 
         if self.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {

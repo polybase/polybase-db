@@ -1,6 +1,7 @@
 pub(super) mod job_store;
 pub mod jobs;
 
+use futures::future;
 use slog::{debug, info};
 use std::{
     collections::{HashMap, VecDeque},
@@ -9,6 +10,8 @@ use std::{
 use tokio::time::{interval, sleep, Duration};
 
 use crate::{job_engine::jobs::JobState, keys};
+
+use self::job_store::JobStoreError;
 
 use super::{Indexer, IndexerError};
 use job_store::JobStore;
@@ -66,7 +69,7 @@ pub(super) async fn check_for_jobs_to_execute(
             logger,
             "[Job Engine] Checking for jobs in the jobs store to execute"
         );
-        let jobs_map = get_jobs(job_store).await.unwrap_or(HashMap::new());
+        let jobs_map = get_jobs(job_store.clone()).await.unwrap_or(HashMap::new());
 
         if !jobs_map.is_empty() {
             info!(logger, "[Job Engine] Found jobs queued for execution");
@@ -77,13 +80,18 @@ pub(super) async fn check_for_jobs_to_execute(
                 let indexer = indexer.clone();
                 let logger = logger.clone();
 
+                let job_store = job_store.clone();
                 job_group_tasks.push(tokio::spawn(async move {
                     // execute each job within a job group sequentially
                     for job in jobs {
-                        execute_job(job, indexer.clone(), logger.clone()).await;
+                        execute_job(job.clone(), indexer.clone(), logger.clone()).await;
+                        delete_job(job, job_store.clone()).await;
                     }
                 }));
             }
+
+            // wait for all jobs in the job group to finish execution
+            let job_exec_results = future::join_all(job_group_tasks).await;
         } else {
             info!(logger, "[Job Engine] Found no queued jobs");
         }
@@ -126,10 +134,20 @@ pub(super) async fn delete_job(job: Job, job_store: Arc<JobStore>) -> JobEngineR
 
 /// Wait for the all the jobs in the job group to finish execution
 pub(super) async fn await_job_completion(
-    job_group: impl Into<String>,
+    job_group: impl AsRef<str>,
     job_store: Arc<JobStore>,
-) -> JobEngineResult<bool> {
-    Ok(job_store.is_job_group_complete(&job_group.into()).await?)
+) -> JobEngineResult<()> {
+    loop {
+        // TODO: better way?
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+        match job_store.is_job_group_complete(job_group.as_ref()).await {
+            Ok(true) => break,
+            Ok(false) => continue,
+            Err(e) => return Err(JobEngineError::from(e)),
+        }
+    }
+    Ok(())
 }
 
 async fn get_jobs(job_store: Arc<JobStore>) -> JobEngineResult<HashMap<String, VecDeque<Job>>> {

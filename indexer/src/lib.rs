@@ -148,9 +148,8 @@ impl Indexer {
         Ok(())
     }
 
-    pub async fn await_job_completion(&self, job_group: impl Into<String>) -> Result<()> {
-        job_engine::await_job_completion(job_group, self.job_store.clone()).await?;
-        Ok(())
+    pub async fn await_job_completion(&self, job_group: impl AsRef<str>) -> Result<()> {
+        Ok(job_engine::await_job_completion(job_group, self.job_store.clone()).await?)
     }
 
     fn get_job_store_path(path: &Path) -> PathBuf {
