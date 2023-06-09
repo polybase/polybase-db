@@ -1220,10 +1220,12 @@ mod tests {
     impl Default for TestIndexer {
         fn default() -> Self {
             let temp_dir = std::env::temp_dir();
-            let path = temp_dir.join(format!(
+            let mut path = temp_dir.join(format!(
                 "test-gateway-rocksdb-store-{}",
                 rand::random::<u32>()
             ));
+
+            path.push("data/indexer.db");
 
             Self(Some(Indexer::new(logger(), path).unwrap()))
         }

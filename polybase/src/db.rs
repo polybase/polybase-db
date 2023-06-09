@@ -495,10 +495,13 @@ impl Db {
         record: RecordRoot,
     ) -> Result<()> {
         // Get the indexer collection instance
+        println!("db.rs - before collection set");
         let collection = self.indexer.collection(collection_id.clone()).await?;
 
         // Update the indexer
         collection.set(record_id.clone(), &record).await?;
+
+        println!("db.rs : collection.set complete");
 
         Ok(())
     }

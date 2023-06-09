@@ -7,7 +7,8 @@ use std::{
 use crate::{
     index,
     job_engine::jobs,
-    json_to_record, keys, proto,
+    json_to_record, keys,
+    proto::{self, DataKey},
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
@@ -216,7 +217,6 @@ pub(crate) struct Authorization {
 pub struct Collection<'a> {
     logger: slog::Logger,
     indexer: &'a Indexer,
-    store: &'a store::Store,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
     authorization: Authorization,
@@ -501,7 +501,6 @@ impl<'a> Collection<'a> {
     fn new(
         logger: slog::Logger,
         indexer: &'a Indexer,
-        store: &'a store::Store,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
         authorization: Authorization,
@@ -509,7 +508,6 @@ impl<'a> Collection<'a> {
         Self {
             logger: logger.new(slog::o!("collection" => collection_id.clone())),
             indexer,
-            store,
             collection_id,
             indexes,
             authorization,
@@ -519,13 +517,11 @@ impl<'a> Collection<'a> {
     pub(crate) async fn load(
         logger: slog::Logger,
         indexer: &'a Indexer,
-        store: &'a store::Store,
         id: String,
     ) -> Result<Collection<'a>> {
         let collection_collection = Self::new(
             logger.clone(),
             indexer,
-            store,
             "Collection".to_string(),
             vec![
                 index::CollectionIndex::new(vec![index::CollectionIndexField::new(
@@ -637,7 +633,6 @@ impl<'a> Collection<'a> {
         Ok(Self {
             logger: logger.clone(),
             indexer,
-            store,
             collection_id: id.to_string(),
             indexes,
             authorization: Authorization {
@@ -680,7 +675,7 @@ impl<'a> Collection<'a> {
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.logger.clone(), self.indexer.clone(), self.store, "Collection".to_owned())
+        let Some(record) = Self::load(self.logger.clone(), self.indexer.clone(), "Collection".to_owned())
             .await?
             .get(self.collection_id.clone(), None)
             .await? else {
@@ -809,7 +804,6 @@ impl<'a> Collection<'a> {
                 let collection = Collection::load(
                     self.logger.clone(),
                     self.indexer,
-                    self.store,
                     foreign_record_reference.collection_id,
                 )
                 .await?;
@@ -881,7 +875,6 @@ impl<'a> Collection<'a> {
                         let collection = Collection::load(
                             self_col.logger.clone(),
                             self_col.indexer,
-                            self_col.store,
                             fr.collection_id.clone(),
                         )
                         .await?;
@@ -923,7 +916,8 @@ impl<'a> Collection<'a> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        self.store
+        self.indexer
+            .store
             .set(
                 &collection_metadata_key,
                 &store::Value::DataValue(
@@ -946,7 +940,7 @@ impl<'a> Collection<'a> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        let Some(record) = self.store.get(&collection_metadata_key).await? else {
+        let Some(record) = self.indexer.store.get(&collection_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -972,7 +966,8 @@ impl<'a> Collection<'a> {
             &self.collection_id, record_id
         ))?;
 
-        self.store
+        self.indexer
+            .store
             .set(
                 &record_metadata_key,
                 &store::Value::DataValue(
@@ -998,7 +993,7 @@ impl<'a> Collection<'a> {
             &self.collection_id, record_id
         ))?;
 
-        let Some(record) = self.store.get(&record_metadata_key).await? else {
+        let Some(record) = self.indexer.store.get(&record_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -1026,8 +1021,7 @@ impl<'a> Collection<'a> {
         }
 
         let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.logger.clone(), self.indexer, self.store, id.clone()).await
-            {
+            match Collection::load(self.logger.clone(), self.indexer, id.clone()).await {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -1042,7 +1036,8 @@ impl<'a> Collection<'a> {
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
-        self.store
+        self.indexer
+            .store
             .set(&data_key, &store::Value::DataValue(value))
             .await?;
 
@@ -1067,13 +1062,12 @@ impl<'a> Collection<'a> {
                 true, // is_last_job
             ))
             .await;
-
-        println!("waiting for add_indexes job completion");
-
         self.indexer
             .await_job_completion(self.collection_id.clone())
             .await
             .unwrap(); // TODO - error handling?
+
+        //self.add_indexes(&id, &data_key, value).await;
 
         if self.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {
@@ -1081,8 +1075,7 @@ impl<'a> Collection<'a> {
                 #[allow(clippy::unwrap_used)]
                 let old_value = old_value.unwrap();
 
-                let target_col =
-                    Collection::load(self.logger.clone(), self.indexer, self.store, id).await?;
+                let target_col = Collection::load(self.logger.clone(), self.indexer, id).await?;
 
                 target_col.rebuild(collection_before, &old_value).await?;
             }
@@ -1097,7 +1090,7 @@ impl<'a> Collection<'a> {
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
+        let Some(value) = self.indexer.store.get(&key).await? else {
             return Ok(None);
         };
 
@@ -1114,7 +1107,7 @@ impl<'a> Collection<'a> {
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
+        let Some(value) = self.indexer.store.get(&key).await? else {
             return Ok(None);
         };
 
@@ -1146,7 +1139,7 @@ impl<'a> Collection<'a> {
                     record,
                 )?;
 
-                self.store.set(&index_key, &index_value).await?;
+                self.indexer.store.set(&index_key, &index_value).await?;
 
                 Ok::<_, CollectionError>(())
             }
@@ -1172,7 +1165,7 @@ impl<'a> Collection<'a> {
                     record,
                 )?;
 
-                self.store.delete(&index_key).await?;
+                self.indexer.store.delete(&index_key).await?;
 
                 Ok::<_, CollectionError>(())
             }
@@ -1195,7 +1188,7 @@ impl<'a> Collection<'a> {
 
         let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
-        self.store.delete(&key).await?;
+        self.indexer.store.delete(&key).await?;
 
         let now = SystemTime::now();
         self.update_metadata(&now).await?;
@@ -1255,17 +1248,18 @@ impl<'a> Collection<'a> {
             (None, None) => key_range,
         };
 
-        Ok(futures::stream::iter(
-            self.store
-                .list(&key_range.lower, &key_range.upper, reverse)?,
-        )
+        Ok(futures::stream::iter(self.indexer.store.list(
+            &key_range.lower,
+            &key_range.upper,
+            reverse,
+        )?)
         .map(|res| async {
             let (k, v) = res?;
 
             let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
             let index_record = proto::IndexRecord::decode(&v[..])?;
             let data_key = keys::Key::deserialize(&index_record.id)?;
-            let data = match self.store.get(&data_key).await? {
+            let data = match self.indexer.store.get(&data_key).await? {
                 Some(d) => d,
                 None => return Ok(None),
             };
@@ -1309,13 +1303,8 @@ impl<'a> Collection<'a> {
         old_collection: Collection<'async_recursion>,
         old_collection_record: &RecordRoot,
     ) -> Result<()> {
-        let collection_collection = Collection::load(
-            self.logger.clone(),
-            self.indexer,
-            self.store,
-            "Collection".to_string(),
-        )
-        .await?;
+        let collection_collection =
+            Collection::load(self.logger.clone(), self.indexer, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;
@@ -1348,11 +1337,11 @@ impl<'a> Collection<'a> {
             vec![],
         )?;
         let end_key = start_key.clone().wildcard();
-        for entry in self.store.list(&start_key, &end_key, false)? {
+        for entry in self.indexer.store.list(&start_key, &end_key, false)? {
             let (_, value) = entry?;
             let index_record = proto::IndexRecord::decode(&value[..])?;
             let data_key = keys::Key::deserialize(&index_record.id)?;
-            let data = self.store.get(&data_key).await?;
+            let data = self.indexer.store.get(&data_key).await?;
             let Some(data) = data else {
                 continue;
             };
@@ -1394,10 +1383,11 @@ mod tests {
     impl Default for TestIndexer {
         fn default() -> Self {
             let temp_dir = std::env::temp_dir();
-            let path = temp_dir.join(format!(
-                "test-gateway-rocksdb-store-{}",
+            let mut path = temp_dir.join(format!(
+                "test-collection-rocksdb-store-{}",
                 rand::random::<u32>()
             ));
+            path.push("data/indexer.db");
 
             Self(Some(Indexer::new(logger(), path).unwrap()))
         }
@@ -1424,8 +1414,7 @@ mod tests {
     #[tokio::test]
     async fn test_collection_collection_load() {
         let indexer = TestIndexer::default();
-        let store = TestStore::default();
-        let collection = Collection::load(logger(), &indexer, &store, "Collection".to_string())
+        let collection = Collection::load(logger(), &indexer, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1451,13 +1440,11 @@ mod tests {
 
     async fn create_collection<'a>(
         indexer: &'a Indexer,
-        store: &'a TestStore,
         ast: stableast::Root<'_>,
     ) -> Vec<Collection<'a>> {
-        let collection_collection =
-            Collection::load(logger(), indexer, store, "Collection".to_string())
-                .await
-                .unwrap();
+        let collection_collection = Collection::load(logger(), indexer, "Collection".to_string())
+            .await
+            .unwrap();
 
         let ast_json = serde_json::to_string(&ast).unwrap();
 
@@ -1485,13 +1472,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            store.commit().await.unwrap();
+            indexer.store.commit().await.unwrap();
 
-            collections.push(
-                Collection::load(logger(), indexer, store, id)
-                    .await
-                    .unwrap(),
-            );
+            collections.push(Collection::load(logger(), indexer, id).await.unwrap());
         }
 
         collections
@@ -1500,11 +1483,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_collection() {
         let indexer = TestIndexer::default();
-        let store = TestStore::default();
 
         let collection_account = create_collection(
             &indexer,
-            &store,
             stableast::Root(vec![stableast::RootNode::Collection(
                 stableast::Collection {
                     namespace: stableast::Namespace { value: "ns".into() },
@@ -1549,7 +1530,7 @@ mod tests {
         .next()
         .unwrap();
 
-        store.commit().await.unwrap();
+        indexer.store.commit().await.unwrap();
 
         assert_eq!(collection_account.collection_id, "ns/Account");
         assert_eq!(
@@ -1587,45 +1568,57 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_set_get() {
+        use std::borrow::Cow;
+
         let indexer = TestIndexer::default();
-        let store = TestStore::default();
-        let collection = Collection::new(
-            logger(),
+
+        // In the real world, the collection would always be queried first from
+        // the indexer and then `set` and `get` invoked on the collection (?)
+        let collection = create_collection(
             &indexer,
-            &store,
-            "test".to_string(),
-            vec![],
-            Authorization {
-                read_all: true,
-                call_all: true,
-                read_fields: vec![],
-                delegate_fields: vec![],
-            },
-        );
+            stableast::Root(vec![stableast::RootNode::Collection(
+                stableast::Collection {
+                    namespace: stableast::Namespace { value: "ns".into() },
+                    name: "test".into(),
+                    attributes: vec![
+                        stableast::CollectionAttribute::Property(stableast::Property {
+                            name: "id".into(),
+                            type_: stableast::Type::Primitive(stableast::Primitive {
+                                value: stableast::PrimitiveType::String,
+                            }),
+                            directives: vec![],
+                            required: true,
+                        }),
+                        stableast::CollectionAttribute::Directive(stableast::Directive {
+                            name: "read".into(),
+                            arguments: vec![],
+                        }),
+                    ],
+                },
+            )]),
+        )
+        .await
+        .into_iter()
+        .next()
+        .unwrap();
 
-        let value = HashMap::from([
-            ("id".to_string(), RecordValue::String("1".into())),
-            ("name".to_string(), RecordValue::String("test".into())),
-        ]);
+        indexer.store.commit().await.unwrap();
 
+        let value = HashMap::from([("id".to_string(), RecordValue::String("1".into()))]);
         collection.set("1".into(), &value).await.unwrap();
-        store.commit().await.unwrap();
+
+        indexer.store.commit().await.unwrap();
 
         let record = collection.get("1".into(), None).await.unwrap().unwrap();
         assert_eq!(record.get("id").unwrap(), &RecordValue::String("1".into()));
-        assert_eq!(
-            record.get("name").unwrap(),
-            &RecordValue::String("test".into())
-        );
     }
 
     #[tokio::test]
     async fn test_collection_set_list() {
         let indexer = TestIndexer::default();
-        let store = TestStore::default();
 
         {
-            let collection = Collection::load(logger(), &indexer, &store, "Collection".to_owned())
+            let collection = Collection::load(logger(), &indexer, "Collection".to_owned())
                 .await
                 .unwrap();
             collection
@@ -1685,11 +1678,13 @@ mod tests {
                 .unwrap();
         }
 
-        store.commit().await.unwrap();
+        indexer.store.commit().await.unwrap();
 
-        let collection = Collection::load(logger(), &indexer, &store, "test/test".to_owned())
+        let collection = Collection::load(logger(), &indexer, "test/test".to_owned())
             .await
             .unwrap();
+
+        indexer.store.commit().await.unwrap();
 
         let value_1 = HashMap::from([
             ("id".to_string(), RecordValue::String("1".into())),
@@ -1703,7 +1698,7 @@ mod tests {
         ]);
         collection.set("2".into(), &value_2).await.unwrap();
 
-        store.commit().await.unwrap();
+        indexer.store.commit().await.unwrap();
 
         let mut results = collection
             .list(

@@ -117,7 +117,7 @@ impl Indexer {
     }
 
     pub async fn collection(&self, id: String) -> Result<Collection> {
-        Ok(Collection::load(self.logger.clone(), &self, &self.store, id).await?)
+        Ok(Collection::load(self.logger.clone(), &self, id).await?)
     }
 
     pub async fn commit(&self) -> Result<()> {
@@ -136,6 +136,10 @@ impl Indexer {
     pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
         let system_key = keys::Key::new_system_data(key)?;
         Ok(self.store.get(&system_key).await?)
+    }
+
+    pub(crate) async fn store(&self) -> &store::Store {
+        &self.store
     }
 
     pub async fn enqueue_job(&self, job: jobs::Job) -> Result<()> {

@@ -84,7 +84,10 @@ pub(super) async fn check_for_jobs_to_execute(
                 job_group_tasks.push(tokio::spawn(async move {
                     // execute each job within a job group sequentially
                     for job in jobs {
-                        execute_job(job.clone(), indexer.clone(), logger.clone()).await;
+                        let indexer = indexer.clone();
+                        execute_job(job.clone(), indexer, logger.clone())
+                            .await
+                            .unwrap(); // TODO - proper error-handling here. How to propagate to caller?
                         delete_job(job, job_store.clone()).await;
                     }
                 }));
@@ -109,9 +112,9 @@ async fn execute_job(job: Job, indexer: Arc<Indexer>, logger: slog::Logger) -> J
             id,
             record,
         } => {
-            let collection = indexer.collection(collection_id.clone()).await?;
+            let collection = indexer.collection(collection_id.clone()).await.unwrap(); // TODO
             let data_key = keys::Key::new_data(collection_id.clone(), id.clone())?;
-            collection.add_indexes(&id, &data_key, &record).await;
+            collection.add_indexes(&id, &data_key, &record).await; // TODO
 
             Ok(JobExecutionResultState::Okay)
         }
