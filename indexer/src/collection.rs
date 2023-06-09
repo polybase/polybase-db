@@ -5,9 +5,7 @@ use std::{
 };
 
 use crate::{
-    index,
-    job_engine::{self, jobs},
-    json_to_record, keys, proto,
+    index, json_to_record, keys, proto,
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
@@ -1055,7 +1053,7 @@ impl<'a> Collection<'a> {
             self.delete_indexes(&id, old_value).await;
         }
 
-        //self.job_engine
+        //self.indexer
         //    .enqueue_job(jobs::Job::new(
         //        self.collection_id.clone(),
         //        1,
@@ -1069,7 +1067,7 @@ impl<'a> Collection<'a> {
         //    .await;
 
         //while !self
-        //    .job_engine
+        //    .indexer
         //    .check_job_group_completion(self.collection_id.clone())
         //    .await
         //    .unwrap()
@@ -1383,7 +1381,6 @@ mod tests {
     use slog::Drain;
     use std::{ops::Deref, sync::Arc};
 
-    use crate::job_engine::tests::TestJobEngine;
     use crate::store::tests::TestStore;
 
     use super::*;
@@ -1430,7 +1427,6 @@ mod tests {
     async fn test_collection_collection_load() {
         let indexer = TestIndexer::default();
         let store = TestStore::default();
-        let job_engine = TestJobEngine::default();
         let collection = Collection::load(logger(), &indexer, &store, "Collection".to_string())
             .await
             .unwrap();
@@ -1458,7 +1454,6 @@ mod tests {
     async fn create_collection<'a>(
         indexer: &'a Indexer,
         store: &'a TestStore,
-        job_engine: &'a TestJobEngine,
         ast: stableast::Root<'_>,
     ) -> Vec<Collection<'a>> {
         let collection_collection =
@@ -1508,12 +1503,10 @@ mod tests {
     async fn test_create_collection() {
         let indexer = TestIndexer::default();
         let store = TestStore::default();
-        let job_engine = TestJobEngine::default();
 
         let collection_account = create_collection(
             &indexer,
             &store,
-            &job_engine,
             stableast::Root(vec![stableast::RootNode::Collection(
                 stableast::Collection {
                     namespace: stableast::Namespace { value: "ns".into() },
@@ -1598,7 +1591,6 @@ mod tests {
     async fn test_collection_set_get() {
         let indexer = TestIndexer::default();
         let store = TestStore::default();
-        let job_engine = TestJobEngine::default();
         let collection = Collection::new(
             logger(),
             &indexer,
@@ -1633,7 +1625,6 @@ mod tests {
     async fn test_collection_set_list() {
         let indexer = TestIndexer::default();
         let store = TestStore::default();
-        let job_engine = TestJobEngine::default();
 
         {
             let collection = Collection::load(logger(), &indexer, &store, "Collection".to_owned())

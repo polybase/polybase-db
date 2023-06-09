@@ -1,6 +1,9 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 
 pub mod collection;
 mod index;
@@ -14,9 +17,10 @@ mod stableast_ext;
 mod store;
 pub mod where_query;
 
+use job_engine::{job_store, jobs};
+
 pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
 pub use index::CollectionIndexField;
-use job_engine::JobEngine;
 pub use keys::Direction;
 pub use publickey::PublicKey;
 pub use record::{
@@ -55,29 +59,44 @@ pub enum IndexerError {
 
     #[error("job engine error")]
     JobEngineError(#[from] job_engine::JobEngineError),
+
+    #[error("job store error")]
+    JobStoreError(#[from] job_store::JobStoreError),
 }
 
 pub struct Indexer {
     logger: slog::Logger,
     store: store::Store,
+    job_store: Arc<job_store::JobStore>,
 }
 
 impl Indexer {
     pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> Result<Arc<Self>> {
-        let store = store::Store::open(path)?;
-        let indexer = Arc::new(Self { logger, store });
+        // initialise the job store
+        let indexer_store_path = path.as_ref().to_path_buf();
+        let job_store_path = Self::get_job_store_path(indexer_store_path.as_ref());
+        let job_store = job_store::JobStore::open(job_store_path)?;
+        let job_store = Arc::new(job_store);
 
-        let shared_indexer = indexer.clone();
-        tokio::spawn(Indexer::some_concurrent_task(shared_indexer));
+        let job_engine_job_store = job_store.clone();
+        let job_engine_logger = logger.clone();
+
+        let store = store::Store::open(path)?;
+        let indexer = Arc::new(Self {
+            logger,
+            store,
+            job_store,
+        });
+
+        let job_engine_indexer = indexer.clone();
+
+        tokio::spawn(job_engine::check_for_jobs_to_execute(
+            job_engine_indexer,
+            job_engine_job_store,
+            job_engine_logger,
+        ));
 
         Ok(indexer)
-    }
-
-    async fn some_concurrent_task(indexer: Arc<Indexer>) {
-        loop {
-            println!("Hello!");
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        }
     }
 
     pub fn destroy(self) -> Result<()> {
@@ -116,5 +135,26 @@ impl Indexer {
     pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
         let system_key = keys::Key::new_system_data(key)?;
         Ok(self.store.get(&system_key).await?)
+    }
+
+    pub async fn enqueue_job(&self, job: jobs::Job) -> Result<()> {
+        job_engine::enqueue_job(job, self.job_store.clone()).await?;
+        Ok(())
+    }
+
+    async fn delete_job(&self, job: jobs::Job) -> Result<()> {
+        job_engine::delete_job(job, self.job_store.clone()).await;
+        Ok(())
+    }
+
+    pub async fn await_job_completion(&self, job_group: impl Into<String>) -> Result<()> {
+        job_engine::await_job_completion(job_group, self.job_store.clone()).await?;
+        Ok(())
+    }
+
+    fn get_job_store_path(path: &Path) -> PathBuf {
+        // this is always guaranteed to be present if it's reached this far
+        #[allow(clippy::unwrap_used)]
+        path.parent().unwrap().join("jobs.db")
     }
 }

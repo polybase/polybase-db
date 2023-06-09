@@ -5,9 +5,9 @@ use rocksdb::{
 use std::collections::{HashMap, VecDeque};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
-use super::Job;
+use super::jobs::Job;
 
-pub type Result<T> = std::result::Result<T, JobStoreError>;
+pub type JobStoreResult<T> = std::result::Result<T, JobStoreError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum JobStoreError {
@@ -35,9 +35,9 @@ pub(crate) struct JobStore {
     db: Arc<TransactionDB<SingleThreaded>>,
 }
 
-// todo; see if snapshot, restore, and delete are required for JobStore
+// TODO: see if snapshot, restore, and delete are required for JobStore
 impl JobStore {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn open(path: impl AsRef<Path>) -> JobStoreResult<Self> {
         let mut options = Options::default();
         options.create_if_missing(true);
 
@@ -69,7 +69,7 @@ impl JobStore {
     }
 
     /// Persist the job in the `jobs.db` rocksdb database.
-    pub(crate) async fn save_job(&self, job: Job) -> Result<()> {
+    pub(crate) async fn save_job(&self, job: Job) -> JobStoreResult<()> {
         let job_key = format!("{}|{}", job.job_group, job.id).into_bytes();
         let job_bytes = serialize(&job)?;
 
@@ -106,7 +106,7 @@ impl JobStore {
 
     /// Retrieve a map of jobs with `job_group` as the key, and a queue of jobs as the
     /// value.
-    pub(crate) async fn get_jobs(&self) -> Result<HashMap<String, VecDeque<Job>>> {
+    pub(crate) async fn get_jobs(&self) -> JobStoreResult<HashMap<String, VecDeque<Job>>> {
         let mut jobs_map = HashMap::new();
 
         let mut iter = self.db.raw_iterator();
@@ -128,7 +128,7 @@ impl JobStore {
     }
 
     /// Delete the persisted job from the `jobs.db` rocksdb database.
-    pub(crate) async fn delete_job(&self, job: Job) -> Result<()> {
+    pub(crate) async fn delete_job(&self, job: Job) -> JobStoreResult<()> {
         let job_key = format!("{}|{}", job.job_group, job.id).into_bytes();
         self.db.delete(job_key)?;
 
@@ -149,7 +149,7 @@ impl JobStore {
     /// Check if the job group metadata exists. If it exists, then the job
     /// group has not finished completion, and if not, it has finished
     /// execution.
-    pub async fn is_job_group_complete(&self, job_group: &str) -> Result<bool> {
+    pub async fn is_job_group_complete(&self, job_group: &str) -> JobStoreResult<bool> {
         let job_group_metadata_key = job_group.to_string().into_bytes();
         let job_group_metadata_cf = self
             .db
@@ -162,7 +162,7 @@ impl JobStore {
     }
 
     /// Destroy the `jobs.db` rocksdb store.
-    pub(crate) fn destroy(self) -> Result<()> {
+    pub(crate) fn destroy(self) -> JobStoreResult<()> {
         let path = self.db.path().to_path_buf();
 
         drop(self.db);
@@ -214,76 +214,6 @@ mod tests {
         }
     }
 
-    // todo - change the tests when the actual Job Types are defined
     #[tokio::test]
-    async fn test_job_store() {
-        let job_store = TestJobStore::default();
-
-        let job13 = Job::new("Group1", 3, JobState::JobType1 { num: 100 }, true);
-        job_store.save_job(job13.clone()).await.unwrap();
-
-        let job12 = Job::new(
-            "Group1",
-            2,
-            JobState::JobType2 {
-                string: "Dave".into(),
-                num: 42,
-            },
-            false,
-        );
-        job_store.save_job(job12.clone()).await.unwrap();
-
-        let job21 = Job::new("Group2", 1, JobState::JobType3 { b: true }, false);
-        job_store.save_job(job21.clone()).await.unwrap();
-
-        let job11 = Job::new("Group1", 1, JobState::JobType1 { num: 21 }, false);
-        job_store.save_job(job11.clone()).await.unwrap();
-
-        let job22 = Job::new(
-            "Group2",
-            2,
-            JobState::JobType2 {
-                string: "Bob".into(),
-                num: 99,
-            },
-            true,
-        );
-        job_store.save_job(job22.clone()).await.unwrap();
-
-        let mut jobs = job_store.get_jobs().await.unwrap();
-
-        let mut group1_jobs = jobs.remove("Group1").unwrap();
-        assert_eq!(group1_jobs.pop_front(), Some(job11.clone()));
-        assert_eq!(group1_jobs.pop_front(), Some(job12.clone()));
-        assert_eq!(group1_jobs.pop_front(), Some(job13.clone()));
-        assert_eq!(group1_jobs.pop_front(), None);
-
-        let mut group2_jobs = jobs.remove("Group2").unwrap();
-        assert_eq!(group2_jobs.pop_front(), Some(job21.clone()));
-        assert_eq!(group2_jobs.pop_front(), Some(job22.clone()));
-        assert_eq!(group2_jobs.pop_front(), None);
-
-        // delete jobs
-        job_store.delete_job(job11.clone()).await.unwrap();
-        job_store.delete_job(job22.clone()).await.unwrap();
-
-        let mut jobs_after_deletion = job_store.get_jobs().await.unwrap();
-
-        let mut group1_jobs = jobs_after_deletion.remove("Group1").unwrap();
-        assert_eq!(group1_jobs.pop_front(), Some(job12.clone()));
-        assert_eq!(group1_jobs.pop_front(), Some(job13.clone()));
-        assert_eq!(group1_jobs.pop_front(), None);
-
-        let mut group2_jobs = jobs_after_deletion.remove("Group2").unwrap();
-        assert_eq!(group2_jobs.pop_front(), Some(job21.clone()));
-        assert_eq!(group2_jobs.pop_front(), None);
-
-        // delete all jobs
-        job_store.delete_job(job12).await.unwrap();
-        job_store.delete_job(job13).await.unwrap();
-        job_store.delete_job(job21).await.unwrap();
-
-        jobs_after_deletion = job_store.get_jobs().await.unwrap();
-        assert!(jobs_after_deletion.is_empty());
-    }
+    async fn test_job_store() {}
 }

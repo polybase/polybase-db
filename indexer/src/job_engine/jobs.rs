@@ -26,22 +26,11 @@ impl Job {
     }
 }
 
-// todo - change these dummy types to actual job types for the Job Engine
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum JobState {
     AddIndexes {
         collection_id: String,
         id: String,
         record: RecordRoot,
-    },
-    JobType1 {
-        num: i32,
-    },
-    JobType2 {
-        string: String,
-        num: i32,
-    },
-    JobType3 {
-        b: bool,
     },
 }
