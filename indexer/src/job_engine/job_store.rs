@@ -2,6 +2,7 @@ use bincode::{deserialize, serialize};
 use rocksdb::{
     Options, SingleThreaded, TransactionDB, TransactionDBOptions, WriteBatchWithTransaction,
 };
+use slog::{debug, info};
 use std::collections::{HashMap, VecDeque};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
@@ -33,11 +34,14 @@ pub enum JobStoreError {
 /// The indexer Job Store
 pub(crate) struct JobStore {
     db: Arc<TransactionDB<SingleThreaded>>,
+    logger: slog::Logger,
 }
 
 // TODO: see if snapshot, restore, and delete are required for JobStore
 impl JobStore {
-    pub fn open(path: impl AsRef<Path>) -> JobStoreResult<Self> {
+    pub fn open(path: impl AsRef<Path>, logger: slog::Logger) -> JobStoreResult<Self> {
+        debug!(logger, "[Job Store] Opening jobs store");
+
         let mut options = Options::default();
         options.create_if_missing(true);
 
@@ -63,13 +67,20 @@ impl JobStore {
             )?
         };
 
+        debug!(logger, "[Job Store] Finished opening jobs store");
+
         Ok(Self {
             db: Arc::new(txn_db),
+            logger,
         })
     }
 
     /// Persist the job in the `jobs.db` rocksdb database.
     pub(crate) async fn save_job(&self, job: Job) -> JobStoreResult<()> {
+        let job_str = format!("{job:#?}");
+
+        debug!(self.logger, "[Job Engine] Saving job {job_str}");
+
         let job_key = format!("{}|{}", job.job_group, job.id).into_bytes();
         let job_bytes = serialize(&job)?;
 
@@ -101,12 +112,16 @@ impl JobStore {
             self.db.write(batch)?;
         }
 
+        debug!(self.logger, "[Job Engine] Finished saving job {job_str}");
+
         Ok(())
     }
 
     /// Retrieve a map of jobs with `job_group` as the key, and a queue of jobs as the
     /// value.
     pub(crate) async fn get_jobs(&self) -> JobStoreResult<HashMap<String, VecDeque<Job>>> {
+        debug!(self.logger, "[Job Engine] Getting queued jobs");
+
         let mut jobs_map = HashMap::new();
 
         let mut iter = self.db.raw_iterator();
@@ -124,11 +139,17 @@ impl JobStore {
             iter.next();
         }
 
+        debug!(self.logger, "[Job Engine] Finished getting queued jobs");
+
         Ok(jobs_map)
     }
 
     /// Delete the persisted job from the `jobs.db` rocksdb database.
     pub(crate) async fn delete_job(&self, job: Job) -> JobStoreResult<()> {
+        let job_str = format!("{job:#?}");
+
+        debug!(self.logger, "[Job Engine] Deleting job {job_str}");
+
         let job_key = format!("{}|{}", job.job_group, job.id).into_bytes();
         self.db.delete(job_key)?;
 
@@ -143,6 +164,8 @@ impl JobStore {
                 .delete_cf(job_group_metadata_cf, job_group_metadata_key)?;
         }
 
+        debug!(self.logger, "[Job Engine] Finished deleting job {job_str}");
+
         Ok(())
     }
 
@@ -150,11 +173,22 @@ impl JobStore {
     /// group has not finished completion, and if not, it has finished
     /// execution.
     pub async fn is_job_group_complete(&self, job_group: &str) -> JobStoreResult<bool> {
+        debug!(
+            self.logger,
+            "[Job Engine] Checking for completion of job group {job_group:#?}"
+        );
+
         let job_group_metadata_key = job_group.to_string().into_bytes();
         let job_group_metadata_cf = self
             .db
             .cf_handle("metadata")
             .ok_or(JobStoreError::UnableToQueryJobGroupCompletion)?;
+
+        debug!(
+            self.logger,
+            "[Job Engine] Finished checking for completion of job group {job_group:#?}"
+        );
+
         Ok(self
             .db
             .get_cf(job_group_metadata_cf, job_group_metadata_key)?
@@ -178,6 +212,14 @@ mod tests {
     use crate::job_engine::jobs::*;
     use std::ops::{Deref, DerefMut};
 
+    use slog::Drain;
+
+    fn logger() -> slog::Logger {
+        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
+        slog::Logger::root(drain, slog::o!())
+    }
+
     pub(crate) struct TestJobStore(Option<JobStore>);
 
     impl Default for TestJobStore {
@@ -188,7 +230,7 @@ mod tests {
                 rand::random::<u32>()
             ));
 
-            Self(Some(JobStore::open(path).unwrap()))
+            Self(Some(JobStore::open(path, logger()).unwrap()))
         }
     }
 

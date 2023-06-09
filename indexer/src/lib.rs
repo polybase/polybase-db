@@ -75,7 +75,8 @@ impl Indexer {
         // initialise the job store
         let indexer_store_path = path.as_ref().to_path_buf();
         let job_store_path = Self::get_job_store_path(indexer_store_path.as_ref());
-        let job_store = job_store::JobStore::open(job_store_path)?;
+        let job_store_logger = logger.clone();
+        let job_store = job_store::JobStore::open(job_store_path, job_store_logger)?;
         let job_store = Arc::new(job_store);
 
         let job_engine_job_store = job_store.clone();
