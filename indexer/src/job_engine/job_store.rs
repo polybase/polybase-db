@@ -2,7 +2,7 @@ use bincode::{deserialize, serialize};
 use rocksdb::{
     Options, SingleThreaded, TransactionDB, TransactionDBOptions, WriteBatchWithTransaction,
 };
-use slog::{debug, info};
+use slog::debug;
 use std::collections::{HashMap, VecDeque};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
@@ -37,8 +37,10 @@ pub(crate) struct JobStore {
     logger: slog::Logger,
 }
 
-// TODO: see if snapshot, restore, and delete are required for JobStore
 impl JobStore {
+    /// Create a new instance of the jobs store if it does not exist, creating a column family
+    /// `metadata` to store job group information.
+    /// Otherwise, open the existing store.`
     pub fn open(path: impl AsRef<Path>, logger: slog::Logger) -> JobStoreResult<Self> {
         debug!(logger, "[Job Store] Opening jobs store");
 
@@ -209,7 +211,6 @@ impl JobStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::job_engine::jobs::*;
     use std::ops::{Deref, DerefMut};
 
     use slog::Drain;

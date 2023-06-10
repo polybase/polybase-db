@@ -3,6 +3,7 @@ use std::fmt;
 
 use crate::RecordRoot;
 
+/// Represents a job that can be enqueued, run, and deleted by the indexer Job Engine.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Job {
     pub job_group: String,
@@ -27,6 +28,8 @@ impl Job {
     }
 }
 
+/// This contains job metadata specific to the task being carried out. This metadata gets stored in
+/// the jobs store while the actual job logic is contained within the Job Engine.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum JobState {
     AddIndexes {
@@ -42,7 +45,7 @@ impl fmt::Debug for JobState {
             JobState::AddIndexes {
                 ref collection_id,
                 ref id,
-                ref record,
+                ..
             } => {
                 write!(
                     f,

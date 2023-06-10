@@ -2,7 +2,7 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 pub mod collection;
@@ -101,6 +101,11 @@ impl Indexer {
     }
 
     pub fn destroy(self) -> Result<()> {
+        // destroy the job store first
+        if let Ok(job_store) = Arc::try_unwrap(self.job_store) {
+            job_store.destroy()?;
+        }
+
         Ok(self.store.destroy()?)
     }
 
@@ -117,7 +122,7 @@ impl Indexer {
     }
 
     pub async fn collection(&self, id: String) -> Result<Collection> {
-        Ok(Collection::load(self.logger.clone(), &self, id).await?)
+        Ok(Collection::load(self.logger.clone(), self, id).await?)
     }
 
     pub async fn commit(&self) -> Result<()> {
@@ -138,17 +143,8 @@ impl Indexer {
         Ok(self.store.get(&system_key).await?)
     }
 
-    pub(crate) async fn store(&self) -> &store::Store {
-        &self.store
-    }
-
     pub async fn enqueue_job(&self, job: jobs::Job) -> Result<()> {
         job_engine::enqueue_job(job, self.job_store.clone()).await?;
-        Ok(())
-    }
-
-    async fn delete_job(&self, job: jobs::Job) -> Result<()> {
-        job_engine::delete_job(job, self.job_store.clone()).await;
         Ok(())
     }
 

@@ -7,14 +7,13 @@ use std::{
 use crate::{
     index,
     job_engine::jobs,
-    json_to_record, keys,
-    proto::{self, DataKey},
+    json_to_record, keys, proto,
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
     stableast_ext::FieldWalker,
     store::{self},
-    where_query, Indexer,
+    where_query, Indexer, IndexerError,
 };
 use async_recursion::async_recursion;
 use base64::Engine;
@@ -87,6 +86,10 @@ pub enum CollectionError {
 
     #[error("prost decode error")]
     ProstDecodeError(#[from] prost::DecodeError),
+
+    // jobs run inside the job engine may raise this error
+    #[error("indexer error")]
+    IndexerError(#[from] Box<IndexerError>),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -675,7 +678,7 @@ impl<'a> Collection<'a> {
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.logger.clone(), self.indexer.clone(), "Collection".to_owned())
+        let Some(record) = Self::load(self.logger.clone(), self.indexer, "Collection".to_owned())
             .await?
             .get(self.collection_id.clone(), None)
             .await? else {
@@ -1061,13 +1064,13 @@ impl<'a> Collection<'a> {
                 },
                 true, // is_last_job
             ))
-            .await;
+            .await
+            .map_err(|e| CollectionError::from(Box::new(e)))?;
+
         self.indexer
             .await_job_completion(self.collection_id.clone())
             .await
-            .unwrap(); // TODO - error handling?
-
-        //self.add_indexes(&id, &data_key, value).await;
+            .map_err(|e| CollectionError::from(Box::new(e)))?;
 
         if self.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {
@@ -1368,8 +1371,6 @@ mod tests {
     use slog::Drain;
     use std::{ops::Deref, sync::Arc};
 
-    use crate::store::tests::TestStore;
-
     use super::*;
 
     fn logger() -> slog::Logger {
@@ -1568,12 +1569,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_set_get() {
-        use std::borrow::Cow;
-
         let indexer = TestIndexer::default();
 
-        // In the real world, the collection would always be queried first from
-        // the indexer and then `set` and `get` invoked on the collection (?)
         let collection = create_collection(
             &indexer,
             stableast::Root(vec![stableast::RootNode::Collection(

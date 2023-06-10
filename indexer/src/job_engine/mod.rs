@@ -2,16 +2,14 @@ pub(super) mod job_store;
 pub mod jobs;
 
 use futures::future;
-use slog::{debug, info};
+use slog::info;
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
-use tokio::time::{interval, sleep, Duration};
+use tokio::time::{interval, Duration};
 
 use crate::{job_engine::jobs::JobState, keys};
-
-use self::job_store::JobStoreError;
 
 use super::{Indexer, IndexerError};
 use job_store::JobStore;
@@ -21,7 +19,6 @@ use jobs::Job;
 
 pub enum JobExecutionResultState {
     Okay,
-    Shutdown,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +51,8 @@ const JOBS_CHECK_INTERVAL: u64 = 1000; // 1second
 /// Check for jobs that are queued up for execution - this is the Job Engine's executor task
 /// that will poll the jobs store for jobs, and execute the jobs within each job group in
 /// sequential order.
+/// This will also automatically start running during Polybase startup and persist till
+/// server stop.
 pub(super) async fn check_for_jobs_to_execute(
     indexer: Arc<Indexer>,
     job_store: Arc<JobStore>,
@@ -88,13 +87,13 @@ pub(super) async fn check_for_jobs_to_execute(
                         execute_job(job.clone(), indexer, logger.clone())
                             .await
                             .unwrap(); // TODO - proper error-handling here. How to propagate to caller?
-                        delete_job(job, job_store.clone()).await;
+                        delete_job(job, job_store.clone()).await.unwrap(); // TODO
                     }
                 }));
             }
 
             // wait for all jobs in the job group to finish execution
-            let job_exec_results = future::join_all(job_group_tasks).await;
+            let _job_exec_results = future::join_all(job_group_tasks).await;
         } else {
             info!(logger, "[Job Engine] Found no queued jobs");
         }
