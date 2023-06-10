@@ -18,6 +18,8 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
 
+use std::sync::Arc;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -86,7 +88,7 @@ impl Default for DbConfig {
 pub struct Db {
     mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
-    indexer: Indexer,
+    indexer: Arc<Indexer>,
     sender: AsyncMutex<mpsc::Sender<CallTxn>>,
     receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
     config: DbConfig,
