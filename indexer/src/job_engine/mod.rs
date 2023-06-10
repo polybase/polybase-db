@@ -158,7 +158,6 @@ pub(super) async fn await_job_completion(
     job_store: Arc<JobStore>,
 ) -> JobEngineResult<()> {
     loop {
-        // TODO: better way?
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
         match job_store.is_job_group_complete(job_group.as_ref()).await {

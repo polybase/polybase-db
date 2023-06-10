@@ -213,6 +213,11 @@ mod tests {
     use super::*;
     use std::ops::{Deref, DerefMut};
 
+    use crate::{
+        job_engine::jobs::{Job, JobState},
+        record::RecordRoot,
+    };
+
     use slog::Drain;
 
     fn logger() -> slog::Logger {
@@ -258,5 +263,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_job_store() {}
+    async fn test_job_store() {
+        let job_store = TestJobStore::default();
+
+        // save jobs
+        let job13 = Job::new(
+            "JobGroup1",
+            3, // id
+            JobState::AddIndexes {
+                collection_id: "coll1".into(),
+                id: "1".into(),
+                record: RecordRoot::new(),
+            },
+            true, // is_last_job
+        );
+
+        job_store.save_job(job13.clone()).await.unwrap();
+
+        let job12 = Job::new(
+            "JobGroup1",
+            2,
+            JobState::AddIndexes {
+                collection_id: "coll1".into(),
+                id: "1".into(),
+                record: RecordRoot::new(),
+            },
+            false,
+        );
+        job_store.save_job(job12.clone()).await.unwrap();
+
+        let job11 = Job::new(
+            "JobGroup1",
+            1,
+            JobState::AddIndexes {
+                collection_id: "coll1".into(),
+                id: "1".into(),
+                record: RecordRoot::new(),
+            },
+            false,
+        );
+        job_store.save_job(job11.clone()).await.unwrap();
+
+        let job21 = Job::new(
+            "JobGroup2",
+            1, // id
+            JobState::AddIndexes {
+                collection_id: "coll1".into(),
+                id: "1".into(),
+                record: RecordRoot::new(),
+            },
+            false, // is_last_job
+        );
+        job_store.save_job(job21.clone()).await.unwrap();
+
+        let job22 = Job::new(
+            "JobGroup2",
+            2,
+            JobState::AddIndexes {
+                collection_id: "coll1".into(),
+                id: "1".into(),
+                record: RecordRoot::new(),
+            },
+            true,
+        );
+
+        job_store.save_job(job22.clone()).await.unwrap();
+
+        // get jobs
+        let mut jobs = job_store.get_jobs().await.unwrap();
+
+        let group1_jobs = jobs.get_mut("JobGroup1").unwrap();
+        assert_eq!(group1_jobs.pop_front(), Some(job11.clone()));
+        assert_eq!(group1_jobs.pop_front(), Some(job12.clone()));
+        assert_eq!(group1_jobs.pop_front(), Some(job13.clone()));
+        assert!(group1_jobs.pop_front().is_none());
+
+        let group2_jobs = jobs.get_mut("JobGroup2").unwrap();
+        assert_eq!(group2_jobs.pop_front(), Some(job21.clone()));
+        assert_eq!(group2_jobs.pop_front(), Some(job22.clone()));
+        assert!(group2_jobs.pop_front().is_none());
+
+        // delete jobs
+        job_store.delete_job(job12.clone()).await.unwrap();
+        job_store.delete_job(job21.clone()).await.unwrap();
+        job_store.delete_job(job22.clone()).await.unwrap();
+
+        // verify
+
+        let mut jobs = job_store.get_jobs().await.unwrap();
+
+        let group1_jobs = jobs.get_mut("JobGroup1").unwrap();
+        assert_eq!(group1_jobs.pop_front(), Some(job11.clone()));
+        assert_eq!(group1_jobs.pop_front(), Some(job13.clone()));
+        assert!(group1_jobs.pop_front().is_none());
+
+        let group2_jobs = jobs.get("JobGroup2");
+        assert!(group2_jobs.is_none());
+    }
 }
