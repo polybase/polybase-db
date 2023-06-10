@@ -17,10 +17,6 @@ use jobs::Job;
 
 // job execution
 
-pub enum JobExecutionResultState {
-    Okay,
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum JobExecutionError {
     #[error("job execution error: indexer error")]
@@ -30,8 +26,7 @@ pub enum JobExecutionError {
     KeysError(#[from] keys::KeysError),
 }
 
-pub(super) type JobExecutionResult =
-    std::result::Result<JobExecutionResultState, JobExecutionError>;
+pub(super) type JobExecutionResult = std::result::Result<(), JobExecutionError>;
 
 // job engine
 
@@ -127,7 +122,18 @@ async fn execute_job(job: Job, indexer: Arc<Indexer>, logger: slog::Logger) -> J
             let data_key = keys::Key::new_data(collection_id.clone(), id.clone())?;
             collection.add_indexes(&id, &data_key, &record).await;
 
-            Ok(JobExecutionResultState::Okay)
+            Ok(())
+        }
+
+        JobState::DeleteIndexes {
+            collection_id,
+            id,
+            record,
+        } => {
+            let collection = indexer.collection(collection_id.clone()).await?;
+            collection.delete_indexes(&id, &record).await;
+
+            Ok(())
         }
     };
 

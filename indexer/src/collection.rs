@@ -1050,12 +1050,34 @@ impl<'a> Collection<'a> {
 
         if let Some(old_value) = &old_value {
             // delete the indexes for the old values
-            self.delete_indexes(&id, old_value).await;
+            let delete_indexes_job_group = format!("{}-delete-indexes", self.collection_id);
+
+            self.indexer
+                .enqueue_job(jobs::Job::new(
+                    delete_indexes_job_group.clone(),
+                    1,
+                    jobs::JobState::DeleteIndexes {
+                        collection_id: self.collection_id.clone(),
+                        id: id.clone(),
+                        record: old_value.clone(),
+                    },
+                    true, // is_last_job
+                ))
+                .await
+                .map_err(|e| CollectionError::from(Box::new(e)))?;
+
+            self.indexer
+                .await_job_completion(delete_indexes_job_group)
+                .await
+                .map_err(|e| CollectionError::from(Box::new(e)))?;
         }
+
+        // add indexes
+        let add_indexes_job_group = format!("{}-add-indexes", self.collection_id);
 
         self.indexer
             .enqueue_job(jobs::Job::new(
-                self.collection_id.clone(),
+                add_indexes_job_group.clone(),
                 1,
                 jobs::JobState::AddIndexes {
                     collection_id: self.collection_id.clone(),
@@ -1068,7 +1090,7 @@ impl<'a> Collection<'a> {
             .map_err(|e| CollectionError::from(Box::new(e)))?;
 
         self.indexer
-            .await_job_completion(self.collection_id.clone())
+            .await_job_completion(add_indexes_job_group)
             .await
             .map_err(|e| CollectionError::from(Box::new(e)))?;
 
@@ -1158,7 +1180,7 @@ impl<'a> Collection<'a> {
         }
     }
 
-    async fn delete_indexes(&self, record_id: &str, record: &RecordRoot) {
+    pub(crate) async fn delete_indexes(&self, record_id: &str, record: &RecordRoot) {
         for index in self.indexes.iter() {
             if let Err(deindexing_failure) = async {
                 let index_key = keys::index_record_key_with_record(
@@ -1196,6 +1218,27 @@ impl<'a> Collection<'a> {
         let now = SystemTime::now();
         self.update_metadata(&now).await?;
         self.update_record_metadata(id.clone(), &now).await?;
+
+        // delete indexes
+        let delete_indexes_job_group = format!("{id}-delete-indexes");
+        self.indexer
+            .enqueue_job(jobs::Job::new(
+                delete_indexes_job_group.clone(),
+                1,
+                jobs::JobState::DeleteIndexes {
+                    collection_id: self.collection_id.clone(),
+                    id: id.clone(),
+                    record: record.clone(),
+                },
+                true,
+            ))
+            .await
+            .map_err(|e| CollectionError::from(Box::new(e)))?;
+
+        self.indexer
+            .await_job_completion(delete_indexes_job_group)
+            .await
+            .map_err(|e| CollectionError::from(Box::new(e)))?;
 
         self.delete_indexes(&id, &record).await;
 

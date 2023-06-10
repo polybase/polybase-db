@@ -37,6 +37,12 @@ pub enum JobState {
         id: String,
         record: RecordRoot,
     },
+
+    DeleteIndexes {
+        collection_id: String,
+        id: String,
+        record: RecordRoot,
+    },
 }
 
 impl fmt::Debug for JobState {
@@ -52,6 +58,15 @@ impl fmt::Debug for JobState {
                     "AddIndexes {{ collection_id: {collection_id:?}, id: {id:?} }}"
                 )
             }
+
+            JobState::DeleteIndexes {
+                ref collection_id,
+                ref id,
+                ..
+            } => write!(
+                f,
+                "DeleteIndexes {{ collection_id: {collection_id:?}, id: {id:?} }}"
+            ),
         }
     }
 }
