@@ -1,3 +1,5 @@
+use tokio::time;
+
 #[tokio::test]
 async fn test_start_stop() {
     let api_port;
@@ -6,9 +8,22 @@ async fn test_start_stop() {
         api_port = server.api_port;
     }
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+    let _ = time::timeout(
+        time::Duration::from_secs(3),
+        wait_for_server_port_to_be_released(api_port),
+    )
+    .await;
 
     reqwest::get(format!("http://localhost:{api_port}/v0/health"))
         .await
         .expect_err("Server should be stopped");
+}
+
+async fn wait_for_server_port_to_be_released(port: u16) {
+    use std::net::Ipv4Addr;
+    use tokio::net::TcpListener;
+
+    while let Err(_) = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
+        time::sleep(time::Duration::from_millis(100)).await;
+    }
 }
