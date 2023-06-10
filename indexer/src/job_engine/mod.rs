@@ -2,7 +2,7 @@ pub(super) mod job_store;
 pub mod jobs;
 
 use futures::future;
-use slog::info;
+use slog::{crit, info};
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
@@ -46,7 +46,7 @@ pub enum JobEngineError {
 
 pub(super) type JobEngineResult<T> = std::result::Result<T, JobEngineError>;
 
-const JOBS_CHECK_INTERVAL: u64 = 1000; // 1second
+const JOBS_CHECK_INTERVAL: u64 = 500; // 500ms
 
 /// Check for jobs that are queued up for execution - this is the Job Engine's executor task
 /// that will poll the jobs store for jobs, and execute the jobs within each job group in
@@ -84,10 +84,22 @@ pub(super) async fn check_for_jobs_to_execute(
                     // execute each job within a job group sequentially
                     for job in jobs {
                         let indexer = indexer.clone();
-                        execute_job(job.clone(), indexer, logger.clone())
-                            .await
-                            .unwrap(); // TODO - proper error-handling here. How to propagate to caller?
-                        delete_job(job, job_store.clone()).await.unwrap(); // TODO
+
+                        if let Err(e) = execute_job(job.clone(), indexer, logger.clone()).await {
+                            crit!(
+                                logger,
+                                "[Job Engine] Error while executing job {:#?}: {e:?}",
+                                job.clone()
+                            );
+                        }
+
+                        if let Err(e) = delete_job(job.clone(), job_store.clone()).await {
+                            crit!(
+                                logger,
+                                "[Job Engine] Error while deleting job {:#?}: {e:?}",
+                                job.clone();
+                            )
+                        }
                     }
                 }));
             }
@@ -111,9 +123,9 @@ async fn execute_job(job: Job, indexer: Arc<Indexer>, logger: slog::Logger) -> J
             id,
             record,
         } => {
-            let collection = indexer.collection(collection_id.clone()).await.unwrap(); // TODO
+            let collection = indexer.collection(collection_id.clone()).await?;
             let data_key = keys::Key::new_data(collection_id.clone(), id.clone())?;
-            collection.add_indexes(&id, &data_key, &record).await; // TODO
+            collection.add_indexes(&id, &data_key, &record).await;
 
             Ok(JobExecutionResultState::Okay)
         }
