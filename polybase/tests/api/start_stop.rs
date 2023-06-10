@@ -23,7 +23,10 @@ async fn wait_for_server_port_to_be_released(port: u16) {
     use std::net::Ipv4Addr;
     use tokio::net::TcpListener;
 
-    while let Err(_) = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)).await {
+    while TcpListener::bind((Ipv4Addr::UNSPECIFIED, port))
+        .await
+        .is_err()
+    {
         time::sleep(time::Duration::from_millis(100)).await;
     }
 }
