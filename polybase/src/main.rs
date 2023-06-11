@@ -492,6 +492,7 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
                             };
+                            let txns_len = txns.len();
 
                             // Create the proposl manfiest
                             let manifest = ProposalManifest {
@@ -506,7 +507,7 @@ async fn main() -> Result<()> {
                             };
                             let proposal_hash = manifest.hash();
 
-                            info!(logger, "Propose"; "leader_id" => manifest.leader_id.prefix(), "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips);
+                            info!(logger, "Propose"; "leader_id" => manifest.leader_id.prefix(), "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips, "txns" => txns_len);
 
                             // Add proposal to own register, this will trigger an accept
                             solid.receive_proposal(manifest.clone());
