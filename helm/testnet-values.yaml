@@ -20,3 +20,5 @@ additionalDomain: testnet.spacetime.xyz
 extraEnvVars:
   - name: PEERS
     value: "12D3KooWSZxfWBu726XtsGumTFtmqFTTenud1HempLgHx5kSvBaM,12D3KooWNSEqaQB4ZHFrdw4A1efz3G5aTxzfRPXPjrT5z2yfGaTs,12D3KooWPBFaDpnqiPRTQZqvf1W41fcszS27qPhpkL757Z2XSkcz"
+  - name: SNAPSHOT_CHUNK_SIZE
+    value: "8388608"
