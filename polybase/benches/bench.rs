@@ -20,16 +20,17 @@ pub struct BenchResult {
 #[tokio::main]
 async fn main() {
     let base_url = "http://localhost:8080";
+    // let base_url = "https://prenet.polybase.xyz";
 
     // client hangs on 100k on MacOS
-    for n in [1, 10, 100, 1000] {
+    for n in [1, 10, 100, 1000, 5000] {
         let BenchResult {
             total_duration,
             avg_duration,
             variance_duration,
             std_dev_duration,
             throughput,
-            ..
+            durations,
         } = create_records(n, base_url).await;
 
         println!("Took {}s to create {n} records", total_duration);
@@ -37,6 +38,8 @@ async fn main() {
         println!("  Variance deviation: {} seconds", variance_duration);
         println!("  Standard deviation: {} seconds", std_dev_duration);
         println!("  Throughput: {} requests per second", throughput);
+
+        generate_chart(format!("results/create_records_{}.svg", n), durations, 50);
     }
 }
 
@@ -77,7 +80,11 @@ async fn create_records(n: u64, base_url: &str) -> BenchResult {
             let duration = start.elapsed();
 
             // Make sure the request was successful
-            assert!(response.status().is_success());
+            assert!(
+                response.status().is_success(),
+                "Request failed: {:?}",
+                response.status()
+            );
 
             duration.as_secs_f64()
         });
@@ -141,7 +148,7 @@ async fn create_collection(base_url: &str) -> String {
     id
 }
 
-async fn generate_chart(name: String, durations: Vec<f64>, num_bins: usize) {
+fn generate_chart(name: String, durations: Vec<f64>, num_bins: usize) {
     let current_file = file!();
     let project_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let absolute_current_file = fs::canonicalize(project_root.join(current_file)).unwrap();
@@ -164,22 +171,27 @@ async fn generate_chart(name: String, durations: Vec<f64>, num_bins: usize) {
         .min_by(|a, b| a.partial_cmp(b).unwrap())
         .unwrap();
 
-    let mut chart = ChartBuilder::on(&root)
-        // .caption("Histogram of Request Durations", ("", 50).into_font())
-        .margin(5)
-        .x_label_area_size(30)
-        .y_label_area_size(30)
-        .build_cartesian_2d(min_duration..max_duration, 0usize..400usize)
-        .unwrap();
-
-    chart.configure_mesh().draw().unwrap();
-
     let histogram = durations.iter().fold(vec![0; num_bins], |mut acc, &v| {
         let index =
             ((v - min_duration) / (max_duration - min_duration) * (num_bins as f64) - 1.0) as usize;
         acc[index] += 1;
         acc
     });
+
+    let max: &usize = histogram.iter().max().unwrap();
+    let height = max + max / 10;
+
+    let mut chart = ChartBuilder::on(&root)
+        // .caption("Histogram of Request Durations", ("", 50).into_font())
+        .margin(5)
+        .x_label_area_size(30)
+        .y_label_area_size(30)
+        .build_cartesian_2d(min_duration..max_duration, 0usize..height)
+        .unwrap();
+
+    chart.configure_mesh().draw().unwrap();
+
+    let diff = max_duration - min_duration;
 
     chart
         .draw_series(histogram.into_iter().zip(0..).map(|(y, x)| {
@@ -188,13 +200,13 @@ async fn generate_chart(name: String, durations: Vec<f64>, num_bins: usize) {
                     (
                         (x as f64 / num_bins as f64) * (max_duration - min_duration)
                             + min_duration
-                            + 0.0001,
+                            + (diff * 0.001),
                         0,
                     ),
                     (
                         ((x + 1) as f64 / num_bins as f64) * (max_duration - min_duration)
                             + min_duration
-                            - 0.0001,
+                            - (diff * 0.001),
                         y,
                     ),
                 ],
