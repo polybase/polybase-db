@@ -1,4 +1,5 @@
 use super::db;
+use super::migrations::MigrationError;
 use super::network;
 use indexer::IndexerError;
 use libp2p::{identity, multiaddr};
@@ -45,4 +46,7 @@ pub enum AppError {
 
     #[error("public key not included in allowed whitelist")]
     Whitelist,
+
+    #[error("migration error")]
+    MigrationError(#[from] MigrationError),
 }

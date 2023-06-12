@@ -129,7 +129,7 @@ async fn main() -> Result<()> {
         Arc::new(Db::new(config.root_dir.clone(), logger.clone(), DbConfig::default()).unwrap());
 
     // check for applicable migrations
-    migrations::check_for_migrations(db.clone(), logger.clone()).await;
+    migrations::check_for_migrations(db.clone(), logger.clone()).await?;
 
     // Get the keypair (provided or auto-generated)
     // TODO: store keypair if auto-generated

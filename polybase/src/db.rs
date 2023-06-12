@@ -546,12 +546,37 @@ impl Db {
         Ok(())
     }
 
+    /// Retrieve the currently stored Polybase database version in the rocksdb store:
+    ///   - None if there is no version stored,
+    ///   - Some(ver) if the stored version is `ver`.
     pub(crate) async fn get_polybase_db_version(&self) -> Result<Option<u32>> {
-        todo!();
+        let record = self
+            .indexer
+            .get_system_key("POLYBASE_DATABASE_VERSION".to_string())
+            .await?;
+
+        let value = match record.and_then(|mut r| r.remove("POLYBASE_DATABASE_VERSION")) {
+            Some(indexer::RecordValue::Bytes(b)) => b,
+            _ => return Ok(None),
+        };
+
+        let curr_db_ver: u32 = bincode::deserialize(&value)?;
+
+        Ok(Some(curr_db_ver))
     }
 
-    async fn set_polybase_db_version(&self, curr_db_ver: u32) -> Result<()> {
-        todo!();
+    /// Set the polybase database version to the current version
+    pub(crate) async fn set_polybase_db_version(&self) -> Result<()> {
+        let curr_db_version = bincode::serialize(&CURRENT_POLYBASE_DB_VERSION)?;
+        let value = indexer::RecordValue::Bytes(curr_db_version);
+
+        let mut record = indexer::RecordRoot::new();
+        record.insert("POLYBASE_DATABASE_VERSION".to_string(), value);
+
+        Ok(self
+            .indexer
+            .set_system_key("POLYBASE_DATABASE_VERSION".to_string(), &record)
+            .await?)
     }
 }
 
