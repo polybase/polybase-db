@@ -601,7 +601,9 @@ impl<'a> Collection<'a> {
         collection_ast.walk_fields(&mut vec![], &mut |path, field| {
             let indexable = matches!(
                 field.type_(),
-                stableast::Type::Primitive(_) | stableast::Type::PublicKey(_)
+                stableast::Type::Primitive(_)
+                    | stableast::Type::PublicKey(_)
+                    | stableast::Type::ForeignRecord(_)
             );
 
             if indexable {
@@ -1660,5 +1662,130 @@ mod tests {
 
         assert_eq!(first, value_2);
         assert_eq!(second, value_1);
+    }
+
+    #[tokio::test]
+    async fn test_collection_fields_are_indexed_by_default() {
+        let store = TestStore::default();
+
+        let capital_collection = create_collection(
+            &store,
+            stableast::Root(vec![stableast::RootNode::Collection(
+                stableast::Collection {
+                    namespace: stableast::Namespace {
+                        value: "capital-ns".into(),
+                    },
+                    name: "Capital".into(),
+                    attributes: vec![
+                        stableast::CollectionAttribute::Property(stableast::Property {
+                            name: "id".into(),
+                            type_: stableast::Type::Primitive(stableast::Primitive {
+                                value: stableast::PrimitiveType::String,
+                            }),
+                            directives: vec![],
+                            required: true,
+                        }),
+                        stableast::CollectionAttribute::Property(stableast::Property {
+                            name: "name".into(),
+                            type_: stableast::Type::Primitive(stableast::Primitive {
+                                value: stableast::PrimitiveType::String,
+                            }),
+                            directives: vec![],
+                            required: true,
+                        }),
+                    ],
+                },
+            )]),
+        )
+        .await
+        .into_iter()
+        .next()
+        .unwrap();
+
+        store.commit().await.unwrap();
+
+        assert_eq!(capital_collection.collection_id, "capital-ns/Capital");
+        assert_eq!(capital_collection.indexes.len(), 2);
+        assert_eq!(
+            capital_collection.indexes[0],
+            index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                vec!["id".into()],
+                keys::Direction::Ascending
+            )])
+        );
+        assert_eq!(
+            capital_collection.indexes[1],
+            index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                vec!["name".into()],
+                keys::Direction::Ascending
+            )])
+        );
+
+        let country_collection = create_collection(
+            &store,
+            stableast::Root(vec![stableast::RootNode::Collection(
+                stableast::Collection {
+                    namespace: stableast::Namespace {
+                        value: "country-ns".into(),
+                    },
+                    name: "Country".into(),
+                    attributes: vec![
+                        stableast::CollectionAttribute::Property(stableast::Property {
+                            name: "id".into(),
+                            type_: stableast::Type::Primitive(stableast::Primitive {
+                                value: stableast::PrimitiveType::String,
+                            }),
+                            directives: vec![],
+                            required: true,
+                        }),
+                        stableast::CollectionAttribute::Property(stableast::Property {
+                            name: "name".into(),
+                            type_: stableast::Type::Primitive(stableast::Primitive {
+                                value: stableast::PrimitiveType::String,
+                            }),
+                            directives: vec![],
+                            required: true,
+                        }),
+                        stableast::CollectionAttribute::Property(stableast::Property {
+                            name: "capital-ns/capital".into(),
+                            type_: stableast::Type::ForeignRecord(stableast::ForeignRecord {
+                                collection: "Capital".into(),
+                            }),
+                            directives: vec![],
+                            required: true,
+                        }),
+                    ],
+                },
+            )]),
+        )
+        .await
+        .into_iter()
+        .next()
+        .unwrap();
+
+        store.commit().await.unwrap();
+
+        assert_eq!(country_collection.indexes.len(), 3);
+        assert_eq!(
+            country_collection.indexes[0],
+            index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                vec!["id".into()],
+                keys::Direction::Ascending
+            )])
+        );
+        assert_eq!(
+            country_collection.indexes[1],
+            index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                vec!["name".into()],
+                keys::Direction::Ascending
+            )])
+        );
+        assert_eq!(
+            country_collection.indexes[2],
+            index::CollectionIndex::new(vec![index::CollectionIndexField::new(
+                vec!["capital-ns/capital".into()],
+                keys::Direction::Ascending
+            )])
+        );
     }
 }
