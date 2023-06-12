@@ -1,6 +1,6 @@
 [workspace]
 
-members = ["polybase", "indexer", "gateway", "rbmerkle", "migrate", "solid"]
+members = ["polybase", "indexer", "gateway", "rbmerkle", "solid"]
 
 [profile.release]
 debug-assertions = true

@@ -3098,29 +3098,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "migrate"
-version = "0.6.1"
-dependencies = [
- "anyhow",
- "clap 4.2.7",
- "dirs",
- "hex",
- "indexer",
- "polylang",
- "regex",
- "reqwest",
- "secp256k1",
- "serde",
- "serde_json",
- "serde_with",
- "slog",
- "slog-async",
- "slog-term",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"

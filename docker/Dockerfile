@@ -25,7 +25,6 @@ COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
-COPY migrate ./migrate/
 COPY solid ./solid/
 RUN cargo chef prepare --recipe-path /recipe.json
 
@@ -46,14 +45,12 @@ COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
-COPY migrate ./migrate/
 COPY solid ./solid/
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
-RUN cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/polybase /build/target && \
-    cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/migrate /build/target
+RUN cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/polybase /build/target
 
 
 
@@ -98,7 +95,6 @@ RUN apt update && apt install -y curl nano
 USER spaceman
 
 COPY --from=builder /build/target/polybase /usr/bin/polybase
-COPY --from=builder /build/target/migrate /usr/bin/polybase-migrate
 
 STOPSIGNAL SIGTERM
 
