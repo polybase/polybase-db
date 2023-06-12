@@ -60,7 +60,7 @@ jobs:
 
       - name: Run server
         working-directory: polybase-rust
-        run: cargo run &
+        run: cargo run --bin polybase &
 
       - name: Install deps
         working-directory: polybase-ts
