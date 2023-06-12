@@ -18,6 +18,8 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
 
+pub(crate) const CURRENT_POLYBASE_DB_VERSION: u32 = 1;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -542,6 +544,14 @@ impl Db {
         validate_collection_record(record).map_err(indexer::IndexerError::from)?;
 
         Ok(())
+    }
+
+    pub(crate) async fn get_polybase_db_version(&self) -> Result<Option<u32>> {
+        todo!();
+    }
+
+    async fn set_polybase_db_version(&self, curr_db_ver: u32) -> Result<()> {
+        todo!();
     }
 }
 

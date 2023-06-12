@@ -12,6 +12,7 @@ mod db;
 mod errors;
 mod hash;
 mod mempool;
+mod migrations;
 mod network;
 mod rpc;
 mod txn;
@@ -126,6 +127,9 @@ async fn main() -> Result<()> {
     #[allow(clippy::unwrap_used)]
     let db: Arc<Db> =
         Arc::new(Db::new(config.root_dir.clone(), logger.clone(), DbConfig::default()).unwrap());
+
+    // check for applicable migrations
+    migrations::check_for_migrations(db.clone(), logger.clone()).await;
 
     // Get the keypair (provided or auto-generated)
     // TODO: store keypair if auto-generated
