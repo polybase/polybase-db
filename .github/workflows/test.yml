@@ -64,7 +64,7 @@ jobs:
 
       - name: Install deps
         working-directory: polybase-ts
-        run: yarn install
+        run: yarn install && yarn build
         
       - name: Run E2E tests
         working-directory: polybase-ts/packages/client
