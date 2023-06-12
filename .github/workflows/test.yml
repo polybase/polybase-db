@@ -12,33 +12,15 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      # Allows pushing to the GitHub Container Registry
       packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Set up Depot
-        uses: depot/setup-action@v1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build unit test
-        uses: depot/build-push-action@v1
-        with:
-          context: .
-          file: ./docker/Dockerfile
-          push: false
-          build-args: |
-            RELEASE=0
-          load: true
-          target: unit-tests
-          tags: polybase-unit-tests
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run unit tests
-        run: |
-          docker run polybase-unit-tests
+        run: cargo test
 
   e2e-test:
     name: E2E Tests
@@ -46,33 +28,38 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      # Allows pushing to the GitHub Container Registry
       packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-
-      - name: Set up Depot
-        uses: depot/setup-action@v1
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Build e2e tests
-        uses: depot/build-push-action@v1
         with:
-          context: .
-          file: ./docker/Dockerfile
-          push: false
-          build-args: |
-            RELEASE=0
-          load: true
-          target: e2e-polybase-ts-tests
-          tags: polybase-e2e-polybase-ts-tests
+          path: polybase-rust
 
-      - name: Run e2e tests
-        run: |
-          docker run polybase-e2e-polybase-ts-tests
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          path: polybase-ts
+          repository: polybase/polybase-ts
+          token: ${{ secrets.ADMIN_TOKEN }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+          cache: 'yarn'
+
+      - name: Run server
+        working-directory: polybase-rust
+        run: cargo run &
+
+      - name: Install deps
+        working-directory: polybase-ts
+        run: yarn install
+        
+      - name: Run E2E tests
+        working-directory: polybase-ts/packages/client
+        run: yarn test:e2e
 
   clippy:
     name: Clippy Check
