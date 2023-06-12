@@ -123,12 +123,6 @@ impl Db {
         self.out_of_sync_height.lock().replace(height);
     }
 
-    pub async fn is_empty(&self) -> Result<bool> {
-        let collection = self.indexer.collection("Collection".to_string()).await?;
-        let meta = collection.get_metadata().await?;
-        Ok(meta.is_none())
-    }
-
     pub async fn next(&self) -> Option<CallTxn> {
         let mut receiver = self.receiver.lock().await;
         receiver.recv().await
