@@ -11,7 +11,7 @@ use indexer::{
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use solid::proposal::{self};
+use solid::proposal;
 use std::cmp::min;
 use std::collections::HashSet;
 use std::time::{Duration, SystemTime};
@@ -536,6 +536,15 @@ impl Db {
         validate_collection_record(record).map_err(indexer::IndexerError::from)?;
 
         Ok(())
+    }
+
+    pub fn root_hash(&self) -> [u8; 32] {
+        self.indexer.root_hash()
+    }
+
+    pub fn proof_for(&self, namespace: String, id: String) -> Result<Option<Vec<u8>>> {
+        let proof = self.indexer.proof_for(namespace, id)?;
+        Ok(proof)
     }
 }
 

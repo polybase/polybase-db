@@ -1,14 +1,9 @@
-use bincode::{deserialize, serialize};
+use crate::snapshot::{SnapshotChunk, SnapshotIterator};
 use merk::proofs::Query;
 use merk::{Merk, Op};
 use parking_lot::Mutex;
 use prost::Message;
 use rocksdb::{IteratorMode, WriteBatch};
-use serde::{Deserialize, Serialize};
-use crate::snapshot::{SnapshotChunk, SnapshotIterator};
-use parking_lot::Mutex;
-use prost::Message;
-use rocksdb::WriteBatch;
 use std::mem;
 use std::{convert::AsRef, path::Path, sync::Arc};
 

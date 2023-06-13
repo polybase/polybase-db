@@ -433,7 +433,7 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
     Ok(web::Json(StatusResponse {
         status: "OK".to_string(),
         proof: Proof::MerkleRootHash {
-            bytes: state.indexer.root_hash(),
+            bytes: state.db.root_hash(),
         },
         root: hash,
         height,
@@ -453,7 +453,7 @@ async fn proof(
     args: web::Path<ProofArgs>,
 ) -> Result<web::Json<Option<Proof>>, HTTPError> {
     let proof = state
-        .indexer
+        .db
         .proof_for(args.namespace.to_string(), args.id.to_string())?;
 
     let response = proof.map(|bytes| Proof::MerkleProof { bytes });
