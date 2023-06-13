@@ -1,7 +1,7 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
 use crate::auth;
-use crate::db::Db;
+use crate::db::{Db, DbWaitResult};
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
 use crate::errors::metrics::MetricsData;
@@ -10,19 +10,11 @@ use crate::errors::AppError;
 use crate::txn::CallTxn;
 use actix_cors::Cors;
 use actix_server::Server;
-use actix_web::{
-    get, http::StatusCode, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder,
-};
-use futures::TryStreamExt;
-use indexer::{AuthUser, Indexer};
+use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use indexer::AuthUser;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
-use std::{
-    borrow::Cow,
-    cmp::min,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
 
 use self::proofs::Proof;
 
@@ -30,7 +22,6 @@ mod proofs;
 
 struct RouteState {
     db: Arc<Db>,
-    indexer: Arc<Indexer>,
     whitelist: Arc<Option<Vec<String>>>,
 }
 
@@ -85,53 +76,28 @@ async fn get_record(
     query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
 ) -> Result<impl Responder, HTTPError> {
-    let (collection, id) = path.into_inner();
+    let (collection, record_id) = path.into_inner();
     let auth = body.auth;
+    let auth: Option<indexer::AuthUser> = auth.map(|a| a.into());
 
-    let collection = state.indexer.collection(collection).await?;
-
-    if let Some(since) = query.since {
-        enum UpdateCheckResult {
-            Updated,
-            NotFound,
-            NotModified,
+    let record = if let Some(since) = query.since {
+        match state
+            .db
+            .get_wait(
+                collection,
+                record_id,
+                auth,
+                since,
+                Duration::from(query.wait_for),
+            )
+            .await?
+        {
+            DbWaitResult::Updated(record) => record,
+            DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
-
-        let was_updated: Result<UpdateCheckResult, HTTPError> = async {
-            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
-            let wait_until = SystemTime::now() + wait_for;
-            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
-
-            let mut record_exists = false;
-            while wait_until > SystemTime::now() {
-                if let Some(metadata) = collection.get_record_metadata(&id).await? {
-                    record_exists = true;
-                    if metadata.updated_at > since {
-                        return Ok(UpdateCheckResult::Updated);
-                    }
-                }
-
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
-
-            Ok(if record_exists {
-                UpdateCheckResult::NotModified
-            } else {
-                UpdateCheckResult::NotFound
-            })
-        }
-        .await;
-
-        match was_updated? {
-            UpdateCheckResult::Updated => {}
-            UpdateCheckResult::NotModified => {
-                return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish())
-            }
-            UpdateCheckResult::NotFound => return Ok(HttpResponse::NotFound().finish()),
-        }
-    }
-
-    let record = collection.get(id, auth.map(|a| a.into()).as_ref()).await?;
+    } else {
+        state.db.get(collection, record_id, auth).await?
+    };
 
     match record {
         Some(record) => {
@@ -259,7 +225,7 @@ async fn get_records(
 ) -> Result<impl Responder, HTTPError> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let collection = state.indexer.collection(collection).await?;
+    let auth: Option<indexer::AuthUser> = auth.map(|a| a.into());
 
     let sort_indexes = query
         .sort
@@ -272,56 +238,38 @@ async fn get_records(
         })
         .collect::<Vec<_>>();
 
-    if let Some(since) = query.since {
-        let was_updated = async {
-            let wait_for = min(Duration::from(query.wait_for), Duration::from_secs(60));
-            let wait_until = SystemTime::now() + wait_for;
-            let since = SystemTime::UNIX_EPOCH + Duration::from_secs_f64(since);
+    let list_query = indexer::ListQuery {
+        limit: Some(min(1000, query.limit.unwrap_or(100))),
+        where_query: query.where_query.clone(),
+        order_by: &sort_indexes,
+        cursor_after: query.after.0.clone(),
+        cursor_before: query.before.0.clone(),
+    };
 
-            while wait_until > SystemTime::now() {
-                if collection
-                    .get_metadata()
-                    .await?
-                    .map(|m| m.last_record_updated_at > since)
-                    .unwrap_or(false)
-                {
-                    return Ok(true);
-                }
-
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
-
-            Ok(false)
+    let records = if let Some(since) = query.since {
+        match state
+            .db
+            .list_wait(
+                collection,
+                list_query,
+                auth,
+                since,
+                Duration::from(query.wait_for),
+            )
+            .await?
+        {
+            DbWaitResult::Updated(record) => record,
+            DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
-        .await;
-
-        match was_updated {
-            Ok(true) => {}
-            Ok(false) => return Ok(HttpResponse::Ok().status(StatusCode::NOT_MODIFIED).finish()),
-            Err(e) => return Err(e),
-        }
-    }
+    } else {
+        state.db.list(collection, list_query, auth).await?
+    };
 
     // for metrics data collection
     let req_uri = req.uri().to_string();
     let mut num_records = 0;
 
     let list_response: Result<ListResponse, HTTPError> = async {
-        let records = collection
-            .list(
-                indexer::ListQuery {
-                    limit: Some(min(1000, query.limit.unwrap_or(100))),
-                    where_query: query.where_query.clone(),
-                    order_by: &sort_indexes,
-                    cursor_after: query.after.0.clone(),
-                    cursor_before: query.before.0.clone(),
-                },
-                &auth.map(indexer::AuthUser::from).as_ref(),
-            )
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?;
-
         num_records = records.len();
 
         Ok(ListResponse {
@@ -411,7 +359,7 @@ async fn post_record(
 
     let record_id = db.call(txn).await?;
 
-    let Some(record) = state.db.get(collection_id, record_id).await? else {
+    let Some(record) = state.db.get_without_auth_check(collection_id, record_id).await? else {
         return Err(HTTPError::new(
             ReasonCode::RecordNotFound,
             None,
@@ -443,7 +391,10 @@ async fn call_function(
     );
 
     let record_id = db.call(txn).await?;
-    let record = state.db.get(collection_id, record_id).await?;
+    let record = state
+        .db
+        .get_without_auth_check(collection_id, record_id)
+        .await?;
 
     Ok(web::Json(FunctionResponse {
         data: match record {
@@ -454,8 +405,12 @@ async fn call_function(
 }
 
 #[get("/v0/health")]
-async fn health() -> impl Responder {
-    HttpResponse::Ok()
+async fn health(state: web::Data<RouteState>) -> impl Responder {
+    if state.db.is_healthy() {
+        HttpResponse::Ok()
+    } else {
+        HttpResponse::ServiceUnavailable()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -463,20 +418,26 @@ struct StatusResponse {
     status: String,
     root: String,
     proof: Proof,
+    height: usize,
     peers: usize,
-    leader: usize,
 }
 
 #[get("/v0/status")]
 async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
+    let manifest = state.db.get_manifest().await?;
+    let height = manifest.as_ref().map(|m| m.height).unwrap_or(0);
+    let hash = manifest
+        .as_ref()
+        .map(|m| m.hash().to_string())
+        .unwrap_or("0x0".to_string());
     Ok(web::Json(StatusResponse {
         status: "OK".to_string(),
-        root: hex::encode(state.db.rollup.root()?),
         proof: Proof::MerkleRootHash {
             bytes: state.indexer.root_hash(),
         },
+        root: hash,
+        height,
         peers: 23,
-        leader: 12,
     }))
 }
 
@@ -501,7 +462,6 @@ async fn proof(
 
 pub fn create_rpc_server(
     rpc_laddr: String,
-    indexer: Arc<indexer::Indexer>,
     db: Arc<Db>,
     whitelist: Arc<Option<Vec<String>>>,
     logger: slog::Logger,
@@ -512,7 +472,6 @@ pub fn create_rpc_server(
         App::new()
             .app_data(web::Data::new(RouteState {
                 db: Arc::clone(&db),
-                indexer: Arc::clone(&indexer),
                 whitelist: Arc::clone(&whitelist),
             }))
             .wrap(SlogMiddleware::new(logger.clone()))

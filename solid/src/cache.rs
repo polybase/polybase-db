@@ -134,6 +134,16 @@ impl ProposalCache {
             .max_by(|a, b| a.skips().cmp(&b.skips()))
     }
 
+    /// Proposal with largest height, skip which is valid proposal in the store
+    /// (it includes the last confirmed proposal in the tree)
+    pub fn min_proposal_height(&self) -> usize {
+        self.proposals
+            .values()
+            .min_by(|a, b| a.height().cmp(&b.height()))
+            .map(|p| p.height())
+            .unwrap_or(0)
+    }
+
     /// Confirm a proposal, all subsequent proposals must now
     /// include this proposal in the tree.
     pub fn confirm(&mut self, proposal_hash: ProposalHash) {

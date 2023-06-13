@@ -13,9 +13,9 @@ mod errors;
 mod hash;
 mod mempool;
 mod network;
-mod rollup;
 mod rpc;
 mod txn;
+mod util;
 
 use crate::config::{Command, Config, LogFormat};
 use crate::db::{Db, DbConfig};
@@ -25,20 +25,17 @@ use chrono::Utc;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
-use indexer::{Indexer, IndexerError};
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
-use rand::RngCore;
 use slog::Drain;
 use solid::config::SolidConfig;
 use solid::event::SolidEvent;
 use solid::proposal::ProposalManifest;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use std::{
     fs::{create_dir_all, File, OpenOptions},
     io::{Read, Write},
-    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -52,7 +49,7 @@ async fn main() -> Result<()> {
     let config = Config::parse();
 
     if let Some(Command::GenerateKey) = config.command {
-        let (keypair, bytes) = generate_key();
+        let (keypair, bytes) = util::generate_key();
         #[allow(clippy::unwrap_used)]
         let key = ed25519::SecretKey::from_bytes(&bytes).unwrap();
         let public: ed25519::PublicKey = (&key).into();
@@ -124,18 +121,11 @@ async fn main() -> Result<()> {
         slog_o!("version" => env!("CARGO_PKG_VERSION")),
     );
 
-    // Indexer is responsible for indexing db data
-    #[allow(clippy::unwrap_used)]
-    let indexer_dir = get_indexer_dir(&config.root_dir).unwrap();
-    let indexer = Arc::new(Indexer::new(logger.clone(), indexer_dir).map_err(IndexerError::from)?);
-
     // Database combines various components into a single interface
     // that is thread safe
-    let db: Arc<Db> = Arc::new(Db::new(
-        Arc::clone(&indexer),
-        logger.clone(),
-        DbConfig::default(),
-    ));
+    #[allow(clippy::unwrap_used)]
+    let db: Arc<Db> =
+        Arc::new(Db::new(config.root_dir.clone(), logger.clone(), DbConfig::default()).unwrap());
 
     // Get the keypair (provided or auto-generated)
     // TODO: store keypair if auto-generated
@@ -150,7 +140,8 @@ async fn main() -> Result<()> {
         }
         None => {
             #[allow(clippy::expect_used)]
-            let key_path = get_key_path(&config.root_dir).expect("failed to get key path");
+            let key_path: std::path::PathBuf =
+                util::get_key_path(&config.root_dir).expect("failed to get key path");
             if key_path.exists() {
                 let mut file = File::open(key_path)?;
                 let mut key = String::new();
@@ -169,7 +160,7 @@ async fn main() -> Result<()> {
                         create_dir_all(dir)?;
                     }
                 }
-                let (keypair, bytes) = generate_key();
+                let (keypair, bytes) = util::generate_key();
                 let mut file = OpenOptions::new()
                     .create(true)
                     .write(true)
@@ -208,22 +199,21 @@ async fn main() -> Result<()> {
         .peers
         .iter()
         .filter(|p| !p.is_empty())
-        .map(to_peer_id)
+        .map(util::to_peer_id)
         .collect::<Result<Vec<solid::peer::PeerId>>>()?;
 
-    let mut network = Network::new(
+    let network = Arc::new(Network::new(
         &keypair,
         network_laddr.into_iter(),
         peers_addr.into_iter(),
         logger.clone(),
-    )?;
+    )?);
 
     let local_peer_solid = solid::peer::PeerId(local_peer_id.to_bytes());
     solid_peers.push(local_peer_solid.clone());
     solid_peers.sort_unstable();
     solid_peers.dedup();
 
-    // TODO: load solid state from disk state
     let mut solid = match db.get_manifest().await? {
         Some(manifest) => solid::Solid::with_last_confirmed(
             local_peer_solid,
@@ -246,7 +236,6 @@ async fn main() -> Result<()> {
     // Run the RPC server
     let server = create_rpc_server(
         config.rpc_laddr,
-        Arc::clone(&indexer),
         Arc::clone(&db),
         Arc::new(config.whitelist.clone()),
         logger.clone(),
@@ -257,12 +246,19 @@ async fn main() -> Result<()> {
     let logger_clone = logger.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = Arc::clone(&shutdown);
+    let network_clone = Arc::clone(&network);
 
     let main_handle = tokio::spawn(async move {
-        let logger = logger_clone;
+        let network = network_clone;
+
         let shutdown = shutdown_clone;
-        let mut restore_height = solid.height();
+        let mut snapshot_from = None;
+        let mut last_commit = Instant::now();
+
         while !shutdown.load(Ordering::Relaxed) {
+            let network = Arc::clone(&network);
+            let logger = logger_clone.clone();
+
             tokio::select! {
                 // Db only produces CallTxn events, that should be propogated
                 // to other nodes
@@ -271,22 +267,29 @@ async fn main() -> Result<()> {
                 },
 
                 Some((network_peer_id, event)) = network.next() => {
+                    let peer_id: solid::peer::PeerId = network_peer_id.clone().into();
                     match event {
                         NetworkEvent::Ping => {
                             info!(logger, "Ping received");
                         },
-                        NetworkEvent::OutOfSync { peer_id, height } => {
-                            info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
-                            if height + config.block_cache_count < solid.height() {
-                                let snapshot = match db.snapshot() {
-                                    Ok(snapshot) => snapshot,
-                                    Err(err) => {
-                                        error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
-                                        continue;
-                                    }
-                                };
-                                network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
-                            } else {
+                        NetworkEvent::OutOfSync { height } => {
+                            // Don't help other nodes if we're unhealthy ourselves
+                            if !db.is_healthy() {
+                                continue;
+                            }
+
+                            if height + config.block_cache_count > solid.height() {
+                                info!(logger, "Peer is out of sync, sending proposals"; "peer_id" => peer_id.prefix(), "height" => height);
+                                if solid.min_proposal_height() > height {
+                                    // We don't have all the proposals needed for this peer, send offer to peer
+                                    network.send(
+                                        &network_peer_id,
+                                        NetworkEvent::SnapshotOffer {
+                                            id: util::unix_now(),
+                                        },
+                                    ).await;
+                                }
+
                                 for proposal in solid.confirmed_proposals_from(height) {
                                     network.send(
                                         &network_peer_id,
@@ -296,48 +299,147 @@ async fn main() -> Result<()> {
                                     )
                                     .await;
                                 }
+                            } else {
+                                error!(logger, "Peer is out of sync, peer should request full snapshot"; "peer_id" => peer_id.prefix(), "height" => height);
                             }
                         }
 
-                        NetworkEvent::SnapshotRequest{ peer_id, ..  } => {
-                            let snapshot = match db.snapshot() {
-                                Ok(snapshot) => snapshot,
-                                Err(err) => {
-                                    error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
-                                    continue;
-                                }
-                            };
-                            network.send(&peer_id.into(), NetworkEvent::Snapshot { snapshot }).await;
-                        }
+                        // We've received a request for a snapshot from another peer, if we are healthy we should offer
+                        // to provide them with a snapshot
+                        NetworkEvent::SnapshotRequest{ id, height } => {
+                            if db.is_healthy() {
+                                info!(logger, "Peer requested snapshot, sending offer"; "peer_id" => peer_id.prefix(), "height" => height, "id" => id);
+                                network.send(
+                                    &network_peer_id,
+                                    NetworkEvent::SnapshotOffer {
+                                        id,
+                                    },
+                                ).await;
+                            } else {
+                                info!(logger, "Peer requested snapshot, unable to provide snapshot due to unhealty state"; "peer_id" => peer_id.prefix(), "height" => height);
+                            }
+                        },
 
-                        NetworkEvent::Snapshot { snapshot } => {
-                            // Check if we have already advanced since our request
-                            if solid.height() > restore_height  {
-                                debug!(logger, "Skipping restore, already advanced"; "restore_height" => restore_height, "current_height" => solid.height());
+                        // We've been offered a snapshot from another peer, we should accept this offer if we
+                        // don't already have an ongoing snapshot in progress
+                        NetworkEvent::SnapshotOffer{ id } => {
+                            if snapshot_from.is_some() {
+                                debug!(logger, "Already have snapshot in progress, ignoring offer"; "peer_id" => peer_id.prefix(),  "id" => id);
                                 continue;
                             }
 
-                            info!(logger, "Restoring db from snapshot");
+                            if db.is_healthy() {
+                                debug!(logger, "Peer offered snapshot, ignoring as already healthy"; "peer_id" => peer_id.prefix(), "id" => id);
+                                continue;
+                            }
 
-                            // We should panic if we are unable to restore
-                            #[allow(clippy::unwrap_used)]
-                            db.restore(&snapshot).unwrap();
+                            info!(logger, "Peer offered snapshot, sending accept"; "peer_id" => peer_id.prefix(), "id" => id);
 
-                            // Reset solid with the new proposal state from the snapshot
-                            #[allow(clippy::unwrap_used)]
-                            let manifest = db.get_manifest().await.unwrap().unwrap();
-                            solid.reset(manifest);
+                            // Save who the snapshot is from
+                            snapshot_from = Some((network_peer_id.clone(), id));
 
-                            info!(logger, "Restore db from snapshot complete");
+                            // Reset the database
+                            #[allow(clippy::expect_used)]
+                            db.reset().expect("Failed to reset database");
+
+                            info!(logger, "Db reset ready for snapshot");
+
+                            network.send(
+                                &network_peer_id,
+                                NetworkEvent::SnapshotAccept {
+                                    id,
+                                },
+                            ).await;
+                        },
+
+                        // A node has accepted our offer to provide a snapshot, therefore we should start sending them
+                        // chunks of the snapshot
+                        NetworkEvent::SnapshotAccept{ id  } => {
+                            let db = Arc::clone(&db);
+
+                            info!(logger, "Peer accepted snapshot offer, sending chunks"; "peer_id" => peer_id.prefix(), "id" => id);
+
+                            // Spawn a task, as we don't want to block the thread while we send network events,
+                            // and this snapshot may take a while to complete
+                            tokio::spawn(async move {
+                                // 100MB chunks
+                                let snapshot_iter = db.snapshot_iter(config.snapshot_chunk_size);
+                                for chunk in snapshot_iter {
+                                    let peer_id = peer_id.clone();
+                                    match chunk {
+                                        Ok(chunk) => {
+                                            debug!(logger, "Sending snapshot chunk"; "for" => peer_id.prefix(), "chunk_size" => chunk.len());
+                                            if let Some(tx) = network.send(
+                                                &peer_id.into(),
+                                                NetworkEvent::SnapshotChunk { id, chunk: Some(chunk) },
+                                            ).await {
+                                                // Wait for the send to complete
+                                                tx.await.ok();
+                                            }
+                                        },
+                                        Err(err) => {
+                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                            return;
+                                        }
+                                    }
+                                }
+
+                                info!(logger, "Snapshot complete"; "peer_id" => peer_id.prefix(), "id" => id);
+
+                                // Send end of snapshot event
+                                network.send(
+                                    &peer_id.into(),
+                                    NetworkEvent::SnapshotChunk { id, chunk: None },
+                                ).await;
+                            });
+                        },
+
+                        // We've received a chunk of a snapshot from another peer, we should load this into
+                        // our db
+                        NetworkEvent::SnapshotChunk { id, chunk } => {
+                            info!(logger, "Received snapshot chunk"; "peer_id" => peer_id.prefix(), "id" => id, "chunk_size" => chunk.as_ref().map(|c| c.len()).unwrap_or(0));
+                            if let Some((peer_id, snapshot_id)) = &snapshot_from {
+                                if peer_id != &network_peer_id || snapshot_id != &id  {
+                                    error!(logger, "Received invalid snapshot chunk");
+                                    continue;
+                                }
+                            } else {
+                                // We're not expecting a snapshot
+                                error!(logger, "Received invalid snapshot chunk");
+                                continue;
+                            }
+
+                            if let Some(chunk) = chunk {
+                                // We should panic if we are unable to restore
+                                #[allow(clippy::unwrap_used)]
+                                db.restore_chunk(chunk).unwrap();
+                            } else {
+                                // We are finished, reset solid with the new proposal state from the snapshot
+                                #[allow(clippy::unwrap_used)]
+                                let manifest = db.get_manifest().await.unwrap().unwrap();
+                                let height = manifest.height;
+                                solid.reset(manifest);
+
+                                // Reset snapshot from
+                                snapshot_from = None;
+
+                                info!(logger, "Restore db from snapshot complete"; "height" => height);
+                            }
                         }
 
                         NetworkEvent::Accept { accept } => {
-                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
-                            solid.receive_accept(&accept, &network_peer_id.into());
+                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string(), "local_height" => solid.height());
+                            solid.receive_accept(&accept, &peer_id);
                         }
 
                         NetworkEvent::Proposal { manifest } => {
                             info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
+
+                            // Lease the proposal changes
+                            // #[allow(clippy::expect_used)]
+                            // TODO: handle the error better
+                            db.lease(&manifest).await.ok();
+
                             solid.receive_proposal(manifest);
                         }
 
@@ -374,6 +476,12 @@ async fn main() -> Result<()> {
                             height,
                             skips,
                         } => {
+                            // Wait minimum period
+                            if last_commit + Duration::from_millis(config.min_block_duration) > Instant::now() {
+                                let delay = last_commit + Duration::from_millis(config.min_block_duration) - Instant::now();
+                                tokio::time::sleep(delay).await;
+                            }
+
                             // Get changes from the pending changes cache, if we have an error
                             // skip being the leader and just continue
                             let txns = match db.propose_txns(height) {
@@ -383,9 +491,6 @@ async fn main() -> Result<()> {
                                     continue;
                                 }
                             };
-
-                            // Simulate delay
-                            tokio::time::sleep(Duration::from_millis(300)).await;
 
                             // Create the proposl manfiest
                             let manifest = ProposalManifest {
@@ -416,10 +521,14 @@ async fn main() -> Result<()> {
                         SolidEvent::Commit { manifest } => {
                             info!(logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
 
+                            last_commit = Instant::now();
+
                             // We should panic here, because there is really no way to recover from
                             // an error once a value is committed
-                            #[allow(clippy::expect_used)]
-                            db.commit(manifest).await.expect("Error committing proposal");
+                            if let Err(err) = db.commit(manifest).await {
+                                error!(logger, "Error committing proposal"; "err" => format!("{:?}", err));
+                                return;
+                            }
                         }
 
                         SolidEvent::OutOfSync {
@@ -428,12 +537,22 @@ async fn main() -> Result<()> {
                             accepts_sent,
                         } => {
                             info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
-                            restore_height = height;
-                            if solid.height() == 0 {
-                                network.send_all(NetworkEvent::SnapshotRequest { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
-                            } else {
-                                network.send_all(NetworkEvent::OutOfSync { peer_id: NetworkPeerId(local_peer_id).into(), height }).await;
+
+                            // Set as out of sync, so we mark the node as unhealthy immediately
+                            db.out_of_sync(height);
+
+                            if snapshot_from.is_some() {
+                                // We are already restoring from a snapshot, so we don't need to request another
+                                continue;
                             }
+
+                            // Check how far behind we are, to determine if we request proposals or a full snapshot
+                            if max_seen_height > solid.height() + config.block_cache_count {
+                                network.send_all(NetworkEvent::SnapshotRequest { height, id: util::unix_now() }).await;
+                            } else {
+                                network.send_all(NetworkEvent::OutOfSync { height }).await;
+                            }
+
                         }
 
                         SolidEvent::OutOfDate {
@@ -491,42 +610,4 @@ async fn main() -> Result<()> {
     );
 
     Ok(())
-}
-
-fn get_key_path(dir: &str) -> Option<PathBuf> {
-    let mut path_buf = get_base_dir(dir)?;
-    path_buf.push("config/secret_key");
-    Some(path_buf)
-}
-
-fn get_indexer_dir(dir: &str) -> Option<PathBuf> {
-    let mut path_buf = get_base_dir(dir)?;
-    path_buf.push("data/indexer.db");
-    Some(path_buf)
-}
-
-fn get_base_dir(dir: &str) -> Option<PathBuf> {
-    let mut path_buf = PathBuf::new();
-    if dir.starts_with("~/") {
-        if let Some(home_dir) = dirs::home_dir() {
-            path_buf.push(home_dir);
-            path_buf.push(dir.strip_prefix("~/")?);
-        }
-    } else {
-        path_buf.push(dir);
-    }
-    Some(path_buf)
-}
-
-fn to_peer_id(base58_string: &String) -> Result<solid::peer::PeerId> {
-    let decoded = bs58::decode(base58_string).into_vec()?;
-    Ok(solid::peer::PeerId::new(decoded))
-}
-
-fn generate_key() -> (identity::Keypair, [u8; 32]) {
-    let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
-    #[allow(clippy::unwrap_used)]
-    let keypair = identity::Keypair::ed25519_from_bytes(bytes).unwrap();
-    (keypair, bytes)
 }

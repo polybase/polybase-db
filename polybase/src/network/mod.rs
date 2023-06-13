@@ -10,9 +10,9 @@ use libp2p::{
 use parking_lot::Mutex;
 use protocol::PolyProtocol;
 use slog::{debug, info};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use tokio::{select, sync::mpsc};
+use tokio::{select, sync::mpsc, sync::oneshot, sync::Mutex as AsyncMutex};
 use transport::create_transport;
 
 mod behaviour;
@@ -29,12 +29,14 @@ pub enum Error {
 
     #[error("Tansport error: {0}")]
     Transport(#[from] libp2p::TransportError<std::io::Error>),
+
+    #[error("Channel error")]
+    Send(#[from] tokio::sync::oneshot::error::RecvError),
 }
 
 pub struct Network {
-    // swarm: Arc<Mutex<Swarm<Behaviour>>>,
-    netin_rx: mpsc::UnboundedReceiver<(NetworkPeerId, NetworkEvent)>,
-    netout_tx: mpsc::UnboundedSender<(PeerId, NetworkEvent)>,
+    netin_rx: AsyncMutex<mpsc::UnboundedReceiver<(NetworkPeerId, NetworkEvent)>>,
+    netout_tx: mpsc::UnboundedSender<(PeerId, NetworkEvent, oneshot::Sender<()>)>,
     local_peer_id: PeerId,
     shared: Arc<NetworkShared>,
     logger: slog::Logger,
@@ -72,7 +74,8 @@ impl Network {
 
         // Channel to receive NetworkEvents from the network
         let (netin_tx, netin_rx) = mpsc::unbounded_channel::<(NetworkPeerId, NetworkEvent)>();
-        let (netout_tx, mut netout_rx) = mpsc::unbounded_channel::<(PeerId, NetworkEvent)>();
+        let (netout_tx, mut netout_rx) =
+            mpsc::unbounded_channel::<(PeerId, NetworkEvent, oneshot::Sender<()>)>();
         let cloned_logger = logger.clone();
 
         // Shared state between the network and the spawned network behaviour event loop
@@ -82,10 +85,12 @@ impl Network {
         tokio::spawn(async move {
             let shared = shared_clone;
             let logger = cloned_logger;
+            let mut requests = HashMap::new();
             loop {
                 select! {
-                    Some((peer_id, event)) = netout_rx.recv() => {
-                        swarm.behaviour_mut().rr.send_request(&peer_id, protocol::Request { event });
+                    Some((peer_id, event, tx)) = netout_rx.recv() => {
+                        let request_id = swarm.behaviour_mut().rr.send_request(&peer_id, protocol::Request { event });
+                        requests.insert(request_id, tx);
                     }
                     event = swarm.select_next_some() => match event {
                         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
@@ -98,21 +103,26 @@ impl Network {
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::Message { peer, message })) => {
                             match message {
-                               request_response::Message::Response{ .. } => {},
-                               request_response::Message::Request{ request, channel, .. } => {
-                                    match netin_tx.send((peer.into(), request.event)) {
-                                        Ok(_) => {},
-                                        Err(_) => {
-                                            error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
-                                        }
+                                request_response::Message::Response{ request_id, .. } => {
+                                    // Notify sender that request/response process is complete
+                                    if let Some(tx) = requests.remove(&request_id) {
+                                        tx.send(()).ok();
                                     }
-                                    match swarm.behaviour_mut().rr.send_response(channel, protocol::Response) {
-                                        Ok(_) => {},
-                                        Err(_) => {
-                                            error!(logger, "Failed to send response"; "peer_id" => format!("{:?}", peer));
+                                },
+                                request_response::Message::Request{ request, channel, .. } => {
+                                        match netin_tx.send((peer.into(), request.event)) {
+                                            Ok(_) => {},
+                                            Err(_) => {
+                                                error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
+                                            }
                                         }
-                                    }
-                               }
+                                        match swarm.behaviour_mut().rr.send_response(channel, protocol::Response) {
+                                            Ok(_) => {},
+                                            Err(_) => {
+                                                error!(logger, "Failed to send response"; "peer_id" => format!("{:?}", peer));
+                                            }
+                                        }
+                                }
                            }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::ResponseSent { .. })) => {}
@@ -128,7 +138,7 @@ impl Network {
         });
 
         Ok(Network {
-            netin_rx,
+            netin_rx: AsyncMutex::new(netin_rx),
             netout_tx,
             local_peer_id,
             shared,
@@ -140,7 +150,11 @@ impl Network {
     //     Ok(self.swarm.lock().dial(addr)?)
     // }
 
-    pub async fn send(&self, peer: &NetworkPeerId, event: NetworkEvent) {
+    pub async fn send(
+        &self,
+        peer: &NetworkPeerId,
+        event: NetworkEvent,
+    ) -> Option<oneshot::Receiver<()>> {
         self._send(&peer.0, event).await
     }
 
@@ -155,27 +169,31 @@ impl Network {
         futures::future::join_all(futures).await;
     }
 
-    async fn _send(&self, peer: &PeerId, event: NetworkEvent) {
+    async fn _send(&self, peer: &PeerId, event: NetworkEvent) -> Option<oneshot::Receiver<()>> {
         // Don't send messages to self
         if self.local_peer_id == *peer {
-            return;
+            return None;
         }
 
-        if !self.shared.state.lock().connected_peers.contains(peer) {
-            debug!(self.logger, "Dropping event to disconnected peer"; "peer_id" => format!("{:?}", peer));
-            return;
-        }
+        // if !self.shared.state.lock().connected_peers.contains(peer) {
+        //     debug!(self.logger, "Attempt to send to disconnected peer"; "peer_id" => format!("{:?}", peer));
+        //     return None;
+        // }
 
-        match self.netout_tx.send((*peer, event)) {
+        let (tx, rx) = oneshot::channel();
+
+        match self.netout_tx.send((*peer, event, tx)) {
             Ok(_) => {}
             Err(_) => {
                 error!(self.logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
             }
         }
+
+        Some(rx)
     }
 
-    pub async fn next(&mut self) -> Option<(NetworkPeerId, NetworkEvent)> {
-        self.netin_rx.recv().await
+    pub async fn next(&self) -> Option<(NetworkPeerId, NetworkEvent)> {
+        self.netin_rx.lock().await.recv().await
     }
 }
 
@@ -205,7 +223,7 @@ struct NetworkSharedState {
     connected_peers: HashSet<PeerId>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct NetworkPeerId(pub PeerId);
 
 impl From<solid::peer::PeerId> for NetworkPeerId {

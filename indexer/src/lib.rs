@@ -8,6 +8,7 @@ pub mod keys;
 mod proto;
 pub mod publickey;
 mod record;
+pub mod snapshot;
 mod stableast_ext;
 mod store;
 pub mod where_query;
@@ -20,6 +21,7 @@ pub use record::{
     json_to_record, record_to_json, Converter, ForeignRecordReference, IndexValue, PathFinder,
     RecordError, RecordRoot, RecordUserError, RecordValue,
 };
+use snapshot::SnapshotChunk;
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 
@@ -65,11 +67,15 @@ impl Indexer {
         Ok(self.store.destroy()?)
     }
 
-    pub fn snapshot(&self) -> Result<Vec<u8>> {
-        Ok(self.store.snapshot()?)
+    pub fn reset(&self) -> Result<()> {
+        Ok(self.store.reset()?)
     }
 
-    pub fn restore(&self, data: Vec<u8>) -> Result<()> {
+    pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
+        self.store.snapshot(chunk_size)
+    }
+
+    pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
         Ok(self.store.restore(data)?)
     }
 

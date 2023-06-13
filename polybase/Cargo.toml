@@ -55,6 +55,7 @@ libp2p = { version = "0.51", default_features = false, features = [
     "tcp",
     "yamux",
     "tokio",
+    "dns",
     "request-response",
 ] }
 libp2p-quic = { version = "0.7.0-alpha.3", features = ["tokio"] }

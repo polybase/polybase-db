@@ -75,6 +75,10 @@ impl ProposalStore {
             .collect()
     }
 
+    pub fn min_proposal_height(&self) -> usize {
+        self.proposals.min_proposal_height()
+    }
+
     /// Add a pending proposal to the store
     pub fn add_pending_proposal(&mut self, manifest: ProposalManifest) {
         let hash: ProposalHash = (&manifest).into();

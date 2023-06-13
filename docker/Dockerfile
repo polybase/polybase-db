@@ -25,7 +25,6 @@ COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
-COPY migrate ./migrate/
 COPY solid ./solid/
 RUN cargo chef prepare --recipe-path /recipe.json
 
@@ -46,43 +45,16 @@ COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY rbmerkle ./rbmerkle/
-COPY migrate ./migrate/
 COPY solid ./solid/
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
-RUN cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/polybase /build/target && \
-    cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/migrate /build/target
-
-
-
-# Run unit tests
-FROM builder as unit-tests
-
-CMD cargo test
-
-
-## polybase-ts e2e tests
-FROM builder as e2e-polybase-ts-tests
-
-RUN curl -fsSL https://deb.nodesource.com/setup_current.x | bash - && \
-    apt-get install -y nodejs git build-essential && npm install -g yarn
-
-COPY --from=builder /build/target/polybase /usr/bin/
-
-WORKDIR /e2e
-
-ADD "https://api.github.com/repos/polybase/polybase-ts/commits?per_page=1" /latest_commit
-RUN git clone --depth=1 https://github.com/polybase/polybase-ts.git
-RUN cd polybase-ts && yarn install && yarn build
-
-CMD ["bash", "-c", "polybase & p1=$! && cd polybase-ts/packages/client && yarn test:e2e && kill \"$p1\" && echo \"Tests passed\""]
+RUN cp /build/target/$(if [ "$RELEASE" = "1" ]; then echo "release"; else echo "debug"; fi)/polybase /build/target
 
 
 # Main
 FROM debian:bookworm-slim
-# FROM alpine:3.15
 
 ENV ROOT_DIR /polybase
 WORKDIR $ROOT_DIR
@@ -98,7 +70,6 @@ RUN apt update && apt install -y curl nano
 USER spaceman
 
 COPY --from=builder /build/target/polybase /usr/bin/polybase
-COPY --from=builder /build/target/migrate /usr/bin/polybase-migrate
 
 STOPSIGNAL SIGTERM
 

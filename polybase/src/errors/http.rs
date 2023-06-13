@@ -6,7 +6,6 @@ use serde::Serialize;
 use std::{error::Error, fmt::Display};
 
 use super::reason::ReasonCode;
-use crate::rollup;
 use crate::{
     auth,
     db::{self},
@@ -96,6 +95,7 @@ impl From<db::Error> for HTTPError {
             db::Error::CollectionNotFound => {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
+            db::Error::Collection(e) => e.into(),
             db::Error::Gateway(e) => e.into(),
             db::Error::Indexer(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
@@ -182,11 +182,5 @@ impl From<auth::AuthError> for HTTPError {
 impl From<auth::AuthUserError> for HTTPError {
     fn from(err: auth::AuthUserError) -> Self {
         HTTPError::new(ReasonCode::from_auth_error(&err), Some(Box::new(err)))
-    }
-}
-
-impl From<rollup::RollupError> for HTTPError {
-    fn from(err: rollup::RollupError) -> Self {
-        HTTPError::new(ReasonCode::Internal, Some(Box::new(err)))
     }
 }

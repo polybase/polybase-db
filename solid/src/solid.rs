@@ -109,6 +109,7 @@ impl Solid {
         );
         let mut events = self.shared.events.lock();
         events.clear();
+        self.reset_skip_timeout();
     }
 
     pub fn run(&self) -> tokio::task::JoinHandle<()> {
@@ -136,6 +137,10 @@ impl Solid {
             .lock()
             .confirmed_proposals_from(i)
             .to_vec()
+    }
+
+    pub fn min_proposal_height(&self) -> usize {
+        self.shared.store.lock().min_proposal_height()
     }
 
     /// Receive a new proposal from an external source, we do some basic validation

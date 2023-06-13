@@ -72,6 +72,14 @@ pub struct Config {
     #[arg(long, env = "BLOCK_TXN_COUNT", default_value = "1024")]
     pub block_txns_count: usize,
 
+    /// Size of the chunks of data sent during snapshot load
+    #[arg(long, env = "SNAPSHOT_CHUNK_SIZE", default_value = "4194304")]
+    pub snapshot_chunk_size: usize,
+
+    /// Size of the chunks of data sent during snapshot load
+    #[arg(long, env = "MIN_BLOCK_DURATION", default_value = "500")]
+    pub min_block_duration: u64,
+
     /// Sentry DSN
     #[arg(long, env = "SENTRY_DSN", default_value = "")]
     pub sentry_dsn: Option<String>,
