@@ -250,23 +250,10 @@ async fn main() -> Result<()> {
 
     let main_handle = tokio::spawn(async move {
         let network = network_clone;
-        let logger = logger_clone.clone();
 
         let shutdown = shutdown_clone;
         let mut snapshot_from = None;
         let mut last_commit = Instant::now();
-
-        // For migration only, check if DB is empty
-        if db.is_empty().await.unwrap_or(true) && solid.height() == 0 {
-            info!(logger, "DB is empty, requesting snapshot");
-            network
-                .send_all(NetworkEvent::SnapshotRequest {
-                    height: 0,
-                    id: util::unix_now(),
-                })
-                .await;
-            db.out_of_sync(1);
-        }
 
         while !shutdown.load(Ordering::Relaxed) {
             let network = Arc::clone(&network);
