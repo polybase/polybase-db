@@ -96,8 +96,6 @@ spec:
             value: https://31af33d92360493f8f62ecae07bf8e35@o1371715.ingest.sentry.io/4504721199333376
           - name: ENV_NAME
             value: {{ .Values.env | quote }}
-          - name: DIAL_ADDR
-            value: "/dns/polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-1.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-2.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001"
           - name: NETWORK_LADDR
             value: "/ip4/0.0.0.0/tcp/5001"
           - name: LOG_LEVEL
