@@ -140,13 +140,10 @@ impl Store {
     pub(crate) async fn delete(&self, key: &Key<'_>) -> Result<()> {
         let key_bytes = key.serialize()?;
 
-        match key {
-            Key::Data { .. } => {
-                let mut merk = self.merk.lock();
-                let updates = [(key_bytes.clone(), Op::Delete)];
-                merk.apply(&updates, &[])?;
-            }
-            _ => {}
+        if let Key::Data { .. } = key {
+            let mut merk = self.merk.lock();
+            let updates = [(key_bytes.clone(), Op::Delete)];
+            merk.apply(&updates, &[])?;
         }
 
         let state = Arc::clone(&self.state);
