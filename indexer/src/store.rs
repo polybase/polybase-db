@@ -6,7 +6,6 @@ use prost::Message;
 use rocksdb::{IteratorMode, WriteBatch};
 use serde::{Deserialize, Serialize};
 use std::mem;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
 use crate::{

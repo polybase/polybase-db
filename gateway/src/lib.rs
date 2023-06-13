@@ -103,7 +103,6 @@ pub enum GatewayUserError {
 
     #[error("constructor must assign id")]
     ConstructorMustAssignId,
-
     // #[error("constructor must assign required fields")]
     // ConstructorMustAssignRequired,
 }
@@ -320,7 +319,7 @@ fn reference_records(
                     }
                     // Record types are not allowed in collection fields, only function parameters
                     polylang::stableast::Type::Record(_) => unreachable!(),
-                    _ => {},
+                    _ => {}
                 },
                 _ => {}
             }
@@ -579,7 +578,8 @@ impl Gateway {
             })?;
         };
 
-        let (collection_ast_json, collection_ast) = get_collection_ast(collection.name().as_str(), &meta)?;
+        let (collection_ast_json, collection_ast) =
+            get_collection_ast(collection.name().as_str(), &meta)?;
         let collection_polylang_code = meta.get("code").and_then(|v| match v {
             RecordValue::String(s) => Some(s),
             _ => None,
@@ -656,12 +656,11 @@ impl Gateway {
                     return Ok(RecordValue::Null);
                 }
 
-                Converter::convert((&param.type_, arg), &mut vec![param.name.clone()], false).map_err(|e| {
-                    GatewayUserError::FunctionInvalidArgumentType {
+                Converter::convert((&param.type_, arg), &mut vec![param.name.clone()], false)
+                    .map_err(|e| GatewayUserError::FunctionInvalidArgumentType {
                         parameter_name: param.name.to_string(),
                         source: e,
-                    }
-                })
+                    })
             })
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
@@ -670,7 +669,8 @@ impl Gateway {
             dereference_fields(indexer, &collection, &collection_ast, instance_record, auth)
                 .await?;
         let output = {
-            let instance_json = indexer::record_to_json(instance_record.clone()).map_err(IndexerError::from)?;
+            let instance_json =
+                indexer::record_to_json(instance_record.clone()).map_err(IndexerError::from)?;
             let args = dereferenced_args
                 .clone()
                 .into_iter()
