@@ -24,6 +24,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use self::proofs::Proof;
+
+mod proofs;
+
 struct RouteState {
     db: Arc<Db>,
     indexer: Arc<Indexer>,
@@ -458,6 +462,7 @@ async fn health() -> impl Responder {
 struct StatusResponse {
     status: String,
     root: String,
+    proof: Proof,
     peers: usize,
     leader: usize,
 }
@@ -467,9 +472,31 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
     Ok(web::Json(StatusResponse {
         status: "OK".to_string(),
         root: hex::encode(state.db.rollup.root()?),
+        proof: Proof::MerkleRootHash {
+            bytes: state.indexer.root_hash(),
+        },
         peers: 23,
         leader: 12,
     }))
+}
+
+#[derive(Deserialize)]
+struct ProofArgs {
+    namespace: String,
+    id: String,
+}
+
+#[get("/v0/proof/{namespace}/{id}")]
+async fn proof(
+    state: web::Data<RouteState>,
+    args: web::Path<ProofArgs>,
+) -> Result<web::Json<Option<Proof>>, HTTPError> {
+    let proof = state
+        .indexer
+        .proof_for(args.namespace.to_string(), args.id.to_string())?;
+
+    let response = proof.map(|bytes| Proof::MerkleProof { bytes });
+    Ok(web::Json(response))
 }
 
 pub fn create_rpc_server(
@@ -493,6 +520,7 @@ pub fn create_rpc_server(
             .service(root)
             .service(health)
             .service(status)
+            .service(proof)
             .service(
                 web::scope("/v0/collections")
                     .service(get_record)

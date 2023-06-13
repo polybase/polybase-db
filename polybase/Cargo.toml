@@ -72,6 +72,8 @@ url = "*"
 once_cell = "1"
 urlencoding = "2"
 base64 = "0.21"
+proptest = "1"
+test-strategy = "0.3"
 
 
 [build-dependencies]

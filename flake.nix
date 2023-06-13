@@ -15,11 +15,13 @@
           overlays = [ (import rust-overlay) ];
         };
 
-      in
-      {
+      in {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            rust-bin.stable.latest.default
+            # chose this date because the metadata format works with today's rust-analyzer 🤭
+            (rust-bin.nightly."2023-01-01".default.override {
+              extensions = [ "rust-src" ];
+            })
 
             pkg-config
             openssl
@@ -29,7 +31,8 @@
           ];
 
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib/";
-          RUST_SRC_PATH = "${pkgs.rust-bin.stable.latest.default}/lib/rustlib/src/rust/library";
+          RUST_SRC_PATH =
+            "${pkgs.rust-bin.stable.latest.default}/lib/rustlib/src/rust/library";
         };
       });
 }

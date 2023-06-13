@@ -94,4 +94,14 @@ impl Indexer {
         let system_key = keys::Key::new_system_data(key)?;
         Ok(self.store.get(&system_key).await?)
     }
+
+    pub fn proof_for(&self, namespace: String, id: String) -> Result<Option<Vec<u8>>> {
+        let key = keys::Key::new_data(namespace, id)?;
+        let proof = self.store.proof_for(&key)?;
+        Ok(proof)
+    }
+
+    pub fn root_hash(&self) -> [u8; 32] {
+        self.store.root_hash()
+    }
 }

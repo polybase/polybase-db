@@ -25,10 +25,11 @@ serde_with = "2.2"
 async-recursion = "1.0.2"
 futures = "0.3"
 thiserror = "1.0"
-hex = "0.4"
+hex = { version = "0.4", features = ["serde"] }
 slog = "2"
 slog-term = "2"
 parking_lot = "0.12.1"
+merk = { git = "https://github.com/cameron1024/merk", branch = "update-rocksdb" }
 
 [build-dependencies]
 prost-build = "0.11"

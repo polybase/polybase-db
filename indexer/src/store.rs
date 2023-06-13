@@ -1,9 +1,12 @@
 use bincode::{deserialize, serialize};
+use merk::proofs::Query;
+use merk::{Merk, Op};
 use parking_lot::Mutex;
 use prost::Message;
-use rocksdb::WriteBatch;
+use rocksdb::{IteratorMode, WriteBatch};
 use serde::{Deserialize, Serialize};
 use std::mem;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{convert::AsRef, path::Path, sync::Arc};
 
 use crate::{
@@ -30,6 +33,9 @@ pub enum StoreError {
 
     #[error("tokio task join error")]
     TokioTaskJoinError(#[from] tokio::task::JoinError),
+
+    #[error("merk error: {0}")]
+    Merk(#[from] merk::Error),
 }
 
 #[derive(Debug)]
@@ -59,6 +65,7 @@ impl<'a> Value<'a> {
 pub(crate) struct Store {
     db: Arc<rocksdb::DB>,
     state: Arc<Mutex<StoreState>>,
+    merk: Arc<Mutex<Merk>>,
 }
 
 pub(crate) struct StoreState {
@@ -67,14 +74,22 @@ pub(crate) struct StoreState {
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref();
+
         let mut options = rocksdb::Options::default();
         options.create_if_missing(true);
         options.set_comparator("polybase", keys::comparator);
 
         let db = rocksdb::DB::open(&options, path)?;
 
+        let merk_path = path.join("merk");
+
+        let merk = Merk::open(merk_path)?;
+        let merk = Arc::new(Mutex::new(merk));
+
         Ok(Self {
             db: Arc::new(db),
+            merk,
             state: Arc::new(Mutex::new(StoreState {
                 batch: WriteBatch::default(),
             })),
@@ -96,18 +111,24 @@ impl Store {
     }
 
     pub(crate) async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
+        let key_bytes = key.serialize()?;
+        let value_bytes = value.serialize()?;
+
         match (key, value) {
-            (Key::Data { .. }, Value::DataValue(_)) => {}
+            (Key::Data { .. }, Value::DataValue(_)) => {
+                let mut merk = self.merk.lock();
+                let updates = [(key_bytes.clone(), Op::Put(value_bytes.clone()))];
+                merk.apply(&updates, &[])?;
+            }
+            // should we also update the merkle tree for system data?
             (Key::SystemData { .. }, Value::DataValue(_)) => {}
             (Key::Index { .. }, Value::IndexValue(_)) => {}
             _ => return Err(StoreError::InvalidKeyValueCombination),
         }
 
-        let key = key.serialize()?;
-        let value = value.serialize()?;
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || {
-            state.lock().batch.put(key, value);
+            state.lock().batch.put(key_bytes, value_bytes);
         })
         .await?;
 
@@ -126,14 +147,52 @@ impl Store {
     }
 
     pub(crate) async fn delete(&self, key: &Key<'_>) -> Result<()> {
-        let key = key.serialize()?;
+        let key_bytes = key.serialize()?;
+
+        match key {
+            Key::Data { .. } => {
+                let mut merk = self.merk.lock();
+                let updates = [(key_bytes.clone(), Op::Delete)];
+                merk.apply(&updates, &[])?;
+            }
+            _ => {}
+        }
+
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || {
-            state.lock().batch.delete(key);
+            state.lock().batch.delete(key_bytes);
         })
         .await?;
 
         Ok(())
+    }
+
+    /// Return the merkle proof associated with the given key
+    pub(crate) fn proof_for(&self, key: &Key<'_>) -> Result<Option<Vec<u8>>> {
+        let key = match key {
+            Key::Data { .. } => key.serialize()?,
+            _ => return Ok(None), // other key types not supported
+        };
+
+        let mut query = Query::new();
+        query.insert_key(key);
+
+        let merk = self.merk.lock();
+
+        const EMPTY_ERROR: &str = "Cannot create proof for empty tree";
+        let proof = match merk.prove(query) {
+            Ok(proof) => proof,
+            // this is a horrible hack but there is no alternative
+            Err(merk::Error::Proof(s)) if s == EMPTY_ERROR => return Ok(None),
+            Err(e) => return Err(e.into()),
+        };
+
+        Ok(Some(proof))
+    }
+
+    pub(crate) fn root_hash(&self) -> [u8; 32] {
+        let merk = self.merk.lock();
+        merk.root_hash()
     }
 
     pub(crate) fn list(
@@ -150,9 +209,9 @@ impl Store {
             .db
             .iterator_opt(
                 if reverse {
-                    rocksdb::IteratorMode::End
+                    IteratorMode::End
                 } else {
-                    rocksdb::IteratorMode::Start
+                    IteratorMode::Start
                 },
                 opts,
             )
@@ -172,7 +231,7 @@ impl Store {
     }
 
     pub fn snapshot(&self) -> Result<Vec<u8>> {
-        let iter = self.db.iterator(rocksdb::IteratorMode::Start);
+        let iter = self.db.iterator(IteratorMode::Start);
 
         let mut values: Vec<SnapshotValue> = Vec::new();
 
@@ -203,6 +262,7 @@ impl Store {
 pub(crate) mod tests {
     use std::{
         borrow::Cow,
+        collections::HashMap,
         ops::{Deref, DerefMut},
     };
 
@@ -273,5 +333,25 @@ pub(crate) mod tests {
             // assert_eq!(&key, &index);
             assert_eq!(value, proto::IndexRecord::default());
         }
+    }
+
+    #[tokio::test]
+    async fn merkle_proof_works() {
+        let store = TestStore::default();
+
+        let key = Key::new_data("foo".to_string(), "bar".to_string()).unwrap();
+
+        assert!(store.proof_for(&key).unwrap().is_none());
+
+        store
+            .set(&key, &Value::DataValue(&HashMap::new()))
+            .await
+            .unwrap();
+
+        assert!(store.proof_for(&key).unwrap().is_some());
+
+        store.delete(&key).await.unwrap();
+
+        assert!(store.proof_for(&key).unwrap().is_none());
     }
 }
