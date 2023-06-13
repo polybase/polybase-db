@@ -319,7 +319,7 @@ impl Server {
             match serde_json::from_str(&json) {
                 Ok(res) => Ok(res),
                 Err(err) => {
-                    panic!("Failed to parse response: {}, body: {}", err, json);
+                    panic!("Failed to parse response: {err}, body: {json}");
                 }
             }
         } else {
@@ -368,7 +368,7 @@ impl Server {
             match serde_json::from_str(&json) {
                 Ok(res) => Ok(res),
                 Err(err) => {
-                    panic!("Failed to parse response: {}, body: {}", err, json);
+                    panic!("Failed to parse response: {err}, body: {json}");
                 }
             }
         } else {

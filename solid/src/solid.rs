@@ -476,8 +476,7 @@ mod test {
         // Should return the next tick
         assert!(
             next_tick > Some(Instant::now() + Duration::from_secs(3)),
-            "next tick {:?} should be more than 3 seconds away",
-            next_tick
+            "next tick {next_tick:?} should be more than 3 seconds away"
         );
 
         // Should add skip event

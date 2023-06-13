@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
         println!(" ");
         println!("  Public Key: 0x{}", hex::encode(public.to_bytes()));
         println!("  Secret Key: 0x{}", hex::encode(bytes));
-        println!("  PeerId: {}", local_peer_id);
+        println!("  PeerId: {local_peer_id}");
         println!(" ");
         return Ok(());
     }
@@ -378,7 +378,7 @@ async fn main() -> Result<()> {
                                             }
                                         },
                                         Err(err) => {
-                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{err:?}"));
                                             return;
                                         }
                                     }
@@ -448,7 +448,7 @@ async fn main() -> Result<()> {
                             match db.add_txn(txn).await {
                                 Ok(_) => (),
                                 Err(err) => {
-                                    error!(logger, "Error adding txn"; "err" => format!("{:?}", err));
+                                    error!(logger, "Error adding txn"; "err" => format!("{err:?}"));
                                 }
                             }
                         }
@@ -487,7 +487,7 @@ async fn main() -> Result<()> {
                             let txns = match db.propose_txns(height) {
                                 Ok(txns) => txns,
                                 Err(err) => {
-                                    error!(logger, "Error getting pending changes"; "err" => format!("{:?}", err));
+                                    error!(logger, "Error getting pending changes"; "err" => format!("{err:?}"));
                                     continue;
                                 }
                             };
@@ -526,7 +526,7 @@ async fn main() -> Result<()> {
                             // We should panic here, because there is really no way to recover from
                             // an error once a value is committed
                             if let Err(err) = db.commit(manifest).await {
-                                error!(logger, "Error committing proposal"; "err" => format!("{:?}", err));
+                                error!(logger, "Error committing proposal"; "err" => format!("{err:?}"));
                                 return;
                             }
                         }
@@ -583,7 +583,7 @@ async fn main() -> Result<()> {
 
         println!("{} deadlocks detected", deadlocks.len());
         for (i, threads) in deadlocks.iter().enumerate() {
-            println!("Deadlock #{}", i);
+            println!("Deadlock #{i}");
             for t in threads {
                 println!("Thread Id {:#?}", t.thread_id());
                 println!("{:#?}", t.backtrace());

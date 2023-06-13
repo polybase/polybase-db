@@ -162,28 +162,28 @@ impl<'de> Deserialize<'de> for WhereInequality {
         if let Some(value) = map.remove("$gt") {
             inequality.gt = Some(
                 serde_json::from_value(value)
-                    .map_err(|e| serde::de::Error::custom(format!("invalid $gt: {}", e)))?,
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $gt: {e}")))?,
             );
         }
 
         if let Some(value) = map.remove("$gte") {
             inequality.gte = Some(
                 serde_json::from_value(value)
-                    .map_err(|e| serde::de::Error::custom(format!("invalid $gte: {}", e)))?,
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $gte: {e}")))?,
             );
         }
 
         if let Some(value) = map.remove("$lt") {
             inequality.lt = Some(
                 serde_json::from_value(value)
-                    .map_err(|e| serde::de::Error::custom(format!("invalid $lt: {}", e)))?,
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $lt: {e}")))?,
             );
         }
 
         if let Some(value) = map.remove("$lte") {
             inequality.lte = Some(
                 serde_json::from_value(value)
-                    .map_err(|e| serde::de::Error::custom(format!("invalid $lte: {}", e)))?,
+                    .map_err(|e| serde::de::Error::custom(format!("invalid $lte: {e}")))?,
             );
         }
 

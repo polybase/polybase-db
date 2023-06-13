@@ -127,8 +127,7 @@ impl MyNetwork {
                     }
                     sleep(std::time::Duration::from_millis(config.partition_duration)).await;
                     println!(
-                        "----- END: simulating network partition for {} -----",
-                        prefix,
+                        "----- END: simulating network partition for {prefix} -----",
                     );
                     {
                         shared_partition.swap(false, std::sync::atomic::Ordering::Relaxed);
@@ -254,7 +253,7 @@ async fn main() {
 
         println!("{} deadlocks detected", deadlocks.len());
         for (i, threads) in deadlocks.iter().enumerate() {
-            println!("Deadlock #{}", i);
+            println!("Deadlock #{i}");
             for t in threads {
                 println!("Thread Id {:#?}", t.thread_id());
                 println!("{:#?}", t.backtrace());
@@ -318,7 +317,7 @@ async fn main() {
                                     let snapshot = match store.snapshot() {
                                         Ok(snapshot) => snapshot,
                                         Err(err) => {
-                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{err:?}"));
                                             return;
                                         }
                                     };

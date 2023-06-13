@@ -104,7 +104,7 @@ impl Db {
 
         Ok(Self {
             mempool: Mempool::new(),
-            gateway: gateway::initialize(logger.clone()),
+            gateway: gateway::initialize(logger),
             indexer,
             sender: AsyncMutex::new(sender),
             receiver: AsyncMutex::new(receiver),

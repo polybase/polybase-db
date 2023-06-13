@@ -68,7 +68,7 @@ impl Network {
 
         // Connect to peers
         for addr in dialaddrs {
-            info!(logger, "Dialing peer"; "addr" => format!("{:?}", addr));
+            info!(logger, "Dialing peer"; "addr" => format!("{addr:?}"));
             swarm.dial(addr)?;
         }
 
@@ -94,11 +94,11 @@ impl Network {
                     }
                     event = swarm.select_next_some() => match event {
                         SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                            info!(logger, "Connection established"; "peer_id" => format!("{:?}", peer_id));
+                            info!(logger, "Connection established"; "peer_id" => format!("{peer_id:?}"));
                             shared.add_peer(peer_id);
                         }
                         SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                            info!(logger, "Connection closed"; "peer_id" => format!("{:?}", peer_id));
+                            info!(logger, "Connection closed"; "peer_id" => format!("{peer_id:?}"));
                             shared.remove_peer(&peer_id);
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::Message { peer, message })) => {
@@ -113,13 +113,13 @@ impl Network {
                                         match netin_tx.send((peer.into(), request.event)) {
                                             Ok(_) => {},
                                             Err(_) => {
-                                                error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
+                                                error!(logger, "Failed to send, dropping event"; "peer_id" => format!("{peer:?}"));
                                             }
                                         }
                                         match swarm.behaviour_mut().rr.send_response(channel, protocol::Response) {
                                             Ok(_) => {},
                                             Err(_) => {
-                                                error!(logger, "Failed to send response"; "peer_id" => format!("{:?}", peer));
+                                                error!(logger, "Failed to send response"; "peer_id" => format!("{peer:?}"));
                                             }
                                         }
                                 }
@@ -127,10 +127,10 @@ impl Network {
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::ResponseSent { .. })) => {}
                         SwarmEvent::NewListenAddr { address, .. } => {
-                            info!(logger, "Listening on"; "addr" => format!("{:?}", address));
+                            info!(logger, "Listening on"; "addr" => format!("{address:?}"));
                         }
                         event => {
-                            debug!(logger, "Swarm event"; "event" => format!("{:?}", event));
+                            debug!(logger, "Swarm event"; "event" => format!("{event:?}"));
                         }
                     }
                 }
@@ -185,7 +185,7 @@ impl Network {
         match self.netout_tx.send((*peer, event, tx)) {
             Ok(_) => {}
             Err(_) => {
-                error!(self.logger, "Failed to send, dropping event"; "peer_id" => format!("{:?}", peer));
+                error!(self.logger, "Failed to send, dropping event"; "peer_id" => format!("{peer:?}"));
             }
         }
 
