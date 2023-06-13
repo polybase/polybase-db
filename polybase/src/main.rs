@@ -238,6 +238,7 @@ async fn main() -> Result<()> {
         config.rpc_laddr,
         Arc::clone(&db),
         Arc::new(config.whitelist.clone()),
+        Arc::new(config.restrict_namespaces),
         logger.clone(),
     )?;
 
