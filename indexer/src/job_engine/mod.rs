@@ -9,7 +9,7 @@ use std::{
 };
 use tokio::time::{interval, Duration};
 
-use crate::{job_engine::jobs::JobState, keys};
+use crate::{collection, job_engine::jobs::JobState, keys};
 
 use super::{Indexer, IndexerError};
 use job_store::JobStore;
@@ -20,10 +20,13 @@ use jobs::Job;
 #[derive(Debug, thiserror::Error)]
 pub enum JobExecutionError {
     #[error("job execution error: indexer error")]
-    IndexerError(#[from] IndexerError),
+    Indexer(#[from] IndexerError),
 
     #[error("job execution error: keys error")]
-    KeysError(#[from] keys::KeysError),
+    Keys(#[from] keys::KeysError),
+
+    #[error("job execution error: collection error")]
+    Collection(#[from] collection::CollectionError),
 }
 
 pub(super) type JobExecutionResult = std::result::Result<(), JobExecutionError>;
@@ -113,25 +116,39 @@ async fn execute_job(job: Job, indexer: Arc<Indexer>, logger: slog::Logger) -> J
     info!(logger, "[Job Engine] Executing job {job_str:#?}");
 
     let job_exec_res = match job.job_state {
-        JobState::AddIndexes {
+        JobState::RebuildCollectionIndexes {
             collection_id,
-            id,
-            record,
+            record_id,
         } => {
             let collection = indexer.collection(collection_id.clone()).await?;
-            let data_key = keys::Key::new_data(collection_id.clone(), id.clone())?;
-            collection.add_indexes(&id, &data_key, &record).await;
+            let old_value = collection.get_without_auth_check(record_id.clone()).await?;
 
-            Ok(())
-        }
+            let collection_before = if collection_id == "Collection" {
+                match collection::Collection::load(logger.clone(), &indexer, record_id.clone())
+                    .await
+                {
+                    Ok(c) => Some(c),
+                    Err(collection::CollectionError::UserError(
+                        collection::CollectionUserError::CollectionNotFound { .. },
+                    )) => None,
+                    Err(err) => return Err(JobExecutionError::from(err)),
+                }
+            } else {
+                None
+            };
 
-        JobState::DeleteIndexes {
-            collection_id,
-            id,
-            record,
-        } => {
-            let collection = indexer.collection(collection_id.clone()).await?;
-            collection.delete_indexes(&id, &record).await;
+            if collection_id == "Collection" && record_id != "Collection" {
+                if let Some(collection_before) = collection_before {
+                    // Unwrap is safe because collection_before had to load the existing record.
+                    #[allow(clippy::unwrap_used)]
+                    let old_value = old_value.unwrap();
+
+                    let target_col =
+                        collection::Collection::load(logger.clone(), &indexer, record_id).await?;
+
+                    target_col.rebuild(collection_before, &old_value).await?;
+                }
+            }
 
             Ok(())
         }

@@ -213,10 +213,7 @@ mod tests {
     use super::*;
     use std::ops::{Deref, DerefMut};
 
-    use crate::{
-        job_engine::jobs::{Job, JobState},
-        record::RecordRoot,
-    };
+    use crate::job_engine::jobs::{Job, JobState};
 
     use slog::Drain;
 
@@ -270,10 +267,9 @@ mod tests {
         let job13 = Job::new(
             "JobGroup1",
             3, // id
-            JobState::AddIndexes {
+            JobState::RebuildCollectionIndexes {
                 collection_id: "coll1".into(),
-                id: "1".into(),
-                record: RecordRoot::new(),
+                record_id: "1".into(),
             },
             true, // is_last_job
         );
@@ -283,10 +279,9 @@ mod tests {
         let job12 = Job::new(
             "JobGroup1",
             2,
-            JobState::AddIndexes {
+            JobState::RebuildCollectionIndexes {
                 collection_id: "coll1".into(),
-                id: "1".into(),
-                record: RecordRoot::new(),
+                record_id: "1".into(),
             },
             false,
         );
@@ -295,10 +290,9 @@ mod tests {
         let job11 = Job::new(
             "JobGroup1",
             1,
-            JobState::AddIndexes {
+            JobState::RebuildCollectionIndexes {
                 collection_id: "coll1".into(),
-                id: "1".into(),
-                record: RecordRoot::new(),
+                record_id: "1".into(),
             },
             false,
         );
@@ -307,10 +301,9 @@ mod tests {
         let job21 = Job::new(
             "JobGroup2",
             1, // id
-            JobState::AddIndexes {
+            JobState::RebuildCollectionIndexes {
                 collection_id: "coll1".into(),
-                id: "1".into(),
-                record: RecordRoot::new(),
+                record_id: "1".into(),
             },
             false, // is_last_job
         );
@@ -319,10 +312,9 @@ mod tests {
         let job22 = Job::new(
             "JobGroup2",
             2,
-            JobState::AddIndexes {
+            JobState::RebuildCollectionIndexes {
                 collection_id: "coll1".into(),
-                id: "1".into(),
-                record: RecordRoot::new(),
+                record_id: "1".into(),
             },
             true,
         );

@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-use crate::RecordRoot;
-
 /// Represents a job that can be enqueued, run, and deleted by the indexer Job Engine.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Job {
@@ -32,40 +30,18 @@ impl Job {
 /// the jobs store while the actual job logic is contained within the Job Engine.
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub enum JobState {
-    AddIndexes {
+    RebuildCollectionIndexes {
         collection_id: String,
-        id: String,
-        record: RecordRoot,
-    },
-
-    DeleteIndexes {
-        collection_id: String,
-        id: String,
-        record: RecordRoot,
+        record_id: String,
     },
 }
 
 impl fmt::Debug for JobState {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            JobState::AddIndexes {
-                ref collection_id,
-                ref id,
-                ..
-            } => {
-                write!(
-                    f,
-                    "AddIndexes {{ collection_id: {collection_id:?}, id: {id:?} }}"
-                )
-            }
-
-            JobState::DeleteIndexes {
-                ref collection_id,
-                ref id,
-                ..
-            } => write!(
+            JobState::RebuildCollectionIndexes { ref collection_id, ref record_id } => write!(
                 f,
-                "DeleteIndexes {{ collection_id: {collection_id:?}, id: {id:?} }}"
+                "RebuildCollectionIndexes {{ collection_id: {collection_id}, record_id: {record_id} }}"
             ),
         }
     }

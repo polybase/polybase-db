@@ -1023,18 +1023,6 @@ impl<'a> Collection<'a> {
             None => return Err(CollectionError::RecordMissingID),
         }
 
-        let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.logger.clone(), self.indexer, id.clone()).await {
-                Ok(c) => Some(c),
-                Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
-                    ..
-                })) => None,
-                Err(err) => return Err(err),
-            }
-        } else {
-            None
-        };
-
         let old_value = self.get_without_auth_check(id.clone()).await?;
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
@@ -1050,39 +1038,22 @@ impl<'a> Collection<'a> {
 
         if let Some(old_value) = &old_value {
             // delete the indexes for the old values
-            let delete_indexes_job_group = format!("{}-delete-indexes", self.collection_id);
-
-            self.indexer
-                .enqueue_job(jobs::Job::new(
-                    delete_indexes_job_group.clone(),
-                    1,
-                    jobs::JobState::DeleteIndexes {
-                        collection_id: self.collection_id.clone(),
-                        id: id.clone(),
-                        record: old_value.clone(),
-                    },
-                    true, // is_last_job
-                ))
-                .await
-                .map_err(|e| CollectionError::from(Box::new(e)))?;
-
-            self.indexer
-                .await_job_completion(delete_indexes_job_group)
-                .await
-                .map_err(|e| CollectionError::from(Box::new(e)))?;
+            self.delete_indexes(&id, old_value).await;
         }
 
-        // add indexes
-        let add_indexes_job_group = format!("{}-add-indexes", self.collection_id);
+        self.add_indexes(&id, &data_key, value).await;
+
+        // rebuild collection
+        let coll_rebuild_indexes_job_group =
+            format!("{}-{}-rebuild-coll-indexes", self.collection_id, id);
 
         self.indexer
             .enqueue_job(jobs::Job::new(
-                add_indexes_job_group.clone(),
+                coll_rebuild_indexes_job_group.clone(),
                 1,
-                jobs::JobState::AddIndexes {
+                jobs::JobState::RebuildCollectionIndexes {
                     collection_id: self.collection_id.clone(),
-                    id: id.clone(),
-                    record: value.clone(),
+                    record_id: id.clone(),
                 },
                 true, // is_last_job
             ))
@@ -1090,21 +1061,9 @@ impl<'a> Collection<'a> {
             .map_err(|e| CollectionError::from(Box::new(e)))?;
 
         self.indexer
-            .await_job_completion(add_indexes_job_group)
+            .await_job_completion(coll_rebuild_indexes_job_group)
             .await
             .map_err(|e| CollectionError::from(Box::new(e)))?;
-
-        if self.collection_id == "Collection" && id != "Collection" {
-            if let Some(collection_before) = collection_before {
-                // Unwrap is safe because collection_before had to load the existing record.
-                #[allow(clippy::unwrap_used)]
-                let old_value = old_value.unwrap();
-
-                let target_col = Collection::load(self.logger.clone(), self.indexer, id).await?;
-
-                target_col.rebuild(collection_before, &old_value).await?;
-            }
-        }
 
         Ok(())
     }
@@ -1219,27 +1178,6 @@ impl<'a> Collection<'a> {
         self.update_metadata(&now).await?;
         self.update_record_metadata(id.clone(), &now).await?;
 
-        // delete indexes
-        let delete_indexes_job_group = format!("{id}-delete-indexes");
-        self.indexer
-            .enqueue_job(jobs::Job::new(
-                delete_indexes_job_group.clone(),
-                1,
-                jobs::JobState::DeleteIndexes {
-                    collection_id: self.collection_id.clone(),
-                    id: id.clone(),
-                    record: record.clone(),
-                },
-                true,
-            ))
-            .await
-            .map_err(|e| CollectionError::from(Box::new(e)))?;
-
-        self.indexer
-            .await_job_completion(delete_indexes_job_group)
-            .await
-            .map_err(|e| CollectionError::from(Box::new(e)))?;
-
         self.delete_indexes(&id, &record).await;
 
         Ok(())
@@ -1343,7 +1281,7 @@ impl<'a> Collection<'a> {
     }
 
     #[async_recursion]
-    async fn rebuild(
+    pub(crate) async fn rebuild(
         &self,
         // The old collection record, loaded before the AST was changed
         old_collection: Collection<'async_recursion>,
