@@ -28,7 +28,11 @@ collection Account {
         signature
     });
 
-    let server = Server::setup_and_wait(Some(ServerConfig { whitelist })).await;
+    let server = Server::setup_and_wait(Some(ServerConfig {
+        whitelist,
+        ..Default::default()
+    }))
+    .await;
 
     let res = server
         .create_collection::<Account>("test/Account", schema, Some(&signer))
@@ -62,7 +66,11 @@ collection Account {
         signature
     });
 
-    let server = Server::setup_and_wait(Some(ServerConfig { whitelist })).await;
+    let server = Server::setup_and_wait(Some(ServerConfig {
+        whitelist,
+        ..Default::default()
+    }))
+    .await;
 
     let res = server
         .create_collection::<Account>("test/Account", schema, Some(&signer))
@@ -95,7 +103,11 @@ collection Account {
     let public_key = indexer::PublicKey::from_secp256k1_key(&public_key).unwrap();
     let whitelist = Some(vec![public_key.to_hex().unwrap()]);
 
-    let server = Server::setup_and_wait(Some(ServerConfig { whitelist })).await;
+    let server = Server::setup_and_wait(Some(ServerConfig {
+        whitelist,
+        ..Default::default()
+    }))
+    .await;
 
     let res = server
         .create_collection::<Account>("test/Account", schema, None)

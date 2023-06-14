@@ -103,6 +103,7 @@ impl PortPool {
 #[derive(Debug, Default)]
 struct ServerConfig {
     whitelist: Option<Vec<String>>,
+    keep_port_after_drop: bool,
 }
 
 #[derive(Debug)]
@@ -111,6 +112,7 @@ struct Server {
     // Keep the root dir alive so that polybase can use it
     _root_dir: tempfile::TempDir,
     api_port: u16,
+    keep_port_after_drop: bool,
     client: reqwest::Client,
     base_url: reqwest::Url,
 }
@@ -118,7 +120,9 @@ struct Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.process.kill().expect("Failed to stop polybase");
-        API_PORT_POOL.lock().unwrap().release(self.api_port);
+        if !self.keep_port_after_drop {
+            API_PORT_POOL.lock().unwrap().release(self.api_port);
+        }
     }
 }
 
@@ -130,8 +134,10 @@ impl Server {
 
         let mut command = Command::new(find_binary());
 
-        if let Some(whitelist) = config.and_then(|c| c.whitelist) {
-            command.arg("--whitelist").arg(whitelist.join(","));
+        if let Some(ref config) = config {
+            if let Some(ref whitelist) = config.whitelist {
+                command.arg("--whitelist").arg(whitelist.join(","));
+            }
         }
 
         command.arg("--root-dir").arg(root_dir.path());
@@ -155,6 +161,7 @@ impl Server {
             _root_dir: root_dir,
             client: reqwest::Client::new(),
             base_url: format!("http://localhost:{api_port}").parse().unwrap(),
+            keep_port_after_drop: config.map(|c| c.keep_port_after_drop).unwrap_or(false),
             api_port,
         })
     }
