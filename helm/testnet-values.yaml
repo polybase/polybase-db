@@ -22,3 +22,5 @@ extraEnvVars:
     value: "12D3KooWSZxfWBu726XtsGumTFtmqFTTenud1HempLgHx5kSvBaM,12D3KooWNSEqaQB4ZHFrdw4A1efz3G5aTxzfRPXPjrT5z2yfGaTs,12D3KooWPBFaDpnqiPRTQZqvf1W41fcszS27qPhpkL757Z2XSkcz"
   - name: SNAPSHOT_CHUNK_SIZE
     value: "8388608"
+  - name: DIAL_ADDR
+    value: "/dns/polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-1.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-2.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001"
