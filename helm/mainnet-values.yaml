@@ -21,6 +21,8 @@ service:
     cloud.google.com/neg: '{"ingress": true}'
 
 extraEnvVars:
+  - name: RESTRICT_NAMESPACES
+    value: "true"
   - name: PEERS
     value: "12D3KooWR9TtbDy2hebAU2qgbP2e3UGX8BrrZUDY6eiXHvQF3Nn4,12D3KooWKnx6YDNsZhMnqr9UADPLZXtAkYkDEo6Vs7KQjAL2dWCG,12D3KooWDtEwZyL2tjW96VCE5bJgDP58w31JTkeavaYafuA7oXcD"
   - name: WHITELIST

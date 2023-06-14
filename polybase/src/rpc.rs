@@ -19,6 +19,7 @@ use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
 struct RouteState {
     db: Arc<Db>,
     whitelist: Arc<Option<Vec<String>>>,
+    restrict_namespaces: Arc<bool>,
 }
 
 #[get("/")]
@@ -340,9 +341,15 @@ async fn post_record(
     let auth = body.auth.map(|a| a.into());
     let db: Arc<_> = Arc::clone(&state.db);
 
-    // Check whitelist
+    // New collection is being created
     if collection_id == "Collection" {
-        validate_whitelist(&state.whitelist, &auth)?;
+        // Validate whitelist (if it exists)
+        validate_new_collection(
+            &body.data.args[0],
+            &state.whitelist,
+            &state.restrict_namespaces,
+            &auth,
+        )?;
     }
 
     let txn = CallTxn::new(
@@ -437,6 +444,7 @@ pub fn create_rpc_server(
     rpc_laddr: String,
     db: Arc<Db>,
     whitelist: Arc<Option<Vec<String>>>,
+    restrict_namespaces: Arc<bool>,
     logger: slog::Logger,
 ) -> Result<Server, std::io::Error> {
     Ok(HttpServer::new(move || {
@@ -446,6 +454,7 @@ pub fn create_rpc_server(
             .app_data(web::Data::new(RouteState {
                 db: Arc::clone(&db),
                 whitelist: Arc::clone(&whitelist),
+                restrict_namespaces: Arc::clone(&restrict_namespaces),
             }))
             .wrap(SlogMiddleware::new(logger.clone()))
             .wrap(cors)
@@ -464,27 +473,57 @@ pub fn create_rpc_server(
     .run())
 }
 
-fn validate_whitelist(
+fn validate_new_collection(
+    collection_id: &serde_json::Value,
     whitelist: &Option<Vec<String>>,
+    restrict_namespaces: &bool,
     auth: &Option<AuthUser>,
 ) -> Result<(), HTTPError> {
-    // Check whitelist
+    let pk = auth
+        .as_ref()
+        .map(|a| a.public_key().to_hex().unwrap_or("".to_string()))
+        .unwrap_or("".to_string());
+
+    // Check collection whitelist
     if let Some(whitelist) = whitelist {
-        if let Some(auth_user) = auth {
-            // Convert the key to hex for easier comparison
-            let pk = auth_user.public_key().to_hex().unwrap_or("".to_string());
-            if pk.is_empty() || !whitelist.contains(&pk) {
-                return Err(HTTPError::new(
-                    ReasonCode::Unauthorized,
-                    Some(Box::new(AppError::Whitelist)),
-                ));
-            }
-        } else {
+        if pk.is_empty() || !whitelist.contains(&pk) {
             return Err(HTTPError::new(
                 ReasonCode::Unauthorized,
                 Some(Box::new(AppError::Whitelist)),
             ));
         }
     }
+
+    // Check namespace is valid (only pk/<pk> currently allowed)
+    if *restrict_namespaces {
+        if pk.is_empty() {
+            return Err(HTTPError::new(
+                ReasonCode::Unauthorized,
+                Some(Box::new(AppError::AnonNamespace)),
+            ));
+        }
+
+        match collection_id {
+            serde_json::Value::String(id) => {
+                let parts: Vec<&str> = id.split('/').collect();
+                if parts.len() != 3 || parts[0] != "pk" || parts[1] != pk {
+                    return Err(HTTPError::new(
+                        ReasonCode::Unauthorized,
+                        Some(Box::new(AppError::InvalidNamespace(id.clone()))),
+                    ));
+                }
+            }
+            _ => {
+                return Err(HTTPError::new(
+                    ReasonCode::Unauthorized,
+                    Some(Box::new(AppError::InvalidNamespace(format!(
+                        "{:?}",
+                        collection_id
+                    )))),
+                ));
+            }
+        }
+    }
+
     Ok(())
 }

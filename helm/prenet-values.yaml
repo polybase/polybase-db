@@ -20,6 +20,8 @@ persistence:
    size: 20Gi
 
 extraEnvVars:
+   - name: RESTRICT_NAMESPACES
+     value: "true"
    - name: PEERS
      value: "12D3KooWGwYHQGP9xJ8uxrmfhZMubfAsWPrTByGgq2N8hH2atMJZ,12D3KooWKLvUcUc4h3BEKGHKMz2kxfS7Xpps2kEfaQzpchGmMgSy,12D3KooWLYByKfin35Dh37YJf8HwQfyrL2beJW67712y9kChgbja"
    - name: DIAL_ADDR

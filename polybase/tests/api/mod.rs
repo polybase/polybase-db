@@ -11,6 +11,7 @@ mod index_where_sort;
 mod map_field;
 mod nested_field;
 mod other_collection_fns;
+mod restrict_namespaces;
 mod start_stop;
 mod store_other_collection_records;
 mod whitelist;
@@ -104,6 +105,7 @@ impl PortPool {
 struct ServerConfig {
     whitelist: Option<Vec<String>>,
     keep_port_after_drop: bool,
+    restrict_namespaces: bool,
 }
 
 #[derive(Debug)]
@@ -137,6 +139,10 @@ impl Server {
         if let Some(ref config) = config {
             if let Some(ref whitelist) = config.whitelist {
                 command.arg("--whitelist").arg(whitelist.join(","));
+            }
+
+            if config.restrict_namespaces {
+                command.arg("--restrict-namespaces");
             }
         }
 

@@ -87,6 +87,10 @@ pub struct Config {
     /// Public key whitelist
     #[arg(long, env = "WHITELIST", value_parser, value_delimiter = ',')]
     pub whitelist: Option<Vec<String>>,
+
+    /// Restrict namespaces to pk/<pk>/<collection_name>
+    #[arg(long, env = "RESTRICT_NAMESPACES", default_value = "false")]
+    pub restrict_namespaces: bool,
 }
 
 #[derive(Subcommand, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]

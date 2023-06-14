@@ -43,6 +43,14 @@ pub enum AppError {
     #[error("invalid request")]
     B58(#[from] bs58::decode::Error),
 
+    #[error("anonymous namespaces are not allowed, sign your request")]
+    AnonNamespace,
+
     #[error("public key not included in allowed whitelist")]
     Whitelist,
+
+    #[error(
+        "namespace is invalid, must be in format pk/<public_key_hex>/<CollectionName> got {0}"
+    )]
+    InvalidNamespace(String),
 }
