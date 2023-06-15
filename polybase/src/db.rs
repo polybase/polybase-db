@@ -95,7 +95,7 @@ pub struct Db {
 
 impl Db {
     pub fn new(root_dir: String, logger: slog::Logger, config: DbConfig) -> Result<Self> {
-        let (sender, receiver) = mpsc::channel::<CallTxn>(100);
+        let (sender, receiver) = mpsc::channel::<CallTxn>(10000);
 
         // Create the indexer
         #[allow(clippy::unwrap_used)]

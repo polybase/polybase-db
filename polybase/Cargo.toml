@@ -73,8 +73,15 @@ url = "*"
 once_cell = "1"
 urlencoding = "2"
 base64 = "0.21"
+plotters = "0.3.4"
+plotters-svg = "0.3.3"
+statrs = "0.16.0"
 
 
 [build-dependencies]
 tonic-build = "0.8.4"
 prost-build = "0.11.9"
+
+[[bench]]
+name = "bench"
+harness = false
