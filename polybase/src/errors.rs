@@ -1,3 +1,4 @@
+use super::config::ConfigError;
 use super::db;
 use super::network;
 use indexer::IndexerError;
@@ -53,4 +54,7 @@ pub enum AppError {
         "namespace is invalid, must be in format pk/<public_key_hex>/<CollectionName> got {0}"
     )]
     InvalidNamespace(String),
+
+    #[error("configuration is invalid")]
+    InvalidConfiguration(#[from] ConfigError),
 }

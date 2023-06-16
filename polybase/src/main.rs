@@ -17,12 +17,11 @@ mod rpc;
 mod txn;
 mod util;
 
-use crate::config::{Command, Config, LogFormat};
+use crate::config::{Config, LogFormat, LogLevel, PolybaseCommand};
 use crate::db::{Db, DbConfig};
 use crate::errors::AppError;
 use crate::rpc::create_rpc_server;
 use chrono::Utc;
-use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
 use libp2p::PeerId;
@@ -46,9 +45,9 @@ type Result<T> = std::result::Result<T, AppError>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = Config::parse();
+    let config = Config::new()?;
 
-    if let Some(Command::GenerateKey) = config.command {
+    if let Some(PolybaseCommand::GenerateKey) = config.command {
         let (keypair, bytes) = util::generate_key();
         #[allow(clippy::unwrap_used)]
         let key = ed25519::SecretKey::from_bytes(&bytes).unwrap();
@@ -82,9 +81,9 @@ async fn main() -> Result<()> {
 
     // Parse log level
     let log_level = match &config.log_level {
-        config::LogLevel::Debug => slog::Level::Debug,
-        config::LogLevel::Info => slog::Level::Info,
-        config::LogLevel::Error => slog::Level::Error,
+        LogLevel::Debug => slog::Level::Debug,
+        LogLevel::Info => slog::Level::Info,
+        LogLevel::Error => slog::Level::Error,
     };
 
     // Create logger drain (json/pretty)
