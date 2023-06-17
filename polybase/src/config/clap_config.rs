@@ -1,4 +1,4 @@
-use clap::{crate_version, Arg, ArgMatches, Command};
+use clap::{crate_version, Arg, ArgAction, ArgMatches, Command};
 
 use super::{LogFormat, LogLevel};
 
@@ -157,10 +157,8 @@ pub(super) fn get_matches() -> ArgMatches {
             Arg::new("restrict-namespaces")
                 .help("Restrict namespaces to pk/<pk>/<collection_name>")
                 .long("restrict-namespaces")
-                .value_name("RESTRICT_NAMESPACES")
                 .env("RESTRICT_NAMESPACES")
-                .value_parser(clap::value_parser!(bool))
-                .default_value("false"),
+                .action(ArgAction::SetTrue),
         )
         .get_matches()
 }
