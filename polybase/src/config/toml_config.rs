@@ -1,7 +1,7 @@
 //! module for handling file-based (TOML) configuration for Polybase.
 
-const TOML_CONFIG_DIR: &'static str = "config";
-const TOML_CONFIG_FILE_PATH: &'static str = "config.toml";
+const TOML_CONFIG_DIR: &str = "config";
+const TOML_CONFIG_FILE_PATH: &str = "config.toml";
 
 use std::{fs, path::PathBuf};
 

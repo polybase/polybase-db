@@ -81,10 +81,7 @@ impl Config {
     }
 
     fn was_supplied_by_user(key: &str, matches: &ArgMatches) -> bool {
-        match matches.value_source(key) {
-            Some(ValueSource::DefaultValue) => false,
-            _ => true,
-        }
+        !matches!(matches.value_source(key), Some(ValueSource::DefaultValue))
     }
 
     /// The order of priority is (in decreasing order):
@@ -195,6 +192,7 @@ impl Config {
 
 // To convert from an ArgMatches into the main `Config` enity used by Polybase main.
 // `clap` does not provide an automated way to do so in builder mode.
+#[allow(clippy::unwrap_used)]
 impl From<ArgMatches> for Config {
     fn from(am: ArgMatches) -> Self {
         Config {
@@ -208,8 +206,8 @@ impl From<ArgMatches> for Config {
 
             id: am.get_one::<u64>("id").copied(),
             root_dir: am.get_one::<String>("root-dir").unwrap().clone(),
-            log_level: am.get_one::<LogLevel>("log-level").unwrap().clone(),
-            log_format: am.get_one::<LogFormat>("log-format").unwrap().clone(),
+            log_level: *am.get_one::<LogLevel>("log-level").unwrap(),
+            log_format: *am.get_one::<LogFormat>("log-format").unwrap(),
             rpc_laddr: am.get_one::<String>("rpc-laddr").unwrap().clone(),
             secret_key: am
                 .get_one::<Option<String>>("secret-key")
@@ -230,17 +228,15 @@ impl From<ArgMatches> for Config {
                 .unwrap()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>(),
-            block_cache_count: am.get_one::<usize>("block-cache-count").unwrap().clone(),
-            block_txns_count: am.get_one::<usize>("block-txns-count").unwrap().clone(),
-            snapshot_chunk_size: am.get_one::<usize>("snapshot-chunk-size").unwrap().clone(),
-            min_block_duration: am.get_one::<u64>("min-block-duration").unwrap().clone(),
+            block_cache_count: *am.get_one::<usize>("block-cache-count").unwrap(),
+            block_txns_count: *am.get_one::<usize>("block-txns-count").unwrap(),
+            snapshot_chunk_size: *am.get_one::<usize>("snapshot-chunk-size").unwrap(),
+            min_block_duration: *am.get_one::<u64>("min-block-duration").unwrap(),
             sentry_dsn: Some(am.get_one::<String>("sentry-dsn").unwrap().clone()),
 
-            whitelist: if let Some(val_ref) = am.get_many::<String>("whitelist") {
-                Some(val_ref.map(|s| s.to_string()).collect::<Vec<_>>())
-            } else {
-                None
-            },
+            whitelist: am
+                .get_many::<String>("whitelist")
+                .map(|values| values.into_iter().map(String::from).collect::<Vec<_>>()),
 
             restrict_namespaces: *am.get_one::<bool>("restrict-namespaces").unwrap(),
         }
@@ -257,7 +253,7 @@ pub enum PolybaseCommand {
     GenerateKey,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, ValueEnum)]
+#[derive(Copy, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, ValueEnum)]
 #[clap(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LogLevel {
     #[serde(rename = "DEBUG")]
