@@ -268,7 +268,7 @@ async fn main() -> Result<()> {
                 },
 
                 Some((network_peer_id, event)) = network.next() => {
-                    let peer_id: solid::peer::PeerId = network_peer_id.clone().into();
+                    let from_peer_id: solid::peer::PeerId = network_peer_id.clone().into();
                     match event {
                         NetworkEvent::Ping => {
                             info!(logger, "Ping received");
@@ -280,7 +280,7 @@ async fn main() -> Result<()> {
                             }
 
                             if height + config.block_cache_count > solid.height() {
-                                info!(logger, "Peer is out of sync, sending proposals"; "peer_id" => peer_id.prefix(), "height" => height);
+                                info!(logger, "Peer is out of sync, sending proposals"; "peer_id" => from_peer_id.prefix(), "height" => height);
                                 if solid.min_proposal_height() > height {
                                     // We don't have all the proposals needed for this peer, send offer to peer
                                     network.send(
@@ -301,7 +301,7 @@ async fn main() -> Result<()> {
                                     .await;
                                 }
                             } else {
-                                error!(logger, "Peer is out of sync, peer should request full snapshot"; "peer_id" => peer_id.prefix(), "height" => height);
+                                error!(logger, "Peer is out of sync, peer should request full snapshot"; "peer_id" => from_peer_id.prefix(), "height" => height);
                             }
                         }
 
@@ -309,7 +309,7 @@ async fn main() -> Result<()> {
                         // to provide them with a snapshot
                         NetworkEvent::SnapshotRequest{ id, height } => {
                             if db.is_healthy() {
-                                info!(logger, "Peer requested snapshot, sending offer"; "peer_id" => peer_id.prefix(), "height" => height, "id" => id);
+                                info!(logger, "Peer requested snapshot, sending offer"; "to" => from_peer_id.prefix(), "height" => height, "id" => id);
                                 network.send(
                                     &network_peer_id,
                                     NetworkEvent::SnapshotOffer {
@@ -317,7 +317,7 @@ async fn main() -> Result<()> {
                                     },
                                 ).await;
                             } else {
-                                info!(logger, "Peer requested snapshot, unable to provide snapshot due to unhealty state"; "peer_id" => peer_id.prefix(), "height" => height);
+                                info!(logger, "Peer requested snapshot, unable to provide snapshot due to unhealty state"; "peer_id" => from_peer_id.prefix(), "height" => height);
                             }
                         },
 
@@ -325,16 +325,16 @@ async fn main() -> Result<()> {
                         // don't already have an ongoing snapshot in progress
                         NetworkEvent::SnapshotOffer{ id } => {
                             if snapshot_from.is_some() {
-                                debug!(logger, "Already have snapshot in progress, ignoring offer"; "peer_id" => peer_id.prefix(),  "id" => id);
+                                debug!(logger, "Already have snapshot in progress, ignoring offer"; "peer_id" => from_peer_id.prefix(),  "id" => id);
                                 continue;
                             }
 
                             if db.is_healthy() {
-                                debug!(logger, "Peer offered snapshot, ignoring as already healthy"; "peer_id" => peer_id.prefix(), "id" => id);
+                                debug!(logger, "Peer offered snapshot, ignoring as already healthy"; "peer_id" => from_peer_id.prefix(), "id" => id);
                                 continue;
                             }
 
-                            info!(logger, "Peer offered snapshot, sending accept"; "peer_id" => peer_id.prefix(), "id" => id);
+                            info!(logger, "Peer offered snapshot, sending accept"; "peer_id" => from_peer_id.prefix(), "id" => id);
 
                             // Save who the snapshot is from
                             snapshot_from = Some((network_peer_id.clone(), id));
@@ -358,7 +358,7 @@ async fn main() -> Result<()> {
                         NetworkEvent::SnapshotAccept{ id  } => {
                             let db = Arc::clone(&db);
 
-                            info!(logger, "Peer accepted snapshot offer, sending chunks"; "peer_id" => peer_id.prefix(), "id" => id);
+                            info!(logger, "Peer accepted snapshot offer, sending chunks"; "peer_id" => from_peer_id.prefix(), "id" => id);
 
                             // Spawn a task, as we don't want to block the thread while we send network events,
                             // and this snapshot may take a while to complete
@@ -366,7 +366,7 @@ async fn main() -> Result<()> {
                                 // 100MB chunks
                                 let snapshot_iter = db.snapshot_iter(config.snapshot_chunk_size);
                                 for chunk in snapshot_iter {
-                                    let peer_id = peer_id.clone();
+                                    let peer_id = from_peer_id.clone();
                                     match chunk {
                                         Ok(chunk) => {
                                             debug!(logger, "Sending snapshot chunk"; "for" => peer_id.prefix(), "chunk_size" => chunk.len());
@@ -385,11 +385,11 @@ async fn main() -> Result<()> {
                                     }
                                 }
 
-                                info!(logger, "Snapshot complete"; "peer_id" => peer_id.prefix(), "id" => id);
+                                info!(logger, "Snapshot complete"; "peer_id" => from_peer_id.prefix(), "id" => id);
 
                                 // Send end of snapshot event
                                 network.send(
-                                    &peer_id.into(),
+                                    &from_peer_id.into(),
                                     NetworkEvent::SnapshotChunk { id, chunk: None },
                                 ).await;
                             });
@@ -398,7 +398,7 @@ async fn main() -> Result<()> {
                         // We've received a chunk of a snapshot from another peer, we should load this into
                         // our db
                         NetworkEvent::SnapshotChunk { id, chunk } => {
-                            info!(logger, "Received snapshot chunk"; "peer_id" => peer_id.prefix(), "id" => id, "chunk_size" => chunk.as_ref().map(|c| c.len()).unwrap_or(0));
+                            info!(logger, "Received snapshot chunk"; "peer_id" => from_peer_id.prefix(), "id" => id, "chunk_size" => chunk.as_ref().map(|c| c.len()).unwrap_or(0));
                             if let Some((peer_id, snapshot_id)) = &snapshot_from {
                                 if peer_id != &network_peer_id || snapshot_id != &id  {
                                     error!(logger, "Received invalid snapshot chunk");
@@ -429,12 +429,12 @@ async fn main() -> Result<()> {
                         }
 
                         NetworkEvent::Accept { accept } => {
-                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string(), "local_height" => solid.height());
-                            solid.receive_accept(&accept, &peer_id);
+                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &from_peer_id.prefix(), "leader" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string(), "local_height" => solid.height());
+                            solid.receive_accept(&accept, &from_peer_id);
                         }
 
                         NetworkEvent::Proposal { manifest } => {
-                            info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
+                            info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &from_peer_id.prefix(), "leader" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
 
                             // Lease the proposal changes
                             // #[allow(clippy::expect_used)]
