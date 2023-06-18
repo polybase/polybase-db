@@ -217,9 +217,9 @@ impl ProposalStore {
             skips,
         } = accept;
 
-        // Accept is out of date
-        // TODO: I think this should be >= not >, as we can never accept
-        // a proposal that is higher than our current confirmed height
+        // Check if accept is out of date, normally accept_height must be greater than confirmed height,
+        // but if there are no pending proposals we may need to accept a proposal with
+        // accept height == confirmed height (e.g. during start up)
         if self.height() > *accept_height {
             return None;
         }
