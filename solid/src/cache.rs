@@ -110,12 +110,19 @@ impl ProposalCache {
         proposals
     }
 
-    /// Returns next pending proposal to be processed - either as a commit or accept. If there is a
-    /// gap in the chain or no pending commits exist, then None is returned.
+    /// Returns next pending proposal to be processed. If there is a
+    /// gap in the chain or no pending commits exist, then None is returned. Offset can be used to get
+    /// proposals higher up the chain.
     pub fn next_pending_proposal(&self, offset: usize) -> Option<&Proposal> {
         // Get the first proposal, by looking for the proposal with the highest height
-        // and skip
+        // and skip (this could be the last confirmed proposal)
         let mut proposal = self.max_proposal()?;
+
+        // Max proposal is not higher than requested (minimum is always height + 1, as we
+        // are looking for the next proposal)
+        if proposal.height() < self.height() + 1 + offset {
+            return None;
+        }
 
         // Loop through to get the next proposal by looking at the chain of proposals
         while proposal.height() > self.height() + 1 + offset {
@@ -359,5 +366,38 @@ mod tests {
         cache.confirm(p2a_hash);
 
         assert_eq!(cache.next_pending_proposal(0), Some(&p3a));
+    }
+
+    #[test]
+    fn test_next_pending_proposal_no_pending() {
+        let (genesis, _) = create_proposal(0, 0, ProposalHash::genesis());
+        let cache = ProposalCache::new(genesis, 1000);
+
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.height(), 0);
+        assert_eq!(cache.max_height(), 0);
+        assert_eq!(cache.next_pending_proposal(0), None);
+    }
+
+    #[test]
+    fn test_next_pending_proposal_with_offset() {
+        let (genesis, genesis_hash) = create_proposal(0, 0, ProposalHash::genesis());
+        let mut cache = ProposalCache::new(genesis, 1000);
+
+        let (p1, p1_hash) = create_proposal(1, 0, genesis_hash);
+        let (p2, p2_hash) = create_proposal(2, 0, p1_hash);
+        let (p3, _) = create_proposal(3, 0, p2_hash);
+
+        cache.insert(p1.clone());
+        cache.insert(p2.clone());
+        cache.insert(p3.clone());
+
+        assert_eq!(cache.len(), 4);
+        assert_eq!(cache.height(), 0);
+        assert_eq!(cache.max_height(), 3);
+        assert_eq!(cache.next_pending_proposal(0), Some(&p1));
+        assert_eq!(cache.next_pending_proposal(1), Some(&p2));
+        assert_eq!(cache.next_pending_proposal(2), Some(&p3));
+        assert_eq!(cache.next_pending_proposal(3), None);
     }
 }
