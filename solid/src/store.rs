@@ -895,10 +895,9 @@ mod test {
     }
 
     #[test]
-    fn test_out_of_sync_from_accept_received() {
+    fn test_add_accept_out_of_sync() {
         let [p1, _, _] = create_peers();
         let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
-        // let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
 
         // Receive accept of higher value
         assert_eq!(
@@ -906,14 +905,14 @@ mod test {
                 &ProposalAccept {
                     leader_id: peer(1),
                     proposal_hash: ProposalHash::new(vec![2u8]),
-                    height: 3,
+                    height: 1,
                     skips: 0,
                 },
                 &peer(1),
             ),
             Some(SolidEvent::OutOfSync {
                 height: 0,
-                max_seen_height: 3,
+                max_seen_height: 1,
                 accepts_sent: 0
             }),
         );
