@@ -120,7 +120,7 @@ impl Solid {
         tokio::spawn(background_worker(Arc::clone(&self.shared)))
     }
 
-    /// Gets the highest confirmed height for this reigster
+    /// Gets the highest confirmed height for this register
     pub fn height(&self) -> usize {
         self.shared.store.lock().height()
     }

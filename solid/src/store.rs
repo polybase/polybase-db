@@ -95,10 +95,15 @@ impl ProposalStore {
         self.proposals.insert(proposal);
     }
 
+    /// Processes the next event in the store, this will either return a commit or accept
+    /// event, or None if no more events are ready
     pub fn process_next(&mut self) -> Option<SolidEvent> {
+        // Gets the next valid proposal (confirmed height + 1)
         let proposal = match self.proposals.next_pending_proposal(0) {
             Some(p) => p,
             None => {
+                // Indicates a gap in proposals, as we have no next pending commit, but we
+                // do have some pending commits
                 if self.has_pending_commits() {
                     return Some(SolidEvent::OutOfSync {
                         height: self.height(),
@@ -106,6 +111,15 @@ impl ProposalStore {
                         accepts_sent: self.accepts_sent,
                     });
                 }
+
+                // This occurs when we have no pending proposals, and we've sent no previous
+                // accepts (this usually occurs on startup)
+                if self.accepts_sent == 0 && self.height() == self.accepts_sent_height {
+                    return Some(self.get_next_accept_event());
+                }
+
+                // We are up to date, we need to wait for new incoming
+                // proposals
                 return None;
             }
         };
@@ -113,7 +127,7 @@ impl ProposalStore {
         let proposal_hash = proposal.hash().clone();
 
         // Send commit if we have uncommitted proposals that can be committed
-        if self.has_network_commits() || self.has_next_commit() {
+        if self.has_next_commit() {
             let manifest = proposal.manifest.clone();
 
             // Add proposal to confirmed list
@@ -126,8 +140,9 @@ impl ProposalStore {
             return Some(SolidEvent::Commit { manifest });
         }
 
-        // Only send initial accept using the process_next, otherwise accept is sent
-        // when skip is called
+        // Only send first accept using the process_next, otherwise we'll infinitely send
+        // accepts. Additional accepts (aka skips) will be sent when the timeout expires
+        // and store.skip() is called.
         if self.accepts_sent > 0 && proposal.height() == self.accepts_sent_height {
             return None;
         }
@@ -148,7 +163,8 @@ impl ProposalStore {
         Some(self.get_next_accept_event())
     }
 
-    /// Gets the next accept to send, where no pending proposal is available, last confirmed will be used.
+    /// Gets the next accept to send, where no pending proposal is available,
+    /// last confirmed will be used.
     fn get_next_accept_event(&mut self) -> SolidEvent {
         let last_confirmed = self.proposals.last_confirmed_proposal();
         let current_proposal = self
@@ -202,17 +218,21 @@ impl ProposalStore {
         } = accept;
 
         // Accept is out of date
+        // TODO: I think this should be >= not >, as we can never accept
+        // a proposal that is higher than our current confirmed height
         if self.height() > *accept_height {
             return None;
         }
 
-        // Update accepts sent if we have received a higher skip
+        // Update accepts sent if we have received a higher skip, so the network eventually
+        // converges on the same skip
         if self.accepts_sent_height == *accept_height && *skips > self.accepts_sent {
             self.accepts_sent = *skips;
         }
 
-        // Add accept to proposal (or to orphaned hash map if proposal is not found/received yet)
-        let res = match self.proposals.get_mut(last_proposal_hash) {
+        // Add accept to proposal (or to orphaned hash map if proposal is not found/received yet).
+        // We always store accepts for any future proposal, as we may need them later
+        return match self.proposals.get_mut(last_proposal_hash) {
             Some(p) => {
                 // Skip if skips is not valid
                 if p.add_accept(skips, from.clone()) {
@@ -225,7 +245,7 @@ impl ProposalStore {
                 None
             }
             None => {
-                // Get exisiting orphaned proposal list
+                // Get exisiting orphaned proposal list (or create it if it doesn't exist yet)
                 if let Some(p) = self.orphan_accepts.get_mut(last_proposal_hash) {
                     p.push((*skips, leader_id.clone()));
                 } else {
@@ -234,31 +254,30 @@ impl ProposalStore {
                         vec![(*skips, leader_id.clone())],
                     );
                 }
-                None
+
+                // We're the designated leader, and yet we don't have the proposal being
+                // accepted. We should request this proposals ASAP, so we can become
+                // build on it once we have enough accept votes.
+                return Some(SolidEvent::OutOfSync {
+                    height: self.height(),
+                    // Accept is always one ahead of a confirmed proposal, so we subtract 1
+                    // to get the highest confirmed proposal that must exist
+                    max_seen_height: *accept_height,
+                    accepts_sent: 0,
+                });
             }
         };
-
-        // Accept is indicating that we are behind the network in terms of proposals
-        if res.is_none() && *accept_height > self.height() + 2 {
-            return Some(SolidEvent::OutOfSync {
-                height: self.height(),
-                max_seen_height: accept_height - 1,
-                accepts_sent: 0,
-            });
-        }
-
-        res
     }
 
     /// Do we have any pending proposals that match the skip we are looking for? If so,
-    /// this means we can commit the last proposal (and send an accept for the next one)
+    /// this means we can commit the next proposal (height + 1) and send an accept for the next one
     fn has_next_commit(&self) -> bool {
-        // If we don't have more than one commit, then we can exit early
-        if !self.has_pending_commits() {
-            return false;
+        // Always commit if we have valid network commits
+        if self.has_network_commits() {
+            return true;
         }
 
-        // Check if we want to accept the next pending commit (skips match)
+        // Check if we have a valid next proposal (confirmed height + 2)
         if let Some(next_proposal) = self.proposals.next_pending_proposal(1) {
             return next_proposal.skips() + 1 >= self.accepts_sent;
         }
@@ -876,6 +895,31 @@ mod test {
     }
 
     #[test]
+    fn test_out_of_sync_from_accept_received() {
+        let [p1, _, _] = create_peers();
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
+        // let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
+
+        // Receive accept of higher value
+        assert_eq!(
+            store.add_accept(
+                &ProposalAccept {
+                    leader_id: peer(1),
+                    proposal_hash: ProposalHash::new(vec![2u8]),
+                    height: 3,
+                    skips: 0,
+                },
+                &peer(1),
+            ),
+            Some(SolidEvent::OutOfSync {
+                height: 0,
+                max_seen_height: 3,
+                accepts_sent: 0
+            }),
+        );
+    }
+
+    #[test]
     fn test_duplicate_accepts_received() {
         let [p1, _, _] = create_peers();
         let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
@@ -950,15 +994,7 @@ mod test {
         // Create store with init genesis proposal
         let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
 
-        assert_eq!(
-            store
-                .proposals
-                .next_pending_proposal(0)
-                .unwrap()
-                .hash()
-                .clone(),
-            genesis_hash,
-        );
+        assert_eq!(store.proposals.next_pending_proposal(0), None);
 
         let (m1, m1_hash) = create_manifest(1, 0, 1, genesis_hash);
 
@@ -1010,42 +1046,6 @@ mod test {
 
         assert!(store.proposals.next_pending_proposal(0).is_none());
     }
-
-    // #[test]
-    // fn test_has_pending_commits() {
-    //     let [p1, _, _] = create_peers();
-    //     let mut store = ProposalStore::genesis(create_peers().to_vec());
-    //     let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
-
-    //     // Up to date when store is empty
-    //     assert!(!store.has_pending_commits());
-
-    //     let b = Proposal::new(ProposalManifest {
-    //         last_proposal_hash: genesis_hash,
-    //         skips: 0,
-    //         height: 10,
-    //         leader_id: p1,
-    //         changes: vec![],
-    //         peers: create_peers().to_vec(),
-    //     });
-    //     let b_hash = b.hash().clone();
-    //     // store.proposals.last_confirmed_proposal_hash = b.hash().clone();
-    //     store.proposals.insert(b);
-    //     store.proposals.confirm(b_hash);
-
-    //     // Up to date when no pending proposals
-    //     assert!(!store.has_pending_commits());
-
-    //     store.max_height = 11;
-
-    //     // Up to date when max_height == height + 1
-    //     assert!(!store.has_pending_commits());
-
-    //     store.max_height = 12;
-
-    //     // NOT up to date when max_height > height + 1
-    //     assert!(store.has_pending_commits());
-    // }
 
     #[test]
     fn test_has_next_commt() {
