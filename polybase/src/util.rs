@@ -31,6 +31,13 @@ pub(crate) fn get_base_dir(dir: &str) -> Option<PathBuf> {
     Some(path_buf)
 }
 
+pub(crate) fn get_toml_config_file(dir: &str, config_dir: &str) -> Option<PathBuf> {
+    let mut path_buf = get_base_dir(dir)?;
+    path_buf.push(config_dir);
+    path_buf.push("config.toml");
+    Some(path_buf)
+}
+
 pub(crate) fn to_peer_id(base58_string: &String) -> Result<solid::peer::PeerId> {
     let decoded = bs58::decode(base58_string).into_vec()?;
     Ok(solid::peer::PeerId::new(decoded))

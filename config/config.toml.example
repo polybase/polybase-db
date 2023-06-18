@@ -1,5 +1,7 @@
-# Copy this file to `config.toml in the same directory.
-#`Uncomment the options and provide values as required. Default values are supplied where sensible.
+## Copy this file, rename it to `config.toml` and place it in the `config` sub-directory of the `root_dir`.
+## For instance, if the `root_dir` is `~/.polybase`, then the config file should be: `~/.polybase/config/config.toml`.
+##
+## Uncomment the options and provide values as required. Default values are supplied where sensible.
 
 # The core options are the options supported by the cli and env (via `clap`) as well as the TOML-based configurtion modes.
 [core]
@@ -9,9 +11,6 @@
 
 # Node ID: an unsigned 64-bit value. For instance: 1
 #id = 1
-
-# Root directory where application data is stored. Default: "~/.polybase"
-#root_dir = "~/.polybase"
 
 # Log level. Possible values are DEBUG, INFO, and ERROR. Default: "INFO".
 #log_level = "INFO"

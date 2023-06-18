@@ -94,15 +94,9 @@ impl Config {
     /// Secondly, if a value for an optional type has not been set, and the TOML config again has a
     /// value for it, then set it.
     fn merge_toml_core_config(&mut self, matches: ArgMatches) -> ConfigResult<()> {
-        if let Some(mut toml_config) = toml_config::read_config()? {
+        if let Some(mut toml_config) = toml_config::read_config(&self.root_dir)? {
             if self.id.is_none() && toml_config.core.id.is_some() {
                 self.id = toml_config.core.id.take();
-            }
-
-            if !Self::was_supplied_by_user("root-dir", &matches) {
-                if let Some(root_dir) = toml_config.core.root_dir {
-                    self.root_dir = root_dir;
-                }
             }
 
             if !Self::was_supplied_by_user("log-level", &matches) {

@@ -1,9 +1,7 @@
 //! module for handling file-based (TOML) configuration for Polybase.
 
-const TOML_CONFIG_DIR: &str = "config";
-const TOML_CONFIG_FILE_PATH: &str = "config.toml";
-
-use std::{fs, path::PathBuf};
+use crate::util;
+use std::fs;
 
 use super::{ConfigResult, Deserialize, LogFormat, LogLevel};
 
@@ -17,7 +15,6 @@ pub(crate) struct TomlConfig {
 #[derive(Debug, Deserialize)]
 pub(crate) struct CoreConfig {
     pub id: Option<u64>,
-    pub root_dir: Option<String>,
     pub log_level: Option<LogLevel>,
     pub log_format: Option<LogFormat>,
     pub rpc_laddr: Option<String>,
@@ -39,17 +36,14 @@ pub(crate) struct ExtraConfig {}
 
 /// Read the TOML configuration file, if present in the `config` sub-directory under the
 /// root Polybase directory.
-pub(super) fn read_config() -> ConfigResult<Option<TomlConfig>> {
-    let toml_config_file = [TOML_CONFIG_DIR, TOML_CONFIG_FILE_PATH]
-        .iter()
-        .collect::<PathBuf>();
+pub(super) fn read_config(root_dir: &str) -> ConfigResult<Option<TomlConfig>> {
+    util::get_toml_config_file(root_dir, "config").map_or(Ok(None), |config_file| {
+        if !config_file.exists() {
+            return Ok(None);
+        }
 
-    if toml_config_file.exists() {
-        let toml_config: TomlConfig =
-            toml::from_str::<TomlConfig>(fs::read_to_string(toml_config_file)?.as_str())?;
-
-        Ok(Some(toml_config))
-    } else {
-        Ok(None)
-    }
+        Ok(Some(toml::from_str::<TomlConfig>(
+            fs::read_to_string(config_file)?.as_str(),
+        )?))
+    })
 }
