@@ -506,7 +506,7 @@ fn validate_new_collection(
         match collection_id {
             serde_json::Value::String(id) => {
                 let parts: Vec<&str> = id.split('/').collect();
-                if parts.len() != 3 || parts[0] != "pk" || parts[1] != pk {
+                if parts.len() < 3 || parts[0] != "pk" || parts[1] != pk {
                     return Err(HTTPError::new(
                         ReasonCode::Unauthorized,
                         Some(Box::new(AppError::InvalidNamespace(id.clone()))),
