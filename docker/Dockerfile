@@ -24,7 +24,6 @@ COPY Cargo.toml ./
 COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
-COPY rbmerkle ./rbmerkle/
 COPY solid ./solid/
 RUN cargo chef prepare --recipe-path /recipe.json
 
@@ -44,7 +43,6 @@ COPY Cargo.toml ./
 COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
-COPY rbmerkle ./rbmerkle/
 COPY solid ./solid/
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
