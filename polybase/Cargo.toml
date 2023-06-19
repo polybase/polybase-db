@@ -12,7 +12,6 @@ actix-web = "4"
 actix-server = "2.2"
 indexer = { path = "../indexer" }
 gateway = { path = "../gateway" }
-rbmerkle = { path = "../rbmerkle" }
 solid = { path = "../solid" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
