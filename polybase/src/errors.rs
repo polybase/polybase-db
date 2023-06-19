@@ -1,4 +1,4 @@
-use super::config::ConfigError;
+use super::config;
 use super::db;
 use super::network;
 use indexer::IndexerError;
@@ -56,5 +56,5 @@ pub enum AppError {
     InvalidNamespace(String),
 
     #[error("configuration is invalid")]
-    InvalidConfiguration(#[from] ConfigError),
+    InvalidConfiguration(#[from] config::ConfigError),
 }

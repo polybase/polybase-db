@@ -8,14 +8,14 @@ use serde::Deserialize;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
-    #[error("toml file read error")]
-    TomlRead(#[from] std::io::Error),
-
-    #[error("toml deserialization error")]
-    TomlDeserialization(#[from] toml::de::Error),
+    #[error("toml config error")]
+    TomlConfig(#[from] toml_config::TomlConfigError),
 }
 
 pub type ConfigResult<T> = std::result::Result<T, ConfigError>;
+
+#[derive(Debug, Deserialize)]
+pub struct ExtraConfig {}
 
 #[derive(Debug, Deserialize)]
 pub struct Config {
@@ -68,6 +68,9 @@ pub struct Config {
 
     /// Restrict namespaces to pk/<pk>/<collection_name>
     pub restrict_namespaces: bool,
+
+    // extra configurations
+    extra_config: Option<ExtraConfig>,
 }
 
 impl Config {
@@ -78,6 +81,11 @@ impl Config {
         Self::merge_toml_core_config(&mut config, clap_matches)?;
 
         Ok(config)
+    }
+
+    #[allow(dead_code)]
+    pub fn extra_config(&mut self) -> Option<ExtraConfig> {
+        self.extra_config.take()
     }
 
     fn was_supplied_by_user(key: &str, matches: &ArgMatches) -> bool {
@@ -95,26 +103,24 @@ impl Config {
     /// value for it, then set it.
     fn merge_toml_core_config(&mut self, matches: ArgMatches) -> ConfigResult<()> {
         if let Some(mut toml_config) = toml_config::read_config(&self.root_dir)? {
+            if self.command.is_none() && toml_config.core.command.is_some() {
+                self.command = toml_config.core.command.take();
+            }
+
             if self.id.is_none() && toml_config.core.id.is_some() {
                 self.id = toml_config.core.id.take();
             }
 
             if !Self::was_supplied_by_user("log-level", &matches) {
-                if let Some(log_level) = toml_config.core.log_level {
-                    self.log_level = log_level;
-                }
+                self.log_level = toml_config.core.log_level;
             }
 
             if !Self::was_supplied_by_user("log-format", &matches) {
-                if let Some(log_format) = toml_config.core.log_format {
-                    self.log_format = log_format;
-                }
+                self.log_format = toml_config.core.log_format;
             }
 
             if !Self::was_supplied_by_user("rpc-laddr", &matches) {
-                if let Some(rpc_laddr) = toml_config.core.rpc_laddr {
-                    self.rpc_laddr = rpc_laddr;
-                }
+                self.rpc_laddr = toml_config.core.rpc_laddr;
             }
 
             if self.secret_key.is_none() && toml_config.core.secret_key.is_some() {
@@ -122,45 +128,31 @@ impl Config {
             }
 
             if !Self::was_supplied_by_user("network-laddr", &matches) {
-                if let Some(network_laddr) = toml_config.core.network_laddr {
-                    self.network_laddr = network_laddr;
-                }
+                self.network_laddr = toml_config.core.network_laddr;
             }
 
             if !Self::was_supplied_by_user("dial-addr", &matches) {
-                if let Some(dial_addr) = toml_config.core.dial_addr {
-                    self.dial_addr = dial_addr;
-                }
+                self.dial_addr = toml_config.core.dial_addr;
             }
 
             if !Self::was_supplied_by_user("peers", &matches) {
-                if let Some(peers) = toml_config.core.peers {
-                    self.peers = peers;
-                }
+                self.peers = toml_config.core.peers;
             }
 
             if !Self::was_supplied_by_user("block-cache-count", &matches) {
-                if let Some(block_cache_count) = toml_config.core.block_cache_count {
-                    self.block_cache_count = block_cache_count;
-                }
+                self.block_cache_count = toml_config.core.block_cache_count;
             }
 
             if !Self::was_supplied_by_user("block-txns-count", &matches) {
-                if let Some(block_txns_count) = toml_config.core.block_txns_count {
-                    self.block_txns_count = block_txns_count;
-                }
+                self.block_txns_count = toml_config.core.block_txns_count;
             }
 
             if !Self::was_supplied_by_user("snapshot-chunk-size", &matches) {
-                if let Some(snapshot_chunk_size) = toml_config.core.snapshot_chunk_size {
-                    self.snapshot_chunk_size = snapshot_chunk_size;
-                }
+                self.snapshot_chunk_size = toml_config.core.snapshot_chunk_size;
             }
 
             if !Self::was_supplied_by_user("min-block-duration", &matches) {
-                if let Some(min_block_duration) = toml_config.core.min_block_duration {
-                    self.min_block_duration = min_block_duration;
-                }
+                self.min_block_duration = toml_config.core.min_block_duration;
             }
 
             if !Self::was_supplied_by_user("sentry-dsn", &matches)
@@ -174,10 +166,10 @@ impl Config {
             }
 
             if !Self::was_supplied_by_user("restrict-namespaces", &matches) {
-                if let Some(restrict_namespaces) = toml_config.core.restrict_namespaces {
-                    self.restrict_namespaces = restrict_namespaces;
-                }
+                self.restrict_namespaces = toml_config.core.restrict_namespaces;
             }
+
+            self.extra_config = toml_config.extra;
         }
 
         Ok(())
@@ -233,6 +225,7 @@ impl From<ArgMatches> for Config {
                 .map(|values| values.into_iter().map(String::from).collect::<Vec<_>>()),
 
             restrict_namespaces: *am.get_one::<bool>("restrict-namespaces").unwrap(),
+            extra_config: None,
         }
     }
 }
