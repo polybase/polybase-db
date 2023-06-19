@@ -1,0 +1,59 @@
+## Copy this file, rename it to `config.toml` and place it in the `config` sub-directory of the `root_dir`.
+## For instance, if the `root_dir` is `~/.polybase`, then the config file should be: `~/.polybase/config/config.toml`.
+##
+## Uncomment the options and provide values as required. Default values are supplied where sensible.
+
+# The core options are the options supported by the cli and env (via `clap`) as well as the TOML-based configurtion modes.
+[core]
+
+# The command string. Possible values: "start", "generate-key"
+#command = "start"
+
+# Node ID: an unsigned 64-bit value. For instance: 1
+#id = 1
+
+# Log level. Possible values are DEBUG, INFO, and ERROR. Default: "INFO".
+#log_level = "INFO"
+
+# Log format. Possible values: "PRETTY". Default: "PRETTY".
+#log_format = "PRETTY"
+
+# RPC listen address. Default: "0.0.0.0:8080"
+#rpc_laddr = "0.0.0.0:8080"
+
+# Secret key encoded as a hex string.
+#secret_key = ""
+
+# Peer listen address as a string. List of strings. Default: "/ip4/0.0.0.0/tcp/0"
+#network_laddr = ["/ip4/0.0.0.0/tcp/0"]
+
+# Peers to dial as a string. Comma separated strings. Default: [""]
+#dial_addr = [""]
+
+# Validator peers - list of strings. Default: [""]
+#peers = [""]
+
+# Maximum history of blocks to keep in memory. Default = 1024
+#block_cache_count = 1024
+
+# Maximum number of txns to include in a block. Default = 1024
+#block_txns_count = 1024
+
+# Size of the chunks of data sent during snapshot load. Default = 4194304
+#snapshot_chunk_size = 4194304
+
+# Size of the chunks of data sent during snapshot load. Default = 500
+#min_block_duration = 500
+
+# Sentry DSN. Default: ""
+#sentry_dsn = ""
+
+# Public key whitelist: list of strings 
+#whitelist = [""]
+
+# Restrict namespaces to pk/<pk>/<collection_name>. Default: false
+#restrict_namespaces = false
+
+# Non-core configuration options
+
+[extra]
