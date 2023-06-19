@@ -5,10 +5,10 @@ metadata:
 spec:
   timeoutSec: 120
   healthCheck:
-    checkIntervalSec: 30
-    timeoutSec: 30
+    checkIntervalSec: 10
+    timeoutSec: 10
     healthyThreshold: 1
-    unhealthyThreshold: 10
+    unhealthyThreshold: 5
     type: HTTP
-    requestPath: /
+    requestPath: /v0/health
     port: 8080
