@@ -254,7 +254,7 @@ fn read_core_config(toml_value: &Value) -> ConfigResult<Config> {
                 }
 
                 network_laddr = toml_network_laddr
-                    .into_iter()
+                    .iter()
                     .map(|laddr| laddr.to_string())
                     .collect::<Vec<_>>();
             } else {
@@ -269,7 +269,7 @@ fn read_core_config(toml_value: &Value) -> ConfigResult<Config> {
                 }
 
                 dial_addr = toml_dial_addr
-                    .into_iter()
+                    .iter()
                     .map(|addr| addr.to_string())
                     .collect::<Vec<_>>();
             } else {
@@ -284,7 +284,7 @@ fn read_core_config(toml_value: &Value) -> ConfigResult<Config> {
                 }
 
                 peers = toml_peers
-                    .into_iter()
+                    .iter()
                     .map(|peer| peer.to_string())
                     .collect::<Vec<_>>();
             } else {
@@ -369,7 +369,7 @@ fn read_core_config(toml_value: &Value) -> ConfigResult<Config> {
 
                 whitelist = Some(
                     toml_whitelist
-                        .into_iter()
+                        .iter()
                         .map(|wl| wl.to_string())
                         .collect::<Vec<_>>(),
                 );
