@@ -15,11 +15,14 @@
           overlays = [ (import rust-overlay) ];
         };
 
-      in
-      {
+        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+          extensions = [ "rust-src" ];
+        };
+
+      in {
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            rust-bin.stable.latest.default
+            rustToolchain
 
             pkg-config
             openssl
@@ -29,7 +32,7 @@
           ];
 
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib/";
-          RUST_SRC_PATH = "${pkgs.rust-bin.stable.latest.default}/lib/rustlib/src/rust/library";
+          RUST_SRC_PATH = "${rustToolchain}/lib/rustlib/src/rust/library";
         };
       });
 }
