@@ -106,8 +106,10 @@ pub enum Command {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 #[clap(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LogLevel {
+    Trace,
     Debug,
     Info,
+    Warn,
     Error,
 }
 
@@ -117,8 +119,10 @@ impl fmt::Display for LogLevel {
             f,
             "{}",
             match self {
+                LogLevel::Trace => "trace",
                 LogLevel::Debug => "debug",
                 LogLevel::Info => "info",
+                LogLevel::Warn => "warn",
                 LogLevel::Error => "error",
             }
         )

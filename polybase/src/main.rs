@@ -44,15 +44,18 @@ type Result<T> = std::result::Result<T, AppError>;
 ///   - createing stack driver traces, and
 ///   - for profiling
 async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<()> {
-    let filter = tracing_subscriber::EnvFilter::try_new("info")?
-        .add_directive(format!("{}={}", env!("CARGO_PKG_NAME"), log_level.to_string()).parse()?);
+    // common filter - show only `warn` and above for external crates.
+    let filter = tracing_subscriber::EnvFilter::try_new("warn")?
+        .add_directive(format!("{}={}", "polybase", log_level.to_string()).parse()?)
+        .add_directive(format!("{}={}", "indexer", log_level.to_string()).parse()?)
+        .add_directive(format!("{}={}", "gateway", log_level.to_string()).parse()?)
+        .add_directive(format!("{}={}", "solid", log_level.to_string()).parse()?);
 
-    // TODO - see if the different tracing layers can be resolved into a common type. For now, it
-    // appeears that Format<Pretty> is not compatible with Format<Json> (for instance), and hence
-    // this code duplication.
+    // TODO - see if the different tracing layers can be resolved into a common type.
+    // Format<Pretty> is not compatible with Format<Json> (for instance).
     match log_format {
         LogFormat::Pretty => {
-            let stdout_trace_layer = tracing_subscriber::fmt::layer().pretty();
+            let stdout_trace_layer = tracing_subscriber::fmt::layer();
 
             let subscriber = tracing_subscriber::registry()
                 .with(stdout_trace_layer)
@@ -72,9 +75,9 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
         }
 
         LogFormat::StackDriver => {
-            // TODO - this outputs to stdout for now, but integration with Google Cloud'stdout
-            // loggin suite will need to be done - perhaps in the middleware(?).
-            // Also potentially use OpenTelemetry instead with an exporter for StackDriver traces.
+            // This outputs to stdout for now, but integration with Google Cloud'stdout
+            // logging suite will need to be done.  Also potentially use OpenTelemetry instead
+            // with an exporter for StackDriver traces.
             let stackdriver_layer = tracing_stackdriver::layer();
 
             let subscriber = tracing_subscriber::registry()
@@ -369,8 +372,7 @@ async fn main() -> Result<()> {
                                     let peer_id = from_peer_id.clone();
                                     match chunk {
                                         Ok(chunk) => {
-                                            // TODO - tracing
-                                            debug!(for_ = peer_id.prefix(), chunk_size = chunk.len(), "Sending snapshot chunk");
+                                            tracing::event!(tracing::Level::DEBUG, "for" = peer_id.prefix(), chunk_size = chunk.len(), "Sending snapshot chunk");
                                             if let Some(tx) = network.send(
                                                 &peer_id.into(),
                                                 NetworkEvent::SnapshotChunk { id, chunk: Some(chunk) },
@@ -380,8 +382,7 @@ async fn main() -> Result<()> {
                                             }
                                         },
                                         Err(err) => {
-                                            // TODO - tracing
-                                            error!(for_ = peer_id.prefix(), err = ?err, "Error creating snapshot");
+                                            tracing::event!(tracing::Level::ERROR, "for" = peer_id.prefix(), err = ?err, "Error creating snapshot");
                                             return;
                                         }
                                     }

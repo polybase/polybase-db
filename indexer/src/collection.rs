@@ -502,8 +502,6 @@ impl<'a> Collection<'a> {
         authorization: Authorization,
     ) -> Self {
         Self {
-            // TODO - tracing equivalent
-            //logger: logger.new(slog::o!("collection" => collection_id.clone())),
             store,
             collection_id,
             indexes,
@@ -1323,7 +1321,6 @@ impl<'a> Collection<'a> {
     }
 }
 
-// TODO - tracing for tests.
 #[cfg(test)]
 mod tests {
     use futures::TryStreamExt;

@@ -1198,7 +1198,6 @@ impl Gateway {
     }
 }
 
-// TODO - tracing for tests
 #[cfg(test)]
 mod tests {
     use std::ops::{Deref, DerefMut};

@@ -78,12 +78,6 @@ where
                     {
                         if let Some(metrics_data) = res.response().extensions().get::<MetricsData>()
                         {
-                            // TODO - tracing equivalent
-                            // `tracing` does not provide much support for machine-readable types: https://docs.rs/tracing/latest/tracing/field/index.html#using-valuable
-                            // Using the `valuable` experimental support reequires
-                            // `tracing_unstable`.
-                            // Maybe consider this? https://docs.rs/tracing-serde-structured/latest/tracing_serde_structured/
-                            // IMPORTANT!!!
                             info!(metrics_data = metrics_data.as_value(),);
                         }
                     }
@@ -98,12 +92,10 @@ where
     }
 }
 
-// TODO - tracing for tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use actix_web::{get, test, App, HttpResponse, Responder};
-    use slog::{o, Logger};
 
     #[get("/num-records")]
     async fn dummy_num_recs_returned_handler() -> impl Responder {

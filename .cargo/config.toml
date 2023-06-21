@@ -1,0 +1,4 @@
+[build]
+
+# https://docs.rs/tracing/latest/tracing/field/index.html#using-valuable
+rustflags = ["--cfg", "tracing_unstable"]
