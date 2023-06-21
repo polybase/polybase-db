@@ -6,18 +6,11 @@ use actix_web::{
     Error,
 };
 use futures_util::future::LocalBoxFuture;
-use slog::{crit, error, info, Logger};
 use std::future::{ready, Ready};
+use tracing::{error, info};
+use valuable::Valuable;
 
-pub struct SlogMiddleware {
-    logger: Logger,
-}
-
-impl SlogMiddleware {
-    pub fn new(logger: Logger) -> Self {
-        Self { logger }
-    }
-}
+pub struct SlogMiddleware;
 
 impl<S, B> Transform<S, ServiceRequest> for SlogMiddleware
 where
@@ -32,16 +25,12 @@ where
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ready(Ok(SlogMiddlewareService {
-            service,
-            logger: self.logger.clone(),
-        }))
+        ready(Ok(SlogMiddlewareService { service }))
     }
 }
 
 pub struct SlogMiddlewareService<S> {
     service: S,
-    logger: Logger,
 }
 
 impl<S, B> Service<ServiceRequest> for SlogMiddlewareService<S>
@@ -57,8 +46,6 @@ where
     forward_ready!(service);
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
-        let logger = self.logger.clone();
-
         let fut = self.service.call(req);
 
         Box::pin(async move {
@@ -78,12 +65,12 @@ where
                                 // Reverse the errors (Sentry seems to have a bug)
                                 e.exception.values.reverse();
                                 sentry::capture_event(e);
-                                crit!(logger, "Error: {output}");
+                                error!("Error: {output}");
                             } else {
-                                error!(logger, "Error: {output}");
+                                error!("Error: {output}");
                             }
                         } else {
-                            crit!(logger, "Error: {err:?}");
+                            error!("Error: {err:?}");
                         }
                     }
 
@@ -91,13 +78,19 @@ where
                     {
                         if let Some(metrics_data) = res.response().extensions().get::<MetricsData>()
                         {
-                            info!(logger, "{}", metrics_data; metrics_data);
+                            // TODO - tracing equivalent
+                            // `tracing` does not provide much support for machine-readable types: https://docs.rs/tracing/latest/tracing/field/index.html#using-valuable
+                            // Using the `valuable` experimental support reequires
+                            // `tracing_unstable`.
+                            // Maybe consider this? https://docs.rs/tracing-serde-structured/latest/tracing_serde_structured/
+                            // IMPORTANT!!!
+                            info!(metrics_data = metrics_data.as_value(),);
                         }
                     }
                     Ok(res)
                 }
                 Err(err) => {
-                    error!(logger, "Error occurred: {}", err);
+                    error!("Error occurred: {}", err);
                     Err(err)
                 }
             }
@@ -105,17 +98,12 @@ where
     }
 }
 
+// TODO - tracing for tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use actix_web::{get, test, App, HttpResponse, Responder};
     use slog::{o, Logger};
-
-    fn dummy_logger() -> Logger {
-        let drain = slog::Discard;
-        let logger = slog::Logger::root(drain, o!());
-        logger
-    }
 
     #[get("/num-records")]
     async fn dummy_num_recs_returned_handler() -> impl Responder {
@@ -131,9 +119,7 @@ mod tests {
     #[actix_web::test]
     async fn test_number_of_records_being_returned_metrics_data() {
         let app = App::new()
-            .wrap(SlogMiddleware {
-                logger: dummy_logger(),
-            })
+            .wrap(SlogMiddleware)
             .service(dummy_num_recs_returned_handler);
         let app = test::init_service(app).await;
 

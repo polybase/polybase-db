@@ -20,6 +20,7 @@ use once_cell::sync::Lazy;
 use polylang::stableast;
 use prost::Message;
 use serde::{Deserialize, Serialize};
+use tracing::{error, warn};
 
 pub type Result<T> = std::result::Result<T, CollectionError>;
 
@@ -212,7 +213,6 @@ pub(crate) struct Authorization {
 
 #[derive(Clone)]
 pub struct Collection<'a> {
-    logger: slog::Logger,
     store: &'a store::Store,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
@@ -496,14 +496,14 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
 
 impl<'a> Collection<'a> {
     fn new(
-        logger: slog::Logger,
         store: &'a store::Store,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
         authorization: Authorization,
     ) -> Self {
         Self {
-            logger: logger.new(slog::o!("collection" => collection_id.clone())),
+            // TODO - tracing equivalent
+            //logger: logger.new(slog::o!("collection" => collection_id.clone())),
             store,
             collection_id,
             indexes,
@@ -511,13 +511,8 @@ impl<'a> Collection<'a> {
         }
     }
 
-    pub(crate) async fn load(
-        logger: slog::Logger,
-        store: &'a store::Store,
-        id: String,
-    ) -> Result<Collection<'_>> {
+    pub(crate) async fn load(store: &'a store::Store, id: String) -> Result<Collection<'_>> {
         let collection_collection = Self::new(
-            logger.clone(),
             store,
             "Collection".to_string(),
             vec![
@@ -628,7 +623,6 @@ impl<'a> Collection<'a> {
         let is_call_all = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
         Ok(Self {
-            logger: logger.clone(),
             store,
             collection_id: id.to_string(),
             indexes,
@@ -672,7 +666,7 @@ impl<'a> Collection<'a> {
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.logger.clone(), self.store, "Collection".to_owned())
+        let Some(record) = Self::load(self.store, "Collection".to_owned())
             .await?
             .get(self.collection_id.clone(), None)
             .await? else {
@@ -798,12 +792,8 @@ impl<'a> Collection<'a> {
             }
 
             for foreign_record_reference in foreign_record_references {
-                let collection = Collection::load(
-                    self.logger.clone(),
-                    self.store,
-                    foreign_record_reference.collection_id,
-                )
-                .await?;
+                let collection =
+                    Collection::load(self.store, foreign_record_reference.collection_id).await?;
 
                 let Some(record) = collection
                     .get(foreign_record_reference.id, Some(user))
@@ -869,12 +859,8 @@ impl<'a> Collection<'a> {
                         }
                     }
                     RecordValue::ForeignRecordReference(fr) => {
-                        let collection = Collection::load(
-                            self_col.logger.clone(),
-                            self_col.store,
-                            fr.collection_id.clone(),
-                        )
-                        .await?;
+                        let collection =
+                            Collection::load(self_col.store, fr.collection_id.clone()).await?;
 
                         let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
                             return Ok(false);
@@ -1016,7 +1002,7 @@ impl<'a> Collection<'a> {
         }
 
         let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.logger.clone(), self.store, id.clone()).await {
+            match Collection::load(self.store, id.clone()).await {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -1052,7 +1038,7 @@ impl<'a> Collection<'a> {
                 #[allow(clippy::unwrap_used)]
                 let old_value = old_value.unwrap();
 
-                let target_col = Collection::load(self.logger.clone(), self.store, id).await?;
+                let target_col = Collection::load(self.store, id).await?;
 
                 target_col.rebuild(collection_before, &old_value).await?;
             }
@@ -1096,7 +1082,7 @@ impl<'a> Collection<'a> {
             id: match data_key.serialize() {
                 Ok(data) => data,
                 Err(e) => {
-                    slog::crit!(self.logger, "failed to serialize data key: {e}");
+                    error!("failed to serialize data key: {e}");
                     return;
                 }
             },
@@ -1117,11 +1103,15 @@ impl<'a> Collection<'a> {
             }
             .await
             {
-                slog::crit!(
-                    self.logger,
-                    "indexing failure: {indexing_failure}";
-                    "record" => record_id,
-                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
+                error!(
+                    record = record_id,
+                    index = index
+                        .fields
+                        .iter()
+                        .map(|f| f.path.join("."))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    "indexing failure: {indexing_failure}"
                 );
             }
         }
@@ -1143,11 +1133,15 @@ impl<'a> Collection<'a> {
             }
             .await
             {
-                slog::crit!(
-                    self.logger,
-                    "failed to delete index: {deindexing_failure}";
-                    "record" => record_id,
-                    "index" => index.fields.iter().map(|f| f.path.join(".")).collect::<Vec<_>>().join(", ")
+                error!(
+                    record = record_id,
+                    index = index
+                        .fields
+                        .iter()
+                        .map(|f| f.path.join("."))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    "failed to delete index: {deindexing_failure}"
                 );
             }
         }
@@ -1253,10 +1247,7 @@ impl<'a> Collection<'a> {
                         Ok(true) => Some(Ok((cursor, record))),
                         Err(e) => {
                             // TODO: should we propagate this error?
-                            slog::warn!(
-                                self.logger,
-                                "failed to check if user can read record: {e:#?}",
-                            );
+                            warn!("failed to check if user can read record: {e:#?}",);
                             None
                         }
                     }
@@ -1274,8 +1265,7 @@ impl<'a> Collection<'a> {
         old_collection: Collection<'async_recursion>,
         old_collection_record: &RecordRoot,
     ) -> Result<()> {
-        let collection_collection =
-            Collection::load(self.logger.clone(), self.store, "Collection".to_string()).await?;
+        let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;
@@ -1333,25 +1323,19 @@ impl<'a> Collection<'a> {
     }
 }
 
+// TODO - tracing for tests.
 #[cfg(test)]
 mod tests {
     use futures::TryStreamExt;
-    use slog::Drain;
 
     use crate::store::tests::TestStore;
 
     use super::*;
 
-    fn logger() -> slog::Logger {
-        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
-        let drain = slog_term::FullFormat::new(decorator).build().fuse();
-        slog::Logger::root(drain, slog::o!())
-    }
-
     #[tokio::test]
     async fn test_collection_collection_load() {
         let store = TestStore::default();
-        let collection = Collection::load(logger(), &store, "Collection".to_string())
+        let collection = Collection::load(&store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1379,7 +1363,7 @@ mod tests {
         store: &'a TestStore,
         ast: stableast::Root<'_>,
     ) -> Vec<Collection<'a>> {
-        let collection_collection = Collection::load(logger(), store, "Collection".to_string())
+        let collection_collection = Collection::load(store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1411,7 +1395,7 @@ mod tests {
 
             store.commit().await.unwrap();
 
-            collections.push(Collection::load(logger(), store, id).await.unwrap());
+            collections.push(Collection::load(store, id).await.unwrap());
         }
 
         collections
@@ -1507,7 +1491,6 @@ mod tests {
     async fn test_collection_set_get() {
         let store = TestStore::default();
         let collection = Collection::new(
-            logger(),
             &store,
             "test".to_string(),
             vec![],
@@ -1540,7 +1523,7 @@ mod tests {
         let store = TestStore::default();
 
         {
-            let collection = Collection::load(logger(), &store, "Collection".to_owned())
+            let collection = Collection::load(&store, "Collection".to_owned())
                 .await
                 .unwrap();
             collection
@@ -1602,7 +1585,7 @@ mod tests {
 
         store.commit().await.unwrap();
 
-        let collection = Collection::load(logger(), &store, "test/test".to_owned())
+        let collection = Collection::load(&store, "test/test".to_owned())
             .await
             .unwrap();
 

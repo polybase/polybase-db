@@ -445,7 +445,6 @@ pub fn create_rpc_server(
     db: Arc<Db>,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
-    logger: slog::Logger,
 ) -> Result<Server, std::io::Error> {
     Ok(HttpServer::new(move || {
         let cors = Cors::permissive();
@@ -456,7 +455,7 @@ pub fn create_rpc_server(
                 whitelist: Arc::clone(&whitelist),
                 restrict_namespaces: Arc::clone(&restrict_namespaces),
             }))
-            .wrap(SlogMiddleware::new(logger.clone()))
+            .wrap(SlogMiddleware)
             .wrap(cors)
             .service(root)
             .service(health)

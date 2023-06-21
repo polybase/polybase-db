@@ -94,17 +94,17 @@ pub struct Db {
 }
 
 impl Db {
-    pub fn new(root_dir: String, logger: slog::Logger, config: DbConfig) -> Result<Self> {
+    pub fn new(root_dir: String, config: DbConfig) -> Result<Self> {
         let (sender, receiver) = mpsc::channel::<CallTxn>(100);
 
         // Create the indexer
         #[allow(clippy::unwrap_used)]
         let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
-        let indexer = Indexer::new(logger.clone(), indexer_dir)?;
+        let indexer = Indexer::new(indexer_dir)?;
 
         Ok(Self {
             mempool: Mempool::new(),
-            gateway: gateway::initialize(logger.clone()),
+            gateway: gateway::initialize(),
             indexer,
             sender: AsyncMutex::new(sender),
             receiver: AsyncMutex::new(receiver),

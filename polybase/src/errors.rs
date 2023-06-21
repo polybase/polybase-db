@@ -53,4 +53,10 @@ pub enum AppError {
         "namespace is invalid, must be in format pk/<public_key_hex>/<CollectionName> got {0}"
     )]
     InvalidNamespace(String),
+
+    #[error("tracing parse error")]
+    TracingParse(#[from] tracing_subscriber::filter::ParseError),
+
+    #[error("error setting tracing global subscriber")]
+    TracingSetGlobalDefault(#[from] tracing::subscriber::SetGlobalDefaultError),
 }
