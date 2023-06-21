@@ -4,6 +4,9 @@ metadata:
   name: {{ .Release.Name | quote }}
   namespace: {{ .Release.Namespace | quote }}
   labels: {{- include "polybase.labels" . | nindent 4 }}
+  {{- if .Values.labels }}
+  {{- toYaml .Values.labels | nindent 4}}
+  {{- end }}
   {{- if .Values.commonAnnotations }}
   annotations: {{- include "polybase.render" ( dict "value" .Values.commonAnnotations "context" $ ) | nindent 4 }}
   {{- end }}
