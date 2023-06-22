@@ -129,6 +129,7 @@ impl Db {
     }
 
     /// Gets a record from the database
+    #[tracing::instrument(skip(self))]
     pub async fn get_without_auth_check(
         &self,
         collection_id: String,
@@ -140,6 +141,7 @@ impl Db {
         record.map_err(|e| Error::Indexer(e.into()))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get(
         &self,
         collection_id: String,
@@ -150,6 +152,7 @@ impl Db {
         Ok(collection.get(record_id, auth.as_ref()).await?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_wait(
         &self,
         collection_id: String,
@@ -177,6 +180,7 @@ impl Db {
         })
     }
 
+    #[tracing::instrument(skip(self, query))]
     pub async fn list(
         &self,
         collection_id: String,
@@ -195,6 +199,7 @@ impl Db {
         records
     }
 
+    #[tracing::instrument(skip(self, query))]
     pub async fn list_wait(
         &self,
         collection_id: String,
@@ -223,6 +228,7 @@ impl Db {
     }
 
     /// Applies a call txn
+    #[tracing::instrument(skip(self))]
     pub async fn call(&self, txn: CallTxn) -> Result<String> {
         let (record_id, changes) = self.validate_call(&txn).await?;
         let hash = txn.hash()?;
@@ -236,6 +242,7 @@ impl Db {
         Ok(record_id)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn add_txn(&self, txn: CallTxn) -> Result<String> {
         let (record_id, changes) = self.validate_call(&txn).await?;
         let hash = txn.hash()?;
@@ -310,6 +317,7 @@ impl Db {
         Ok((output_record_id, output_records.into_iter().collect()))
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
         // TODO: check txns do not affect the same record
         self.mempool
@@ -325,6 +333,7 @@ impl Db {
             .collect::<Result<Vec<_>>>()
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn lease(&self, manifest: &proposal::ProposalManifest) -> Result<()> {
         let txns = &manifest.txns;
         for txn in txns {
@@ -341,6 +350,7 @@ impl Db {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let txns = &manifest.txns;
         let mut keys = vec![];
@@ -380,6 +390,7 @@ impl Db {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn commit_txn(&self, txn: CallTxn) -> Result<()> {
         let CallTxn {
             collection_id,
@@ -445,6 +456,7 @@ impl Db {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn set_manifest(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let b = bincode::serialize(&manifest)?;
         let value = indexer::RecordValue::Bytes(b);
@@ -456,6 +468,7 @@ impl Db {
             .await?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_manifest(&self) -> Result<Option<proposal::ProposalManifest>> {
         let record = self.indexer.get_system_key("manifest".to_string()).await?;
         let value = match record.and_then(|mut r| r.remove("manifest")) {
@@ -466,6 +479,7 @@ impl Db {
         Ok(Some(manifest))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn delete(
         &self,
         _: [u8; 32],

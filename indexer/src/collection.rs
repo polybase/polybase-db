@@ -307,6 +307,7 @@ fn collection_ast_from_root<'a>(
     })
 }
 
+#[tracing::instrument]
 pub fn collection_ast_from_json<'a>(
     ast_json: &'a str,
     collection_name: &str,
@@ -319,6 +320,7 @@ pub fn collection_ast_from_json<'a>(
     Ok(collection_ast)
 }
 
+#[tracing::instrument]
 pub fn validate_schema_change(
     collection_name: &str,
     old_ast: stableast::Root,
@@ -334,6 +336,7 @@ pub fn validate_schema_change(
     Ok(())
 }
 
+#[tracing::instrument]
 pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
     let (namespace, name) = if let Some(RecordValue::String(id)) = record.get("id") {
         let Some((namespace, name)) = id.rsplit_once('/') else {
@@ -509,6 +512,7 @@ impl<'a> Collection<'a> {
         }
     }
 
+    #[tracing::instrument(skip(store))]
     pub(crate) async fn load(store: &'a store::Store, id: String) -> Result<Collection<'_>> {
         let collection_collection = Self::new(
             store,
@@ -709,6 +713,7 @@ impl<'a> Collection<'a> {
         &self.collection_id[0..slash_index]
     }
 
+    #[tracing::instrument(skip(self))]
     #[async_recursion]
     pub(crate) async fn user_can_read(
         &self,
@@ -818,6 +823,7 @@ impl<'a> Collection<'a> {
     }
 
     /// Returns true if the user is one of the delegates for the record
+    #[tracing::instrument(skip(self, record))]
     #[async_recursion]
     pub async fn has_delegate_access(
         &self,
@@ -916,6 +922,7 @@ impl<'a> Collection<'a> {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
@@ -936,6 +943,7 @@ impl<'a> Collection<'a> {
         }))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn update_record_metadata(
         &self,
         record_id: String,
@@ -966,6 +974,7 @@ impl<'a> Collection<'a> {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
         let record_metadata_key = keys::Key::new_system_data(format!(
             "{}/records/{}/metadata",
@@ -986,6 +995,7 @@ impl<'a> Collection<'a> {
         Ok(Some(RecordMetadata { updated_at }))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn set(&self, id: String, value: &RecordRoot) -> Result<()> {
         match value.get("id") {
             Some(rv) => match rv {
@@ -1062,6 +1072,7 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
         if self.collection_id == "Collection" && id == "Collection" {
             return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
@@ -1145,6 +1156,7 @@ impl<'a> Collection<'a> {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn delete(&self, id: String) -> Result<()> {
         let Some(record) = self.get_without_auth_check(id.clone()).await? else {
             return Ok(());
@@ -1163,6 +1175,7 @@ impl<'a> Collection<'a> {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn list(
         &'a self,
         ListQuery {

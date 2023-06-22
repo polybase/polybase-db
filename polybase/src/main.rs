@@ -75,9 +75,8 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
         }
 
         LogFormat::StackDriver => {
-            // This outputs to stdout for now, but integration with Google Cloud'stdout
-            // logging suite will need to be done.  Also potentially use OpenTelemetry instead
-            // with an exporter for StackDriver traces.
+            // This outputs to stdout for now, but integration with Google Cloud's logging suite will need to be done.
+            // Also potentially use OpenTelemetry instead with an exporter for StackDriver traces.
             let stackdriver_layer = tracing_stackdriver::layer();
 
             let subscriber = tracing_subscriber::registry()
@@ -181,6 +180,7 @@ async fn main() -> Result<()> {
             }
         }
     };
+
     let local_peer_id = PeerId::from(keypair.public());
 
     // Log the peer id

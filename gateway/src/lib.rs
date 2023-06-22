@@ -552,6 +552,7 @@ fn get_collection_ast<'a>(
 }
 
 impl Gateway {
+    #[tracing::instrument(skip(self, indexer))]
     pub async fn call(
         &self,
         indexer: &Indexer,
