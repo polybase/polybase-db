@@ -7,7 +7,7 @@ labels:
    kube-monkey/kill-mode: "random-max-percent"
    kube-monkey/kill-value: '60'
 
-replicaCount: 5
+replicaCount: 3
 
 image:
    registry: gcr.io
