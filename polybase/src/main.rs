@@ -45,11 +45,11 @@ type Result<T> = std::result::Result<T, AppError>;
 ///   - for profiling
 async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<()> {
     // common filter - show only `warn` and above for external crates.
-    let filter = tracing_subscriber::EnvFilter::try_new("warn")?
-        .add_directive(format!("{}={}", "polybase", log_level.to_string()).parse()?)
-        .add_directive(format!("{}={}", "indexer", log_level.to_string()).parse()?)
-        .add_directive(format!("{}={}", "gateway", log_level.to_string()).parse()?)
-        .add_directive(format!("{}={}", "solid", log_level.to_string()).parse()?);
+    let mut filter = tracing_subscriber::EnvFilter::try_new("warn")?;
+
+    for proj_crate in util::get_workspace_members()? {
+        filter = filter.add_directive(format!("{proj_crate}={}", log_level.to_string()).parse()?);
+    }
 
     // TODO - see if the different tracing layers can be resolved into a common type.
     // Format<Pretty> is not compatible with Format<Json> (for instance).

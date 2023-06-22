@@ -59,4 +59,7 @@ pub enum AppError {
 
     #[error("error setting tracing global subscriber")]
     TracingSetGlobalDefault(#[from] tracing::subscriber::SetGlobalDefaultError),
+
+    #[error("error extract the workspace members list")]
+    CargoMetadata(#[from] cargo_metadata::Error),
 }

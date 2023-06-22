@@ -1,6 +1,7 @@
 extern crate chrono;
 
 use crate::errors::Result;
+use cargo_metadata::MetadataCommand;
 use chrono::prelude::*;
 use libp2p::identity;
 use rand::RngCore;
@@ -48,4 +49,23 @@ pub(crate) fn unix_now() -> usize {
     let now = Utc::now();
     let timestamp = now.timestamp();
     timestamp as usize
+}
+
+/// Return the names of `cargo` projects in the workspace.
+pub(crate) fn get_workspace_members() -> Result<Vec<String>> {
+    let metadata = MetadataCommand::new().no_deps().exec()?;
+    let workspace_members = metadata.workspace_members;
+
+    let member_names = workspace_members
+        .iter()
+        .filter_map(|member_id| {
+            metadata
+                .packages
+                .iter()
+                .find(|pkg| pkg.id == *member_id)
+                .map(|pkg| pkg.name.clone())
+        })
+        .collect();
+
+    Ok(member_names)
 }
