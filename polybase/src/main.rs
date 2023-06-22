@@ -48,7 +48,7 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
     let mut filter = tracing_subscriber::EnvFilter::try_new("warn")?;
 
     for proj_crate in util::get_workspace_members()? {
-        filter = filter.add_directive(format!("{proj_crate}={}", log_level.to_string()).parse()?);
+        filter = filter.add_directive(format!("{proj_crate}={}", log_level).parse()?);
     }
 
     // TODO - see if the different tracing layers can be resolved into a common type.

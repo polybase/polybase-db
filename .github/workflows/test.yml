@@ -3,7 +3,7 @@ on: [push]
 name: Test
 
 env:
-  RUSTFLAGS: "-Dwarnings"
+  RUSTFLAGS: "-Dwarnings --cfg tracing_unstable"
 
 jobs:
   unit-test:
