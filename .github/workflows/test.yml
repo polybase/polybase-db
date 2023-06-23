@@ -41,7 +41,7 @@ jobs:
       
       - name: Install deps
         working-directory: polybase-ts
-        run: yarn install && yarn build
+        run: yarn install
 
   unit-test:
     name: Unit Tests
