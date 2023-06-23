@@ -2,8 +2,8 @@
 
 use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
-use slog::info;
 use std::{borrow::Cow, collections::HashMap};
+use tracing::info;
 
 use indexer::{
     collection::validate_collection_record, Converter, FieldWalker, Indexer, IndexerError,
@@ -119,15 +119,14 @@ pub struct FunctionOutput {
 pub struct Gateway {
     // This is so the consumer of this library can't create a Gateway without calling initialize
     _x: (),
-    logger: slog::Logger,
 }
 
-pub fn initialize(logger: slog::Logger) -> Gateway {
+pub fn initialize() -> Gateway {
     let platform = v8::new_default_platform(0, false).make_shared();
     v8::V8::initialize_platform(platform);
     v8::V8::initialize();
 
-    Gateway { _x: (), logger }
+    Gateway { _x: () }
 }
 
 async fn dereference_args(
@@ -553,6 +552,7 @@ fn get_collection_ast<'a>(
 }
 
 impl Gateway {
+    #[tracing::instrument(skip(self, indexer))]
     pub async fn call(
         &self,
         indexer: &Indexer,
@@ -688,16 +688,15 @@ impl Gateway {
             );
 
             info!(
-                self.logger,
-                "function output";
-                "collection_id" => &collection_id,
-                "collection_ast" => collection_ast_json,
-                "collection_code" => &collection_polylang_code,
-                "function_name" => function_name,
-                "instance" => serde_json::to_string(&instance_json).unwrap_or_default(),
-                "args" => serde_json::to_string(&args).unwrap_or_default(),
-                "auth" => serde_json::to_string(&auth).unwrap_or_default(),
-                "output" => serde_json::to_string(&output.as_ref().map_err(|e| e.to_string())).unwrap_or_default(),
+                collection_id = &collection_id,
+                collection_ast = collection_ast_json,
+                collection_code = &collection_polylang_code,
+                function_name = function_name,
+                instance = serde_json::to_string(&instance_json).unwrap_or_default(),
+                args = serde_json::to_string(&args).unwrap_or_default(),
+                auth = serde_json::to_string(&auth).unwrap_or_default(),
+                output = serde_json::to_string(&output.as_ref().map_err(|e| e.to_string())).unwrap_or_default(),
+                "function output"
             );
 
             let mut output = output?;
@@ -1204,15 +1203,7 @@ impl Gateway {
 mod tests {
     use std::ops::{Deref, DerefMut};
 
-    use slog::Drain;
-
     use super::*;
-
-    fn logger() -> slog::Logger {
-        let decorator = slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
-        let drain = slog_term::FullFormat::new(decorator).build().fuse();
-        slog::Logger::root(drain, slog::o!())
-    }
 
     pub(crate) struct TestIndexer(Option<Indexer>);
 
@@ -1224,7 +1215,7 @@ mod tests {
                 rand::random::<u32>()
             ));
 
-            Self(Some(Indexer::new(logger(), path).unwrap()))
+            Self(Some(Indexer::new(path).unwrap()))
         }
     }
 
@@ -1301,7 +1292,7 @@ mod tests {
 
         indexer.commit().await.unwrap();
 
-        let gateway = initialize(logger());
+        let gateway = initialize();
         let changes = gateway
             .call(
                 &indexer,

@@ -74,6 +74,7 @@ impl Store {
         })
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) async fn commit(&self) -> Result<()> {
         // let batch = Arc::clone(&self.batch);
         let db = Arc::clone(&self.db);
@@ -88,6 +89,7 @@ impl Store {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
         match (key, value) {
             (Key::Data { .. }, Value::DataValue(_)) => {}
@@ -107,6 +109,7 @@ impl Store {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) async fn get(&self, key: &Key<'_>) -> Result<Option<RecordRoot>> {
         let key = key.serialize()?;
         let db = Arc::clone(&self.db);
@@ -118,6 +121,7 @@ impl Store {
         .await?
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) async fn delete(&self, key: &Key<'_>) -> Result<()> {
         let key = key.serialize()?;
         let state = Arc::clone(&self.state);
@@ -129,6 +133,7 @@ impl Store {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) fn list(
         &self,
         lower_bound: &Key,
@@ -155,6 +160,7 @@ impl Store {
             }))
     }
 
+    #[tracing::instrument(skip(self))]
     pub(crate) fn destroy(self) -> Result<()> {
         let path = self.db.path().to_path_buf();
         drop(self.db);
@@ -175,11 +181,13 @@ impl Store {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn snapshot(&self, chunk_size: usize) -> SnapshotIterator {
         SnapshotIterator::new(&self.db, chunk_size)
     }
 
     // TODO:
+    #[tracing::instrument(skip(self))]
     pub fn restore(&self, chunk: SnapshotChunk) -> Result<()> {
         let mut batch = WriteBatch::default();
         for entry in chunk {

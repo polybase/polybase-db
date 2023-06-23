@@ -212,6 +212,7 @@ struct ListResponse {
     cursor: Cursors,
 }
 
+#[tracing::instrument(skip(state, body))]
 #[get("/{collection}/records")]
 async fn get_records(
     req: HttpRequest,
@@ -330,6 +331,7 @@ struct FunctionResponse {
     data: serde_json::Value,
 }
 
+#[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records")]
 async fn post_record(
     state: web::Data<RouteState>,
@@ -374,6 +376,7 @@ async fn post_record(
     }))
 }
 
+#[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records/{record}/call/{function}")]
 async fn call_function(
     state: web::Data<RouteState>,
@@ -424,6 +427,7 @@ struct StatusResponse {
     peers: usize,
 }
 
+#[tracing::instrument(skip(state))]
 #[get("/v0/status")]
 async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
     let manifest = state.db.get_manifest().await?;
@@ -440,12 +444,12 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
     }))
 }
 
+#[tracing::instrument(skip(db))]
 pub fn create_rpc_server(
     rpc_laddr: String,
     db: Arc<Db>,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
-    logger: slog::Logger,
 ) -> Result<Server, std::io::Error> {
     Ok(HttpServer::new(move || {
         let cors = Cors::permissive();
@@ -456,7 +460,7 @@ pub fn create_rpc_server(
                 whitelist: Arc::clone(&whitelist),
                 restrict_namespaces: Arc::clone(&restrict_namespaces),
             }))
-            .wrap(SlogMiddleware::new(logger.clone()))
+            .wrap(SlogMiddleware)
             .wrap(cors)
             .service(root)
             .service(health)
