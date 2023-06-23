@@ -19,6 +19,7 @@ WORKDIR /build
 # Plan the build
 FROM workspace AS planner
 
+COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.lock ./
 COPY Cargo.toml ./
 COPY polybase ./polybase/
@@ -38,6 +39,7 @@ COPY --from=planner /recipe.json /recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo chef cook --recipe-path /recipe.json $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)
 
+COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.lock ./
 COPY Cargo.toml ./
 COPY polybase ./polybase/
