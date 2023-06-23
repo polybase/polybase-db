@@ -22,6 +22,26 @@ jobs:
       - name: Build project
         run: cargo build
 
+  node-setup:
+    name: Node Setup
+    runs-on: ubuntu-latest-16-cores
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          path: polybase-ts
+          repository: polybase/polybase-ts
+          token: ${{ secrets.ADMIN_TOKEN }}
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18.x
+          cache: 'yarn'
+          cache-dependency-path: ./polybase-ts/yarn.lock
+      
+      - name: Install deps
+        working-directory: polybase-ts
+        run: yarn install && yarn build
 
   unit-test:
     name: Unit Tests
@@ -43,7 +63,7 @@ jobs:
   e2e-test:
     name: E2E Tests
     runs-on: ubuntu-latest-16-cores
-    needs: cargo-build
+    needs: [cargo-build, node-setup]
     steps:
       - name: Checkout
         uses: actions/checkout@v3
