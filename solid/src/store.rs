@@ -67,6 +67,14 @@ impl ProposalStore {
         self.proposals.contains(hash)
     }
 
+    pub fn proposals_from(&self, i: usize) -> Vec<ProposalManifest> {
+        self.proposals
+            .proposals_from(i)
+            .iter()
+            .map(|p| p.manifest.clone())
+            .collect()
+    }
+
     pub fn confirmed_proposals_from(&self, i: usize) -> Vec<ProposalManifest> {
         self.proposals
             .confirmed_proposals_from(i)
