@@ -3,7 +3,7 @@
 use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
-use tracing::info;
+use tracing::debug;
 
 use indexer::{
     collection::validate_collection_record, Converter, FieldWalker, Indexer, IndexerError,
@@ -687,7 +687,7 @@ impl Gateway {
                 auth,
             );
 
-            info!(
+            debug!(
                 collection_id = &collection_id,
                 collection_ast = collection_ast_json,
                 collection_code = &collection_polylang_code,

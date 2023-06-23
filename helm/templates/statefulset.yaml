@@ -98,8 +98,6 @@ spec:
             value: {{ .Values.env | quote }}
           - name: NETWORK_LADDR
             value: "/ip4/0.0.0.0/tcp/5001"
-          - name: LOG_LEVEL
-            value: "DEBUG"
           - name: LOG_FORMAT
             value: "JSON"
             {{- if .Values.extraEnvVars }}
