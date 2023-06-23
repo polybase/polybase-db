@@ -34,7 +34,7 @@ use std::{
     },
 };
 
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 
 type Result<T> = std::result::Result<T, AppError>;
@@ -328,12 +328,12 @@ async fn main() -> Result<()> {
                         // don't already have an ongoing snapshot in progress
                         NetworkEvent::SnapshotOffer{ id } => {
                             if snapshot_from.is_some() {
-                                debug!(peer_id = from_peer_id.prefix(),  id = id, "Already have snapshot in progress, ignoring offer");
+                                info!(peer_id = from_peer_id.prefix(),  id = id, "Already have snapshot in progress, ignoring offer");
                                 continue;
                             }
 
                             if db.is_healthy() {
-                                debug!(peer_id = from_peer_id.prefix(), id = id, "Peer offered snapshot, ignoring as already healthy");
+                                info!(peer_id = from_peer_id.prefix(), id = id, "Peer offered snapshot, ignoring as already healthy");
                                 continue;
                             }
 

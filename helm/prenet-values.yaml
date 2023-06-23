@@ -20,6 +20,8 @@ persistence:
    size: 20Gi
 
 extraEnvVars:
+   - name: LOG_LEVEL
+     value: "DEBUG"
    - name: RESTRICT_NAMESPACES
      value: "true"
    - name: PEERS

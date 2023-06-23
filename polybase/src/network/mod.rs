@@ -89,13 +89,34 @@ impl Network {
                         requests.insert(request_id, tx);
                     }
                     event = swarm.select_next_some() => match event {
-                        SwarmEvent::ConnectionEstablished { peer_id, .. } => {
-                            info!(peer_id = ?peer_id, "Connection established");
+                        SwarmEvent::NewListenAddr { address, .. } => {
+                            info!(addr = ?address, "Listening on");
+                        }
+                        SwarmEvent::Dialing(peer_id) => {
+                            info!(peer_id = ?peer_id, "Dialing peer");
+                        }
+                        SwarmEvent::ConnectionEstablished { peer_id, established_in, .. } => {
+                            info!(peer_id = ?peer_id, established_in = ?established_in, "Connection established");
                             shared.add_peer(peer_id);
                         }
-                        SwarmEvent::ConnectionClosed { peer_id, .. } => {
-                            info!(peer_id = ?peer_id, "Connection closed");
+                        SwarmEvent::ConnectionClosed { peer_id, endpoint, num_established, cause } => {
+                            info!(peer_id = ?peer_id, num_established = num_established, endpoint = ?endpoint, cause = ?cause, "Connection closed");
                             shared.remove_peer(&peer_id);
+                        }
+                        SwarmEvent::IncomingConnection { local_addr, send_back_addr } => {
+                            info!(local_addr = ?local_addr, send_back_addr = ?send_back_addr, "Incoming connection");
+                        }
+                        SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error } => {
+                            error!(local_addr = ?local_addr, send_back_addr = ?send_back_addr, error = ?error, "Incoming connection error");
+                        }
+                        SwarmEvent::OutgoingConnectionError { peer_id, error } => {
+                            error!(peer_id = ?peer_id, error = ?error, "Outgoing connection error");
+                        }
+                        SwarmEvent::ListenerClosed { listener_id, addresses, reason } => {
+                            error!(listener_id = ?listener_id, addresses = ?addresses, reason = ?reason, "Listener closed");
+                        }
+                        SwarmEvent::ListenerError { listener_id, error } => {
+                            error!(listener_id = ?listener_id, error = ?error, "Listener error");
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::Message { peer, message })) => {
                             match message {
@@ -122,9 +143,6 @@ impl Network {
                            }
                         }
                         SwarmEvent::Behaviour(BehaviourEvent::Rr(request_response::Event::ResponseSent { .. })) => {}
-                        SwarmEvent::NewListenAddr { address, .. } => {
-                            info!(addr = ?address, "Listening on");
-                        }
                         event => {
                             debug!(event = ?event, "Swarm event");
                         }
