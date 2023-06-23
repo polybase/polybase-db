@@ -232,6 +232,11 @@ impl ProposalStore {
             return None;
         }
 
+        // We've already sent a higher skip, so we should ignore this accept
+        if *accept_height == self.accepts_sent_height && self.accepts_sent > *skips + 1 {
+            return None;
+        }
+
         // Update accepts sent if we have received a higher skip, so the network eventually
         // converges on the same skip
         if self.accepts_sent_height == *accept_height && *skips > self.accepts_sent {
@@ -923,6 +928,47 @@ mod test {
                 max_seen_height: 1,
                 accepts_sent: 0
             }),
+        );
+    }
+
+    #[test]
+    fn test_add_accept_earlier_skip() {
+        let [p1, _, _] = create_peers();
+        let mut store = ProposalStore::genesis(p1, create_peers().to_vec(), 100);
+        let genesis_hash = ProposalManifest::genesis(create_peers().to_vec()).hash();
+
+        // Node has already skipped to 3
+        store.skip(); // skip=0
+        store.skip(); // skip=1
+        store.skip(); // skip=2
+
+        // This skip is behind us, so we should ignore it
+        assert_eq!(
+            store.add_accept(
+                &ProposalAccept {
+                    leader_id: peer(1),
+                    proposal_hash: genesis_hash.clone(),
+                    height: 0,
+                    skips: 1,
+                },
+                &peer(1),
+            ),
+            None
+        );
+
+        // Now we have a majority accept, but we've already skipped
+        // past here so we have to ignore it
+        assert_eq!(
+            store.add_accept(
+                &ProposalAccept {
+                    leader_id: peer(1),
+                    proposal_hash: genesis_hash,
+                    height: 0,
+                    skips: 1,
+                },
+                &peer(2),
+            ),
+            None
         );
     }
 
