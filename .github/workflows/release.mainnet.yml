@@ -8,6 +8,7 @@ env:
   GCLOUD_PROJECT: polybase-mainnet
   GKE_CLUSTER: mainnet
   GKE_ZONE: us-central1
+  RUSTFLAGS: "--cfg tracing_unstable"
 
 jobs:
   setup-build-publish-deploy:

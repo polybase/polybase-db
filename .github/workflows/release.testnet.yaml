@@ -9,6 +9,7 @@ env:
   GCLOUD_PROJECT: polybase-testnet
   GKE_CLUSTER: testnet
   GKE_ZONE: us-central1
+  RUSTFLAGS: "--cfg tracing_unstable"
 
 jobs:
   setup-build-publish-deploy:
