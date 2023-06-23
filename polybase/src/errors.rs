@@ -49,10 +49,11 @@ pub enum AppError {
     #[error("public key not included in allowed whitelist")]
     Whitelist,
 
-    #[error(
-        "namespace is invalid, must be in format pk/<public_key_hex>/<CollectionName> got {0}"
-    )]
+    #[error("namespace is invalid, must be in format pk/<public_key_hex>/<namespace> got {0}")]
     InvalidNamespace(String),
+
+    #[error("namespace public key is invalid, expected {0} got {1}")]
+    InvalidNamespacePublicKey(String, String),
 
     #[error("tracing parse error")]
     TracingParse(#[from] tracing_subscriber::filter::ParseError),
