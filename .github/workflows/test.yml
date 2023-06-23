@@ -6,13 +6,27 @@ env:
   RUSTFLAGS: "-Dwarnings --cfg tracing_unstable"
 
 jobs:
+  cargo-build:
+    name: Cargo Build
+    runs-on: ubuntu-latest-16-cores
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: |
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Build project
+        run: cargo build
+
+
   unit-test:
     name: Unit Tests
     runs-on: ubuntu-latest-16-cores
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
+    needs: cargo-build
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -29,10 +43,7 @@ jobs:
   e2e-test:
     name: E2E Tests
     runs-on: ubuntu-latest-16-cores
-    permissions:
-      contents: read
-      id-token: write
-      packages: write
+    needs: cargo-build
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -56,9 +67,6 @@ jobs:
           cache: 'yarn'
           cache-dependency-path: ./polybase-ts/yarn.lock
 
-      - name: Build server
-        run: cargo build --bin polybase
-
       - name: Run server
         run: cargo run --bin polybase &
 
@@ -73,6 +81,7 @@ jobs:
   clippy:
     name: Clippy Check
     runs-on: ubuntu-latest-16-cores
+    needs: cargo-build
     steps:
       - uses: actions/checkout@v3
       
