@@ -283,26 +283,29 @@ async fn main() -> Result<()> {
                             }
 
                             if height + config.block_cache_count > solid.height() {
-                                info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending proposals");
-                                if solid.min_proposal_height() > height {
+                                // height + 1 as, peer already has block at height
+                                if solid.min_proposal_height() > height + 1 {
                                     // We don't have all the proposals needed for this peer, send Snapshot offer to peer
+                                    info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending snapshot offer");
                                     network.send(
                                         &network_peer_id,
                                         NetworkEvent::SnapshotOffer {
                                             id: util::unix_now(),
                                         },
                                     ).await;
+                                } else {
+                                    info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending proposals");
+                                    for proposal in solid.proposals_from(height) {
+                                        network.send(
+                                            &network_peer_id,
+                                            NetworkEvent::Proposal {
+                                                manifest: proposal.clone(),
+                                            },
+                                        )
+                                        .await;
+                                    }
                                 }
 
-                                for proposal in solid.proposals_from(height) {
-                                    network.send(
-                                        &network_peer_id,
-                                        NetworkEvent::Proposal {
-                                            manifest: proposal.clone(),
-                                        },
-                                    )
-                                    .await;
-                                }
                             } else {
                                 error!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, peer should request full snapshot");
                             }
