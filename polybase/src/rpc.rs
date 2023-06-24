@@ -500,20 +500,31 @@ fn validate_new_collection(
 
     // Check namespace is valid (only pk/<pk> currently allowed)
     if *restrict_namespaces {
-        if pk.is_empty() {
-            return Err(HTTPError::new(
-                ReasonCode::Unauthorized,
-                Some(Box::new(AppError::AnonNamespace)),
-            ));
-        }
-
         match collection_id {
             serde_json::Value::String(id) => {
                 let parts: Vec<&str> = id.split('/').collect();
-                if parts.len() < 3 || parts[0] != "pk" || parts[1] != pk {
+
+                if pk.is_empty() {
+                    return Err(HTTPError::new(
+                        ReasonCode::Unauthorized,
+                        Some(Box::new(AppError::AnonNamespace)),
+                    ));
+                }
+
+                if parts.len() <= 2 || parts[0] != "pk" {
                     return Err(HTTPError::new(
                         ReasonCode::Unauthorized,
                         Some(Box::new(AppError::InvalidNamespace(id.clone()))),
+                    ));
+                }
+
+                if parts[1] != pk {
+                    return Err(HTTPError::new(
+                        ReasonCode::Unauthorized,
+                        Some(Box::new(AppError::InvalidNamespacePublicKey(
+                            pk,
+                            parts[1].to_string(),
+                        ))),
                     ));
                 }
             }
