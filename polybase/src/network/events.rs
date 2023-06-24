@@ -7,8 +7,9 @@ use crate::txn::CallTxn;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NetworkEvent {
-    /// A peer is out of sync, and wants us to send them proposals
-    /// from the given height.
+    /// A peer is out of sync, and wants us to send them proposals.
+    /// They are currently at the given height, and therefore are looking for
+    /// proposals at height + 1.
     OutOfSync { height: usize },
 
     /// Received an accept for a previous proposal

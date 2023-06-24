@@ -100,7 +100,7 @@ jobs:
 
   build:
     name: Build & Run
-    runs-on: ubuntu-latest-16-cores
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
@@ -127,6 +127,10 @@ jobs:
       - name: Run Docker
         run: |
           docker run -d -p 8080:8080 --name=polybase polybase-build
+
+      - name: Wait for port to be ready
+        run: |
+          timeout 5 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8080)" != "200" ]]; do sleep 1; done' || false
 
       - name: CURL
         run: curl -sSf http://localhost:8080

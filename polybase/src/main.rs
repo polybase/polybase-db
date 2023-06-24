@@ -283,26 +283,29 @@ async fn main() -> Result<()> {
                             }
 
                             if height + config.block_cache_count > solid.height() {
-                                info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending proposals");
-                                if solid.min_proposal_height() > height {
-                                    // We don't have all the proposals needed for this peer, send offer to peer
+                                // height + 1 as, peer already has block at height
+                                if solid.min_proposal_height() > height + 1 {
+                                    // We don't have all the proposals needed for this peer, send Snapshot offer to peer
+                                    info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending snapshot offer");
                                     network.send(
                                         &network_peer_id,
                                         NetworkEvent::SnapshotOffer {
                                             id: util::unix_now(),
                                         },
                                     ).await;
+                                } else {
+                                    info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending proposals");
+                                    for proposal in solid.proposals_from(height) {
+                                        network.send(
+                                            &network_peer_id,
+                                            NetworkEvent::Proposal {
+                                                manifest: proposal.clone(),
+                                            },
+                                        )
+                                        .await;
+                                    }
                                 }
 
-                                for proposal in solid.confirmed_proposals_from(height) {
-                                    network.send(
-                                        &network_peer_id,
-                                        NetworkEvent::Proposal {
-                                            manifest: proposal.clone(),
-                                        },
-                                    )
-                                    .await;
-                                }
                             } else {
                                 error!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, peer should request full snapshot");
                             }
@@ -326,6 +329,8 @@ async fn main() -> Result<()> {
 
                         // We've been offered a snapshot from another peer, we should accept this offer if we
                         // don't already have an ongoing snapshot in progress
+                        // TODO: we should check if we've received new proposals since the original out of sync request (i.e. another node
+                        // has the proposals therefore we don't need to use a snapshot)
                         NetworkEvent::SnapshotOffer{ id } => {
                             if snapshot_from.is_some() {
                                 info!(peer_id = from_peer_id.prefix(),  id = id, "Already have snapshot in progress, ignoring offer");
@@ -337,7 +342,7 @@ async fn main() -> Result<()> {
                                 continue;
                             }
 
-                            info!(peer_id = from_peer_id.prefix(), id = id, "Peer offered snapshot, sending accept");
+                            info!(peer_id = from_peer_id.prefix(), id = id, "Peer offered snapshot, resetting db");
 
                             // Save who the snapshot is from
                             snapshot_from = Some((network_peer_id.clone(), id));
@@ -346,7 +351,7 @@ async fn main() -> Result<()> {
                             #[allow(clippy::expect_used)]
                             db.reset().expect("Failed to reset database");
 
-                            info!("Db reset ready for snapshot");
+                            info!("Db reset ready for snapshot, sending accept");
 
                             network.send(
                                 &network_peer_id,
@@ -464,7 +469,7 @@ async fn main() -> Result<()> {
                         // Node should send accept for an active proposal
                         // to another peer
                         SolidEvent::Accept { accept } => {
-                            info!(height = &accept.height, skips = &accept.skips, to = &accept.leader_id.prefix(), hash = accept.proposal_hash.to_string(), "Send accept");
+                            info!(height = &accept.height, skips = &accept.skips, to = &accept.leader_id.prefix(), hash = accept.proposal_hash.to_string(), local_height = solid.height(), "Send accept");
                             // let leader = &accept.leader_id;
 
                             network.send(

@@ -86,6 +86,14 @@ impl ProposalCache {
     }
 
     /// Returns all confirmed proposals from height to confirmed proposal
+    pub fn proposals_from(&self, from_height: usize) -> Vec<&Proposal> {
+        self.proposals
+            .values()
+            .filter(|p| p.height() >= from_height)
+            .collect()
+    }
+
+    /// Returns all confirmed proposals from height to confirmed proposal
     pub fn confirmed_proposals_from(&self, from_height: usize) -> Vec<&Proposal> {
         // Start with the last confirmed proposal and work backwards
         // We can use unwrap because last_confirmed_proposal_hash must always be set
