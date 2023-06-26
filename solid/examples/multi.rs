@@ -21,7 +21,7 @@ use std::thread;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use tracing::{error, event, info, info_span, Instrument, Level};
+use tracing::{error, info, info_span, Instrument};
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt};
 
 #[derive(Debug, Serialize, Deserialize)]
