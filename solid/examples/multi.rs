@@ -21,7 +21,7 @@ use std::thread;
 use std::time::Duration;
 use tokio::time::sleep;
 
-use tracing::{event, info, info_span, Instrument, Level};
+use tracing::{error, event, info, info_span, Instrument, Level};
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -306,7 +306,7 @@ async fn main() {
                                     let snapshot = match store.snapshot() {
                                         Ok(snapshot) => snapshot,
                                         Err(err) => {
-                                            event!(Level::ERROR, "for" = peer_id.prefix(), err = ?err, "Error creating snapshot");
+                                            error!(r#for = peer_id.prefix(), err = ?err, "Error creating snapshot");
                                             return;
                                         }
                                     };

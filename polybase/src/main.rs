@@ -34,7 +34,7 @@ use std::{
     },
 };
 
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 
 type Result<T> = std::result::Result<T, AppError>;
@@ -377,7 +377,7 @@ async fn main() -> Result<()> {
                                     let peer_id = from_peer_id.clone();
                                     match chunk {
                                         Ok(chunk) => {
-                                            tracing::event!(tracing::Level::DEBUG, "for" = peer_id.prefix(), chunk_size = chunk.len(), "Sending snapshot chunk");
+                                            debug!(r#for = peer_id.prefix(), chunk_size = chunk.len(), "Sending snapshot chunk");
                                             if let Some(tx) = network.send(
                                                 &peer_id.into(),
                                                 NetworkEvent::SnapshotChunk { id, chunk: Some(chunk) },
@@ -387,7 +387,7 @@ async fn main() -> Result<()> {
                                             }
                                         },
                                         Err(err) => {
-                                            tracing::event!(tracing::Level::ERROR, "for" = peer_id.prefix(), err = ?err, "Error creating snapshot");
+                                            error!(r#for = peer_id.prefix(), err = ?err, "Error creating snapshot");
                                             return;
                                         }
                                     }
