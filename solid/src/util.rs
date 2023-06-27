@@ -89,7 +89,7 @@ impl AtomicTimestamp {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{DurationRound, LocalResult, TimeZone};
+    use chrono::{LocalResult, TimeZone};
     use proptest::{prop_assert_eq, prop_assume};
     use test_strategy::proptest;
 

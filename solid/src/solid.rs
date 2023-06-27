@@ -13,10 +13,9 @@ use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-#[cfg(test)]
-use std::time::Duration;
+
 use tokio::sync::Notify;
-use tokio::time::{sleep_until, Instant};
+use tokio::time::Instant;
 use tokio_stream::Stream;
 
 /**
