@@ -23,11 +23,14 @@ hex = "0.4.3"
 bs58 = "0.5.0"
 parking_lot = { version = "0.12.1", features = ["deadlock_detection"] }
 # async-trait = "0.1"
+chrono = "0.4"
 
 
 [dev-dependencies]
 quickcheck = "1.0.3"
 rand = "0.8"
+proptest = "1"
+test-strategy = "0.3"
 tracing = { version = "0.1.37", features = ["valuable"] }
 tracing-subscriber = {version = "0.3.17", features = ["env-filter", "fmt", "std", "registry", "ansi"] }
 

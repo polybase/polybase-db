@@ -87,6 +87,9 @@ jobs:
           cache: 'yarn'
           cache-dependency-path: ./polybase-ts/yarn.lock
 
+      - name: Build server
+        run: cargo build
+
       - name: Run server
         run: cargo run --bin polybase &
 
