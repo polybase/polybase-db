@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use super::config::SolidConfig;
 use super::event::SolidEvent;
 use super::proposal::{ProposalAccept, ProposalHash, ProposalManifest};

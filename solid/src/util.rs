@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
@@ -15,29 +16,11 @@ pub struct AtomicTimestamp {
     inner: AtomicI64,
 }
 
-macro_rules! fetch_impl {
-    ($inner:expr, $duration:expr, $operator:tt) => {{
-        $inner
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old| match old {
-                i64::MIN => None,
-                old => Some(old $operator $duration.num_milliseconds()),
-            })
-            .ok()
-            .map(Self::decode)
-            .flatten()
-    }};
-}
-
 impl AtomicTimestamp {
     /// Create a new [`AtomicTimestamp`] from the given [`SystemTime`]
     pub fn new(time: Option<DateTime<Utc>>) -> Self {
         let inner = AtomicI64::new(Self::encode(time));
         Self { inner }
-    }
-
-    /// Create a new [`AtomicTimestamp`] from the current time
-    pub fn now() -> Self {
-        Self::new(Some(Utc::now()))
     }
 
     /// Store a time in this [`AtomicTimestamp`]
@@ -57,16 +40,13 @@ impl AtomicTimestamp {
     ///
     /// Note: the duration is rounded down to the nearest millisecond before it is added
     pub fn fetch_add(&self, duration: Duration) -> Option<DateTime<Utc>> {
-        fetch_impl!(self.inner, duration, +)
-    }
-
-    /// Subtract a duration from this timestamp, returning the previous value
-    ///
-    /// If the current value is `None`, `None` is returned and the state isn't changed
-    ///
-    /// Note: the duration is rounded down to the nearest millisecond before it is subtracted
-    pub fn fetch_sub(&self, duration: Duration) -> Option<DateTime<Utc>> {
-        fetch_impl!(self.inner, duration, -)
+        self.inner
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old| match old {
+                i64::MIN => None,
+                old => Some(old + duration.num_milliseconds()),
+            })
+            .ok()
+            .and_then(Self::decode)
     }
 
     fn encode(time: Option<DateTime<Utc>>) -> i64 {
@@ -114,10 +94,14 @@ mod tests {
             }
         };
 
-        let atomic = AtomicTimestamp::now();
+        let atomic = AtomicTimestamp::new(Some(time));
+
+        let time_again = atomic.load().unwrap();
+        prop_assert_eq!(time, time_again);
+
+        // just in case store behaves differently
         atomic.store(Some(time));
         let time_again = atomic.load().unwrap();
-
         prop_assert_eq!(time, time_again);
     }
 
@@ -132,9 +116,5 @@ mod tests {
             atomic.load().unwrap(),
             Utc.with_ymd_and_hms(2023, 1, 1, 5, 4, 8).unwrap()
         );
-
-        atomic.fetch_sub(Duration::seconds(5));
-
-        assert_eq!(atomic.load().unwrap(), time);
     }
 }
