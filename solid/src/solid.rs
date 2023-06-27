@@ -1,8 +1,11 @@
+#![allow(clippy::unwrap_used)]
 use super::config::SolidConfig;
 use super::event::SolidEvent;
 use super::proposal::{ProposalAccept, ProposalHash, ProposalManifest};
 use super::store::ProposalStore;
 use crate::peer::PeerId;
+use crate::util::AtomicTimestamp;
+use chrono::{DateTime, Utc};
 #[allow(unused_imports)]
 use futures::stream::StreamExt;
 use futures::task::Waker;
@@ -11,10 +14,9 @@ use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-#[cfg(test)]
-use std::time::Duration;
+
 use tokio::sync::Notify;
-use tokio::time::{sleep_until, Instant};
+use tokio::time::Instant;
 use tokio_stream::Stream;
 
 /**
@@ -41,7 +43,7 @@ pub struct SolidShared {
 
     /// Timeout used for skips (aka expired accepts, no new proposal
     /// received within timeout period)
-    skip_timeout: Mutex<Option<Instant>>,
+    skip_timeout: AtomicTimestamp,
 
     /// Timeout used when an out of sync message has been sent to the network,
     /// we need to wait a configurable amount of time before sending another
@@ -83,7 +85,7 @@ impl Solid {
                 manifest,
                 config.max_proposal_history,
             )),
-            skip_timeout: Mutex::new(None),
+            skip_timeout: AtomicTimestamp::new(None),
             out_of_sync_timeout: Mutex::new(None),
             state: Mutex::new(SolidState {
                 shutdown: false,
@@ -197,16 +199,17 @@ impl Solid {
 
     /// Reset skip timeout as we received the next proposal in time
     fn reset_skip_timeout(&self) {
-        let mut skip_timeout = self.shared.skip_timeout.lock();
-        *skip_timeout = Some(Instant::now() + self.shared.config.skip_timeout);
+        // should we just make the config use `chrono::Duration` instead?
+        let skip_timeout = chrono::Duration::from_std(self.shared.config.skip_timeout).unwrap();
+        let new_timeout = Utc::now() + skip_timeout;
+        self.shared.skip_timeout.store(Some(new_timeout));
         self.shared.background_worker.notify_one();
     }
 
     /// Clear skip timeout when we are the one proposing a new proposal, or when we are
     /// behind/out of sync with the network
     fn clear_skip_timeout(&self) {
-        let mut skip_timeout = self.shared.skip_timeout.lock();
-        *skip_timeout = None;
+        self.shared.skip_timeout.store(None);
         self.shared.background_worker.notify_one();
     }
 
@@ -317,19 +320,20 @@ impl SolidShared {
     }
 
     /// Checks for either: next_proposal or a skip timeout
-    fn tick(&self) -> Option<Instant> {
-        let mut skip_timeout_guard = self.skip_timeout.lock();
+    fn tick(&self) -> Option<DateTime<Utc>> {
+        let skip_timeout = self.skip_timeout.load();
 
-        if (*skip_timeout_guard)? > Instant::now() {
-            return *skip_timeout_guard;
+        if skip_timeout? > Utc::now() {
+            return skip_timeout;
         }
 
         if let Some(event) = self.store.lock().skip() {
             self.send_event(event);
-            *skip_timeout_guard = Some(Instant::now() + self.config.skip_timeout);
+            let add = chrono::Duration::from_std(self.config.skip_timeout).unwrap();
+            self.skip_timeout.fetch_add(add);
         }
 
-        *skip_timeout_guard
+        self.skip_timeout.load()
     }
 }
 
@@ -340,8 +344,9 @@ async fn background_worker(shared: Arc<SolidShared>) {
     while !shared.is_shutdown() {
         // Check timeout
         if let Some(when) = shared.tick() {
+            let time_to_sleep = (when - Utc::now()).to_std().unwrap();
             tokio::select! {
-                _ = sleep_until(when) => {}
+                _ = tokio::time::sleep(time_to_sleep) => {}
                 _ = shared.background_worker.notified() => {}
             }
         } else {
@@ -353,6 +358,9 @@ async fn background_worker(shared: Arc<SolidShared>) {
 
 #[cfg(test)]
 mod test {
+
+    use chrono::{TimeZone, Timelike};
+
     use crate::proposal::ProposalAccept;
 
     use super::*;
@@ -465,24 +473,47 @@ mod test {
         assert_eq!(register.shared.tick(), None);
     }
 
+    /// round down to nearest millisecond
+    fn round_millis(time: DateTime<Utc>) -> DateTime<Utc> {
+        let nanos_and_micros = time.nanosecond() % 1_000_000;
+        let total_nanos = time.nanosecond() - nanos_and_micros;
+        time.with_nanosecond(total_nanos).unwrap()
+    }
+
+    #[test]
+    fn round_millis_works() {
+        let time = Utc
+            .with_ymd_and_hms(2023, 1, 1, 1, 1, 1)
+            .unwrap()
+            .with_nanosecond(123_000_123)
+            .unwrap();
+
+        let expected = Utc
+            .with_ymd_and_hms(2023, 1, 1, 1, 1, 1)
+            .unwrap()
+            .with_nanosecond(123_000_000)
+            .unwrap();
+
+        assert_eq!(round_millis(time), expected);
+    }
+
     #[test]
     fn test_tick_send_skip() {
         let [p1, _, _] = create_peers();
         let config = SolidConfig::default();
         let register = Solid::genesis(p1, create_peers().to_vec(), config);
 
+        let now = Utc::now();
+
         // Add an expired skip_timeout instant
-        {
-            register.shared.skip_timeout.lock().replace(Instant::now());
-        }
+        register.shared.skip_timeout.store(Some(now));
 
         let next_tick = register.shared.tick();
 
         // Should return the next tick
         assert!(
-            next_tick > Some(Instant::now() + Duration::from_secs(3)),
-            "next tick {:?} should be more than 3 seconds away",
-            next_tick
+            next_tick > Some(now + chrono::Duration::seconds(3)),
+            "next tick {next_tick:?} should be more than 3 seconds away from now: {now:?}",
         );
 
         // Should add skip event
@@ -495,15 +526,13 @@ mod test {
         let config = SolidConfig::default();
         let register = Solid::genesis(p1, create_peers().to_vec(), config);
 
-        let time = Instant::now() + Duration::from_secs(10);
+        let time = Utc::now() + chrono::Duration::seconds(10);
 
         // Add time which is not ready
-        {
-            register.shared.skip_timeout.lock().replace(time);
-        }
+        register.shared.skip_timeout.store(Some(time));
 
         // Returns time to wake up tick
-        assert_eq!(register.shared.tick(), Some(time));
+        assert_eq!(register.shared.tick().unwrap(), round_millis(time));
 
         // No events added
         assert_eq!(register.shared.events.lock().len(), 0);
