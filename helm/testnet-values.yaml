@@ -10,7 +10,7 @@ image:
 resources:
   limits:
     cpu: 3
-    memory: 4Gi
+    memory: 6Gi
   requests:
     cpu: 200m
     memory: 300Mi
@@ -26,3 +26,5 @@ extraEnvVars:
     value: "8388608"
   - name: DIAL_ADDR
     value: "/dns/polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-1.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-2.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001"
+  - name: BLOCK_CACHE_SIZE
+    value: "7200"

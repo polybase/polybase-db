@@ -80,7 +80,7 @@ collection Account {
         Error {
             error: ErrorData {
                 code: "permission-denied".to_string(),
-                message: format!("namespace is invalid, must be in format pk/<public_key_hex>/<CollectionName> got {}", collection_id.as_str()),
+                message: format!("namespace is invalid, must be in format pk/<public_key_hex>/<namespace> got {}", collection_id.as_str()),
                 reason: "unauthorized".to_string(),
             }
         }
@@ -99,11 +99,12 @@ collection Account {
     // Key signing the request
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let public_key = indexer::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let pk_hex = public_key.to_hex().unwrap();
 
     // Key to be used in whitelist
     let (_, alt_public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let alt_public_key = indexer::PublicKey::from_secp256k1_key(&alt_public_key).unwrap();
-    let pk_hex: String = alt_public_key.to_hex().unwrap();
+    let alt_pk_hex: String = alt_public_key.to_hex().unwrap();
 
     let signer = Signer::from(move |body: &str| {
         let mut signature = Signature::create(&private_key, SystemTime::now(), body);
@@ -111,7 +112,7 @@ collection Account {
         signature
     });
 
-    let collection_id = format!("pk/{}/Account", pk_hex);
+    let collection_id = format!("pk/{}/Account", alt_pk_hex);
     let server = Server::setup_and_wait(Some(ServerConfig {
         restrict_namespaces: true,
         ..Default::default()
@@ -128,7 +129,10 @@ collection Account {
         Error {
             error: ErrorData {
                 code: "permission-denied".to_string(),
-                message: format!("namespace is invalid, must be in format pk/<public_key_hex>/<CollectionName> got {}", collection_id.as_str()),
+                message: format!(
+                    "namespace public key is invalid, expected {} got {}",
+                    pk_hex, alt_pk_hex,
+                ),
                 reason: "unauthorized".to_string(),
             }
         }

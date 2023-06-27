@@ -131,6 +131,11 @@ impl Solid {
         self.shared.store.lock().exists(hash)
     }
 
+    /// Get a list of all stored proposals
+    pub fn proposals_from(&self, i: usize) -> Vec<ProposalManifest> {
+        self.shared.store.lock().proposals_from(i).to_vec()
+    }
+
     /// Get a list of confirmed proposals from a given height
     pub fn confirmed_proposals_from(&self, i: usize) -> Vec<ProposalManifest> {
         self.shared

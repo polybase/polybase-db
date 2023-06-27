@@ -1,8 +1,3 @@
-#[macro_use]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_term;
-
 use bincode::{deserialize, serialize};
 use futures::channel::mpsc::{self, Sender, TrySendError};
 use futures::stream::Stream;
@@ -10,7 +5,6 @@ use futures::StreamExt;
 use parking_lot::deadlock;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use slog::{Drain, Level};
 use solid::config::SolidConfig;
 use solid::event::SolidEvent;
 use solid::peer::PeerId;
@@ -26,6 +20,9 @@ use std::task::{Context, Poll};
 use std::thread;
 use std::time::Duration;
 use tokio::time::sleep;
+
+use tracing::{error, info, info_span, Instrument};
+use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct Store {
@@ -78,7 +75,6 @@ pub struct MyNetwork {
     local_peer_id: PeerId,
     event_stream: Option<Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Sync + Send>>,
     senders: Arc<Mutex<SenderMap>>,
-    logger: slog::Logger,
     partition: Arc<AtomicBool>,
     config: MyNetworkConfig,
 }
@@ -87,7 +83,6 @@ impl MyNetwork {
     pub fn new(
         local_peer_id: PeerId,
         senders: Arc<Mutex<SenderMap>>,
-        logger: slog::Logger,
         config: MyNetworkConfig,
     ) -> Self {
         // A small buffer, so we can simulate network partition
@@ -102,12 +97,7 @@ impl MyNetwork {
         let partition = Arc::new(AtomicBool::new(false));
 
         let drop_probability = config.drop_probability;
-        let dropping_stream = DroppingStream::new(
-            receiver,
-            drop_probability,
-            logger.clone(),
-            partition.clone(),
-        );
+        let dropping_stream = DroppingStream::new(receiver, drop_probability, partition.clone());
 
         let event_stream = Some(Box::new(dropping_stream)
             as Box<dyn Stream<Item = (PeerId, Vec<u8>)> + Unpin + Send + Sync>);
@@ -144,7 +134,6 @@ impl MyNetwork {
             local_peer_id,
             event_stream,
             senders,
-            logger,
             config,
             partition,
         }
@@ -187,10 +176,9 @@ impl MyNetwork {
                 }
                 Err(TrySendError { .. }) => {
                     info!(
-                        self.logger,
                         "Failed to send message to {} from {}",
                         peer_id.prefix(),
-                        self.local_peer_id.prefix()
+                        self.local_peer_id.prefix(),
                     )
                 }
             }
@@ -238,11 +226,18 @@ async fn main() {
     let senders = Arc::new(Mutex::new(HashMap::new()));
     let peers: Vec<PeerId> = (0..num_of_nodes).map(|_| PeerId::random()).collect();
 
-    let decorator = slog_term::PlainDecorator::new(std::io::stdout());
-    let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let drain = slog::LevelFilter::new(drain, Level::Debug).fuse();
-    let root_log = slog::Logger::root(drain, o!());
+    // Logging
+    let stdout_tracer = tracing_subscriber::fmt::layer().compact();
+
+    let filter = EnvFilter::try_new("warn")
+        .unwrap()
+        .add_directive("multi=info".parse().unwrap());
+
+    let subscriber = tracing_subscriber::registry()
+        .with(stdout_tracer)
+        .with(filter);
+
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     // Check for deadlocks
     thread::spawn(move || loop {
@@ -274,10 +269,7 @@ async fn main() {
             pending: vec![],
         };
 
-        info!(root_log, "Starting node {}", local_peer_id.prefix());
-
-        let logger: slog::Logger =
-            root_log.new(o!("local_peer_id" => format!("{}", local_peer_id.prefix())));
+        info!("Starting node {}", local_peer_id.prefix());
 
         let config = MyNetworkConfig {
             min_latency: 200,
@@ -287,12 +279,7 @@ async fn main() {
             partition_frequency: 600,
         };
 
-        let mut network = MyNetwork::new(
-            local_peer_id.clone(),
-            senders.clone(),
-            logger.clone(),
-            config,
-        );
+        let mut network = MyNetwork::new(local_peer_id.clone(), senders.clone(), config);
 
         let mut solid = Solid::genesis(
             local_peer_id.clone(),
@@ -305,6 +292,7 @@ async fn main() {
             },
         );
 
+        let span = info_span!("task_span", local_peer_id = local_peer_id.prefix());
         handles.push(tokio::spawn(async move {
             solid.run();
             loop {
@@ -313,12 +301,12 @@ async fn main() {
                         let event = deserialize::<NetworkEvent>(&data).unwrap();
                         match event {
                             NetworkEvent::OutOfSync { peer_id, height } => {
-                                info!(logger, "Peer is out of sync"; "peer_id" => peer_id.prefix(), "height" => height);
+                                info!(peer_id = peer_id.prefix(), height = height, "Peer is out of sync");
                                 if height + 1024 < solid.height() {
                                     let snapshot = match store.snapshot() {
                                         Ok(snapshot) => snapshot,
                                         Err(err) => {
-                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                            error!(r#for = peer_id.prefix(), err = ?err, "Error creating snapshot");
                                             return;
                                         }
                                     };
@@ -337,17 +325,17 @@ async fn main() {
                             }
 
                             NetworkEvent::Snapshot { .. } => {
-                                info!(logger, "Received snapshot");
+                                info!("Received snapshot");
                                 // solid.receive_snapshot(snapshot);
                             }
 
                             NetworkEvent::Accept { accept } => {
-                                info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                                info!(height = &accept.height, skips = &accept.skips, from = &accept.leader_id.prefix(), hash = accept.proposal_hash.to_string(), "Received accept");
                                 solid.receive_accept(&accept, &peer_id);
                             }
 
                             NetworkEvent::Proposal { manifest } => {
-                                info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
+                                info!(height = &manifest.height, skips = &manifest.skips, from = &manifest.leader_id.prefix(), hash = &manifest.hash().to_string(), "Received proposal");
                                 solid.receive_proposal(manifest);
                             }
                         }
@@ -358,7 +346,7 @@ async fn main() {
                             // Node should send accept for an active proposal
                             // to another peer
                             SolidEvent::Accept { accept } => {
-                                info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                                info!(height = &accept.height, skips = &accept.skips, to = &accept.leader_id.prefix(), hash = accept.proposal_hash.to_string(), "Send accept");
                                 let leader = &accept.leader_id.clone();
 
                                 network.send(
@@ -391,7 +379,7 @@ async fn main() {
                                 };
                                 let proposal_hash = manifest.hash();
 
-                                info!(logger, "Propose"; "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips);
+                                info!(hash = proposal_hash.to_string(), height = height, skips = skips, "Propose");
 
                                 // Add proposal to own register, this will trigger an accept
                                 solid.receive_proposal(manifest.clone());
@@ -405,7 +393,7 @@ async fn main() {
 
                             // Commit a confirmed proposal changes
                             SolidEvent::Commit { manifest } => {
-                                info!(logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
+                                info!(hash = manifest.hash().to_string(), height = manifest.height, skips = manifest.skips,  "Commit");
                                 store.commit(manifest);
                             }
 
@@ -414,7 +402,7 @@ async fn main() {
                                 max_seen_height,
                                 accepts_sent,
                             } => {
-                                info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
+                                info!(local_height = height, accepts_sent = accepts_sent, max_seen_height = max_seen_height, "Out of sync");
                                 network.send_all(&NetworkEvent::OutOfSync { peer_id: local_peer_id.clone(), height })
                                 .await
                             }
@@ -425,17 +413,17 @@ async fn main() {
                                 proposal_hash,
                                 peer_id,
                             } => {
-                                info!(logger, "Out of date proposal"; "local_height" => local_height, "proposal_height" => proposal_height, "proposal_hash" => proposal_hash.to_string(), "from" => peer_id.prefix());
+                                info!(local_height = local_height, proposal_height = proposal_height, proposal_hash = proposal_hash.to_string(), from = peer_id.prefix(), "Out of date proposal");
                             }
 
                             SolidEvent::DuplicateProposal { proposal_hash } => {
-                                info!(logger, "Duplicate proposal"; "hash" => proposal_hash.to_string());
+                                info!(hash = proposal_hash.to_string(), "Duplicate proposal");
                             }
                         }
                     }
                 }
             }
-        }));
+        }.instrument(span)));
     }
 
     for handle in handles {
@@ -448,20 +436,13 @@ pub struct DroppingStream<S> {
     inner: S,
     drop_probability: f64,
     partition: Arc<AtomicBool>,
-    logger: slog::Logger,
 }
 
 impl<S> DroppingStream<S> {
-    pub fn new(
-        inner: S,
-        drop_probability: f64,
-        logger: slog::Logger,
-        partition: Arc<AtomicBool>,
-    ) -> Self {
+    pub fn new(inner: S, drop_probability: f64, partition: Arc<AtomicBool>) -> Self {
         Self {
             inner,
             drop_probability,
-            logger,
             partition,
         }
     }
@@ -479,7 +460,7 @@ impl<S: Stream + Unpin> Stream for DroppingStream<S> {
                     if rand::thread_rng().gen_range(0.0..=1.0) < self.drop_probability
                         || self.partition.load(std::sync::atomic::Ordering::Relaxed)
                     {
-                        info!(self.logger, "Dropping message");
+                        info!("Dropping message");
                         continue;
                     }
                     return Poll::Ready(Some(item));

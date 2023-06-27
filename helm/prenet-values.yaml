@@ -1,5 +1,14 @@
 env: prenet
 
+labels:
+   kube-monkey/enabled: enabled
+   kube-monkey/identifier: polybase
+   kube-monkey/mtbf: '1'
+   kube-monkey/kill-mode: "random-max-percent"
+   kube-monkey/kill-value: '60'
+
+replicaCount: 3
+
 image:
    registry: gcr.io
    repository: polybase-prenet/polybase
@@ -20,6 +29,8 @@ persistence:
    size: 20Gi
 
 extraEnvVars:
+   - name: LOG_LEVEL
+     value: "DEBUG"
    - name: RESTRICT_NAMESPACES
      value: "true"
    - name: PEERS

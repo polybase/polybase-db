@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use std::fmt;
 
 /// Polybase is a p2p decentralized database
 #[derive(Parser, Debug)]
@@ -105,9 +106,27 @@ pub enum Command {
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
 #[clap(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum LogLevel {
+    Trace,
     Debug,
     Info,
+    Warn,
     Error,
+}
+
+impl fmt::Display for LogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                LogLevel::Trace => "trace",
+                LogLevel::Debug => "debug",
+                LogLevel::Info => "info",
+                LogLevel::Warn => "warn",
+                LogLevel::Error => "error",
+            }
+        )
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
@@ -115,4 +134,5 @@ pub enum LogLevel {
 pub enum LogFormat {
     Pretty,
     Json,
+    StackDriver,
 }

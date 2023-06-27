@@ -26,6 +26,8 @@ extraEnvVars:
   - name: PEERS
     value: "12D3KooWR9TtbDy2hebAU2qgbP2e3UGX8BrrZUDY6eiXHvQF3Nn4,12D3KooWKnx6YDNsZhMnqr9UADPLZXtAkYkDEo6Vs7KQjAL2dWCG,12D3KooWDtEwZyL2tjW96VCE5bJgDP58w31JTkeavaYafuA7oXcD"
   - name: WHITELIST
-    value: "0xea448a816eba719df5155f1799d014d6ce74638fc5d42780597ad7e9df046a486ba295ed1c8364d284c416b350ba6b4e4db4966faf053e98cca6cab9fd6aa266"
+    value: "0xea448a816eba719df5155f1799d014d6ce74638fc5d42780597ad7e9df046a486ba295ed1c8364d284c416b350ba6b4e4db4966faf053e98cca6cab9fd6aa266,0xdd748ce27dad7be58629bc274320223cc22942d0bd0000e69ef8feccdc65289498e18bd9a5e64081c7705e06c1d5e99e38f5cf498af2cf4a788ca69d1838618c"
   - name: DIAL_ADDR
     value: "/dns/polybase-0.polybase-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-1.polybase-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-2.polybase-headless.polybase.svc.cluster.local/tcp/5001"
+  - name: BLOCK_CACHE_SIZE
+    value: "7200"

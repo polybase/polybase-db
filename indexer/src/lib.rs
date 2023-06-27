@@ -53,40 +53,46 @@ pub enum IndexerError {
 }
 
 pub struct Indexer {
-    logger: slog::Logger,
     store: store::Store,
 }
 
 impl Indexer {
-    pub fn new(logger: slog::Logger, path: impl AsRef<Path>) -> Result<Self> {
+    pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let store = store::Store::open(path)?;
-        Ok(Self { logger, store })
+        Ok(Self { store })
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn destroy(self) -> Result<()> {
         Ok(self.store.destroy()?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn reset(&self) -> Result<()> {
         Ok(self.store.reset()?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
         self.store.snapshot(chunk_size)
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
         Ok(self.store.restore(data)?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn collection(&self, id: String) -> Result<Collection> {
-        Ok(Collection::load(self.logger.clone(), &self.store, id).await?)
+        Ok(Collection::load(&self.store, id).await?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn commit(&self) -> Result<()> {
         Ok(self.store.commit().await?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
         let system_key = keys::Key::new_system_data(key)?;
 
@@ -96,6 +102,7 @@ impl Indexer {
             .await?)
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
         let system_key = keys::Key::new_system_data(key)?;
         Ok(self.store.get(&system_key).await?)

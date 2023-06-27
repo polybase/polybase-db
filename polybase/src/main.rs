@@ -1,11 +1,5 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-#[macro_use]
-extern crate slog;
-extern crate slog_async;
-extern crate slog_json;
-extern crate slog_term;
-
 mod auth;
 mod config;
 mod db;
@@ -17,18 +11,16 @@ mod rpc;
 mod txn;
 mod util;
 
-use crate::config::{Command, Config, LogFormat};
+use crate::config::{Command, Config, LogFormat, LogLevel};
 use crate::db::{Db, DbConfig};
 use crate::errors::AppError;
 use crate::rpc::create_rpc_server;
-use chrono::Utc;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
-use slog::Drain;
 use solid::config::SolidConfig;
 use solid::event::SolidEvent;
 use solid::proposal::ProposalManifest;
@@ -42,7 +34,61 @@ use std::{
     },
 };
 
+use tracing::{debug, error, info, warn};
+use tracing_subscriber::layer::SubscriberExt;
+
 type Result<T> = std::result::Result<T, AppError>;
+
+/// Set up tracing support for Polybase for:
+///   - logging
+///   - createing stack driver traces, and
+///   - for profiling
+async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<()> {
+    // common filter - show only `warn` and above for external crates.
+    let mut filter = tracing_subscriber::EnvFilter::try_new("warn")?;
+
+    for proj_crate in ["polybase", "indexer", "gateway", "solid"] {
+        filter = filter.add_directive(format!("{proj_crate}={}", log_level).parse()?);
+    }
+
+    // TODO - see if the different tracing layers can be resolved into a common type.
+    // Format<Pretty> is not compatible with Format<Json> (for instance).
+    match log_format {
+        LogFormat::Pretty => {
+            let stdout_trace_layer = tracing_subscriber::fmt::layer();
+
+            let subscriber = tracing_subscriber::registry()
+                .with(stdout_trace_layer)
+                .with(filter);
+
+            tracing::subscriber::set_global_default(subscriber)?;
+        }
+
+        LogFormat::Json => {
+            let stdout_trace_layer = tracing_subscriber::fmt::layer().json();
+
+            let subscriber = tracing_subscriber::registry()
+                .with(stdout_trace_layer)
+                .with(filter);
+
+            tracing::subscriber::set_global_default(subscriber)?;
+        }
+
+        LogFormat::StackDriver => {
+            // This outputs to stdout for now, but integration with Google Cloud's logging suite will need to be done.
+            // Also potentially use OpenTelemetry instead with an exporter for StackDriver traces.
+            let stackdriver_layer = tracing_stackdriver::layer();
+
+            let subscriber = tracing_subscriber::registry()
+                .with(stackdriver_layer)
+                .with(filter);
+
+            tracing::subscriber::set_global_default(subscriber)?;
+        }
+    }
+
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -80,52 +126,13 @@ async fn main() -> Result<()> {
         ));
     }
 
-    // Parse log level
-    let log_level = match &config.log_level {
-        config::LogLevel::Debug => slog::Level::Debug,
-        config::LogLevel::Info => slog::Level::Info,
-        config::LogLevel::Error => slog::Level::Error,
-    };
-
-    // Create logger drain (json/pretty)
-    let drain: Box<dyn Drain<Ok = (), Err = slog::Never> + Send + Sync> =
-        if config.log_format == LogFormat::Json {
-            // JSON output
-            let json_drain = slog_json::Json::new(std::io::stdout())
-                .add_key_value(o!(
-                    // Add the required Cloud Logging fields
-                    "severity" => slog::PushFnValue(move |record : &slog::Record, ser| {
-                        ser.emit(record.level().as_str().to_uppercase())
-                    }),
-                    "timestamp" => slog::PushFnValue(move |_, ser| {
-                        ser.emit(Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-                    }),
-                    "message" => slog::PushFnValue(move |record : &slog::Record, ser| {
-                        ser.emit(record.msg())
-                    }),
-                ))
-                .build()
-                .fuse();
-            Box::new(slog_async::Async::new(json_drain).build().fuse())
-        } else {
-            // Terminal output
-            let decorator = slog_term::TermDecorator::new().build();
-            let term_drain = slog_term::FullFormat::new(decorator).build().fuse();
-            Box::new(slog_async::Async::new(term_drain).build().fuse())
-        };
-
-    // Create logger with log level filter
-    let drain = slog::LevelFilter::new(drain, log_level).fuse();
-    let logger = slog::Logger::root(
-        slog_async::Async::new(drain).build().fuse(),
-        slog_o!("version" => env!("CARGO_PKG_VERSION")),
-    );
+    // setup tracing for the whole project
+    setup_tracing(&config.log_level, &config.log_format).await?;
 
     // Database combines various components into a single interface
     // that is thread safe
     #[allow(clippy::unwrap_used)]
-    let db: Arc<Db> =
-        Arc::new(Db::new(config.root_dir.clone(), logger.clone(), DbConfig::default()).unwrap());
+    let db: Arc<Db> = Arc::new(Db::new(config.root_dir.clone(), DbConfig::default()).unwrap());
 
     // Get the keypair (provided or auto-generated)
     // TODO: store keypair if auto-generated
@@ -153,7 +160,10 @@ async fn main() -> Result<()> {
                 let key_bytes = hex::decode(key)?;
                 identity::Keypair::ed25519_from_bytes(key_bytes)?
             } else {
-                warn!(logger, "Automatically generating keypair, keep this secret"; "path" => key_path.to_str());
+                warn!(
+                    path = key_path.to_str(),
+                    "Automatically generating keypair, keep this secret"
+                );
                 if let Some(dir) = key_path.parent() {
                     if !dir.exists() {
                         // Create the directory and all its parent directories if they do not exist
@@ -170,14 +180,11 @@ async fn main() -> Result<()> {
             }
         }
     };
+
     let local_peer_id = PeerId::from(keypair.public());
 
     // Log the peer id
-    info!(
-        logger,
-        "Peer starting";
-        "peer_id" => local_peer_id.to_string()
-    );
+    info!(peer_id = local_peer_id.to_string(), "Peer starting");
 
     // Interface for sending messages to peers, runs in its own thread
     // and can be polled for events
@@ -206,7 +213,6 @@ async fn main() -> Result<()> {
         &keypair,
         network_laddr.into_iter(),
         peers_addr.into_iter(),
-        logger.clone(),
     )?);
 
     let local_peer_solid = solid::peer::PeerId(local_peer_id.to_bytes());
@@ -239,12 +245,10 @@ async fn main() -> Result<()> {
         Arc::clone(&db),
         Arc::new(config.whitelist.clone()),
         Arc::new(config.restrict_namespaces),
-        logger.clone(),
     )?;
 
     let solid_handle = solid.run();
 
-    let logger_clone = logger.clone();
     let shutdown = Arc::new(AtomicBool::new(false));
     let shutdown_clone = Arc::clone(&shutdown);
     let network_clone = Arc::clone(&network);
@@ -258,7 +262,6 @@ async fn main() -> Result<()> {
 
         while !shutdown.load(Ordering::Relaxed) {
             let network = Arc::clone(&network);
-            let logger = logger_clone.clone();
 
             tokio::select! {
                 // Db only produces CallTxn events, that should be propogated
@@ -271,7 +274,7 @@ async fn main() -> Result<()> {
                     let from_peer_id: solid::peer::PeerId = network_peer_id.clone().into();
                     match event {
                         NetworkEvent::Ping => {
-                            info!(logger, "Ping received");
+                            info!("Ping received");
                         },
                         NetworkEvent::OutOfSync { height } => {
                             // Don't help other nodes if we're unhealthy ourselves
@@ -280,28 +283,31 @@ async fn main() -> Result<()> {
                             }
 
                             if height + config.block_cache_count > solid.height() {
-                                info!(logger, "Peer is out of sync, sending proposals"; "peer_id" => from_peer_id.prefix(), "height" => height);
-                                if solid.min_proposal_height() > height {
-                                    // We don't have all the proposals needed for this peer, send offer to peer
+                                // height + 1 as, peer already has block at height
+                                if solid.min_proposal_height() > height + 1 {
+                                    // We don't have all the proposals needed for this peer, send Snapshot offer to peer
+                                    info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending snapshot offer");
                                     network.send(
                                         &network_peer_id,
                                         NetworkEvent::SnapshotOffer {
                                             id: util::unix_now(),
                                         },
                                     ).await;
+                                } else {
+                                    info!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, sending proposals");
+                                    for proposal in solid.proposals_from(height) {
+                                        network.send(
+                                            &network_peer_id,
+                                            NetworkEvent::Proposal {
+                                                manifest: proposal.clone(),
+                                            },
+                                        )
+                                        .await;
+                                    }
                                 }
 
-                                for proposal in solid.confirmed_proposals_from(height) {
-                                    network.send(
-                                        &network_peer_id,
-                                        NetworkEvent::Proposal {
-                                            manifest: proposal.clone(),
-                                        },
-                                    )
-                                    .await;
-                                }
                             } else {
-                                error!(logger, "Peer is out of sync, peer should request full snapshot"; "peer_id" => from_peer_id.prefix(), "height" => height);
+                                error!(peer_id = from_peer_id.prefix(), height = height, "Peer is out of sync, peer should request full snapshot");
                             }
                         }
 
@@ -309,7 +315,7 @@ async fn main() -> Result<()> {
                         // to provide them with a snapshot
                         NetworkEvent::SnapshotRequest{ id, height } => {
                             if db.is_healthy() {
-                                info!(logger, "Peer requested snapshot, sending offer"; "to" => from_peer_id.prefix(), "height" => height, "id" => id);
+                                info!(to = from_peer_id.prefix(), height = height, id = id, "Peer requested snapshot, sending offer");
                                 network.send(
                                     &network_peer_id,
                                     NetworkEvent::SnapshotOffer {
@@ -317,24 +323,26 @@ async fn main() -> Result<()> {
                                     },
                                 ).await;
                             } else {
-                                info!(logger, "Peer requested snapshot, unable to provide snapshot due to unhealty state"; "peer_id" => from_peer_id.prefix(), "height" => height);
+                                info!(peer_id = from_peer_id.prefix(), height = height, "Peer requested snapshot, unable to provide snapshot due to unhealty state");
                             }
                         },
 
                         // We've been offered a snapshot from another peer, we should accept this offer if we
                         // don't already have an ongoing snapshot in progress
+                        // TODO: we should check if we've received new proposals since the original out of sync request (i.e. another node
+                        // has the proposals therefore we don't need to use a snapshot)
                         NetworkEvent::SnapshotOffer{ id } => {
                             if snapshot_from.is_some() {
-                                debug!(logger, "Already have snapshot in progress, ignoring offer"; "peer_id" => from_peer_id.prefix(),  "id" => id);
+                                info!(peer_id = from_peer_id.prefix(),  id = id, "Already have snapshot in progress, ignoring offer");
                                 continue;
                             }
 
                             if db.is_healthy() {
-                                debug!(logger, "Peer offered snapshot, ignoring as already healthy"; "peer_id" => from_peer_id.prefix(), "id" => id);
+                                info!(peer_id = from_peer_id.prefix(), id = id, "Peer offered snapshot, ignoring as already healthy");
                                 continue;
                             }
 
-                            info!(logger, "Peer offered snapshot, sending accept"; "peer_id" => from_peer_id.prefix(), "id" => id);
+                            info!(peer_id = from_peer_id.prefix(), id = id, "Peer offered snapshot, resetting db");
 
                             // Save who the snapshot is from
                             snapshot_from = Some((network_peer_id.clone(), id));
@@ -343,7 +351,7 @@ async fn main() -> Result<()> {
                             #[allow(clippy::expect_used)]
                             db.reset().expect("Failed to reset database");
 
-                            info!(logger, "Db reset ready for snapshot");
+                            info!("Db reset ready for snapshot, sending accept");
 
                             network.send(
                                 &network_peer_id,
@@ -358,7 +366,7 @@ async fn main() -> Result<()> {
                         NetworkEvent::SnapshotAccept{ id  } => {
                             let db = Arc::clone(&db);
 
-                            info!(logger, "Peer accepted snapshot offer, sending chunks"; "peer_id" => from_peer_id.prefix(), "id" => id);
+                            info!(peer_id = from_peer_id.prefix(), id = id, "Peer accepted snapshot offer, sending chunks");
 
                             // Spawn a task, as we don't want to block the thread while we send network events,
                             // and this snapshot may take a while to complete
@@ -369,7 +377,7 @@ async fn main() -> Result<()> {
                                     let peer_id = from_peer_id.clone();
                                     match chunk {
                                         Ok(chunk) => {
-                                            debug!(logger, "Sending snapshot chunk"; "for" => peer_id.prefix(), "chunk_size" => chunk.len());
+                                            debug!(r#for = peer_id.prefix(), chunk_size = chunk.len(), "Sending snapshot chunk");
                                             if let Some(tx) = network.send(
                                                 &peer_id.into(),
                                                 NetworkEvent::SnapshotChunk { id, chunk: Some(chunk) },
@@ -379,13 +387,13 @@ async fn main() -> Result<()> {
                                             }
                                         },
                                         Err(err) => {
-                                            error!(logger, "Error creating snapshot"; "for" => peer_id.prefix(), "err" => format!("{:?}", err));
+                                            error!(r#for = peer_id.prefix(), err = ?err, "Error creating snapshot");
                                             return;
                                         }
                                     }
                                 }
 
-                                info!(logger, "Snapshot complete"; "peer_id" => from_peer_id.prefix(), "id" => id);
+                                info!(peer_id = from_peer_id.prefix(), id = id, "Snapshot complete");
 
                                 // Send end of snapshot event
                                 network.send(
@@ -398,15 +406,15 @@ async fn main() -> Result<()> {
                         // We've received a chunk of a snapshot from another peer, we should load this into
                         // our db
                         NetworkEvent::SnapshotChunk { id, chunk } => {
-                            info!(logger, "Received snapshot chunk"; "peer_id" => from_peer_id.prefix(), "id" => id, "chunk_size" => chunk.as_ref().map(|c| c.len()).unwrap_or(0));
+                            info!(peer_id = from_peer_id.prefix(), id = id, chunk_size = chunk.as_ref().map(|c| c.len()).unwrap_or(0),  "Received snapshot chunk");
                             if let Some((peer_id, snapshot_id)) = &snapshot_from {
                                 if peer_id != &network_peer_id || snapshot_id != &id  {
-                                    error!(logger, "Received invalid snapshot chunk");
+                                    error!("Received invalid snapshot chunk");
                                     continue;
                                 }
                             } else {
                                 // We're not expecting a snapshot
-                                error!(logger, "Received invalid snapshot chunk");
+                                error!("Received invalid snapshot chunk");
                                 continue;
                             }
 
@@ -424,17 +432,17 @@ async fn main() -> Result<()> {
                                 // Reset snapshot from
                                 snapshot_from = None;
 
-                                info!(logger, "Restore db from snapshot complete"; "height" => height);
+                                info!(height = height, "Restore db from snapshot complete");
                             }
                         }
 
                         NetworkEvent::Accept { accept } => {
-                            info!(logger, "Received accept"; "height" => &accept.height, "skips" => &accept.skips, "from" => &from_peer_id.prefix(), "leader" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string(), "local_height" => solid.height());
+                            info!(height = &accept.height, skips = &accept.skips, from = &from_peer_id.prefix(), leader = &accept.leader_id.prefix(), hash = accept.proposal_hash.to_string(), local_height = solid.height(), "Received accept");
                             solid.receive_accept(&accept, &from_peer_id);
                         }
 
                         NetworkEvent::Proposal { manifest } => {
-                            info!(logger, "Received proposal"; "height" => &manifest.height, "skips" => &manifest.skips, "from" => &from_peer_id.prefix(), "leader" => &manifest.leader_id.prefix(), "hash" => &manifest.hash().to_string());
+                            info!(height = &manifest.height, skips = &manifest.skips, from = &from_peer_id.prefix(), leader = &manifest.leader_id.prefix(), hash = &manifest.hash().to_string(), "Received proposal");
 
                             // Lease the proposal changes
                             // #[allow(clippy::expect_used)]
@@ -445,11 +453,11 @@ async fn main() -> Result<()> {
                         }
 
                         NetworkEvent::Txn { txn } => {
-                            info!(logger, "Received txn"; "collection" => &txn.collection_id);
+                            info!(collection = &txn.collection_id, "Received txn");
                             match db.add_txn(txn).await {
                                 Ok(_) => (),
                                 Err(err) => {
-                                    error!(logger, "Error adding txn"; "err" => format!("{:?}", err));
+                                    error!(err = ?err,  "Error adding txn");
                                 }
                             }
                         }
@@ -461,7 +469,7 @@ async fn main() -> Result<()> {
                         // Node should send accept for an active proposal
                         // to another peer
                         SolidEvent::Accept { accept } => {
-                            info!(logger, "Send accept"; "height" => &accept.height, "skips" => &accept.skips, "to" => &accept.leader_id.prefix(), "hash" => accept.proposal_hash.to_string());
+                            info!(height = &accept.height, skips = &accept.skips, to = &accept.leader_id.prefix(), hash = accept.proposal_hash.to_string(), local_height = solid.height(), "Send accept");
                             // let leader = &accept.leader_id;
 
                             network.send(
@@ -488,7 +496,7 @@ async fn main() -> Result<()> {
                             let txns = match db.propose_txns(height) {
                                 Ok(txns) => txns,
                                 Err(err) => {
-                                    error!(logger, "Error getting pending changes"; "err" => format!("{:?}", err));
+                                    error!(err = ?err, "Error getting pending changes");
                                     continue;
                                 }
                             };
@@ -506,7 +514,7 @@ async fn main() -> Result<()> {
                             };
                             let proposal_hash = manifest.hash();
 
-                            info!(logger, "Propose"; "leader_id" => manifest.leader_id.prefix(), "hash" => proposal_hash.to_string(), "height" => height, "skips" => skips);
+                            info!(leader_id = manifest.leader_id.prefix(), hash = proposal_hash.to_string(), height = height, "skips" = skips, "Propose");
 
                             // Add proposal to own register, this will trigger an accept
                             solid.receive_proposal(manifest.clone());
@@ -520,14 +528,14 @@ async fn main() -> Result<()> {
 
                         // Commit a confirmed proposal changes
                         SolidEvent::Commit { manifest } => {
-                            info!(logger, "Commit"; "hash" => manifest.hash().to_string(), "height" => manifest.height, "skips" => manifest.skips);
+                            info!(hash = manifest.hash().to_string(), height = manifest.height, skips = manifest.skips, "Commit");
 
                             last_commit = Instant::now();
 
                             // We should panic here, because there is really no way to recover from
                             // an error once a value is committed
                             if let Err(err) = db.commit(manifest).await {
-                                error!(logger, "Error committing proposal"; "err" => format!("{:?}", err));
+                                error!(err = ?err, "Error committing proposal");
                                 return;
                             }
                         }
@@ -537,7 +545,7 @@ async fn main() -> Result<()> {
                             max_seen_height,
                             accepts_sent,
                         } => {
-                            info!(logger, "Out of sync"; "local_height" => height, "accepts_sent" => accepts_sent, "max_seen_height" => max_seen_height);
+                            info!(local_height = height, accepts_sent = accepts_sent, max_seen_height = max_seen_height, "Out of sync");
 
                             // Set as out of sync, so we mark the node as unhealthy immediately
                             db.out_of_sync(height);
@@ -562,11 +570,11 @@ async fn main() -> Result<()> {
                             proposal_hash,
                             peer_id,
                         } => {
-                            info!(logger, "Out of date proposal"; "local_height" => local_height, "proposal_height" => proposal_height, "proposal_hash" => proposal_hash.to_string(), "from" => peer_id.prefix());
+                            info!(local_height = local_height, proposal_height = proposal_height, proposal_hash = proposal_hash.to_string(), from = peer_id.prefix(), "Out of date proposal");
                         }
 
                         SolidEvent::DuplicateProposal { proposal_hash } => {
-                            info!(logger, "Duplicate proposal"; "hash" => proposal_hash.to_string());
+                            info!(hash = proposal_hash.to_string(),  "Duplicate proposal");
                         }
                     }
                 }
@@ -594,15 +602,15 @@ async fn main() -> Result<()> {
 
     tokio::select!(
         res = server => { // TODO: check if err
-            error!(logger, "HTTP server exited unexpectedly {res:#?}");
+            error!("HTTP server exited unexpectedly {res:#?}");
             res?
         }
         res = solid_handle => {
-            error!(logger, "Solid handle exited unexpectedly {res:#?}");
+            error!("Solid handle exited unexpectedly {res:#?}");
             res?
         },
         res = main_handle => {
-            error!(logger, "Main handle exited unexpectedly {res:#?}");
+            error!("Main handle exited unexpectedly {res:#?}");
             res?
         },
         _ = tokio::signal::ctrl_c() => {

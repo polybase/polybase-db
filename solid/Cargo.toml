@@ -1,6 +1,6 @@
 [package]
 name = "solid"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -8,7 +8,6 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
-slog = "2.7.0"
 sha2 = "0.10.6"
 uint = "0.9.5"
 libp2p-core = { versin = "0.39.0" }
@@ -29,8 +28,18 @@ chrono = "0.4"
 
 [dev-dependencies]
 quickcheck = "1.0.3"
-slog-term = "2.9.0"
-slog-async = "2.7.0"
 rand = "0.8"
 proptest = "1"
 test-strategy = "0.3"
+tracing = { version = "0.1.37", features = ["valuable"] }
+tracing-subscriber = {version = "0.3.17", features = ["env-filter", "fmt", "std", "registry", "ansi"] }
+
+[[example]]
+
+name = "basic"
+path = "examples/basic.rs"
+
+[[example]]
+
+name = "multi"
+path = "examples/multi.rs"
