@@ -316,10 +316,10 @@ impl SolidShared {
 
     /// Checks for either: next_proposal or a skip timeout
     fn tick(&self) -> Option<DateTime<Utc>> {
-        let skip_timeout = self.skip_timeout.load()?;
+        let skip_timeout = self.skip_timeout.load();
 
-        if skip_timeout > Utc::now() {
-            return Some(skip_timeout);
+        if skip_timeout? > Utc::now() {
+            return skip_timeout;
         }
 
         if let Some(event) = self.store.lock().skip() {
@@ -328,7 +328,7 @@ impl SolidShared {
             self.skip_timeout.fetch_add(add);
         }
 
-        Some(skip_timeout)
+        self.skip_timeout.load()
     }
 }
 
@@ -339,9 +339,9 @@ async fn background_worker(shared: Arc<SolidShared>) {
     while !shared.is_shutdown() {
         // Check timeout
         if let Some(when) = shared.tick() {
-            let time_to_sleep = when - Utc::now();
+            let time_to_sleep = (when - Utc::now()).to_std().unwrap();
             tokio::select! {
-                _ = tokio::time::sleep(time_to_sleep.to_std().unwrap()) => {}
+                _ = tokio::time::sleep(time_to_sleep) => {}
                 _ = shared.background_worker.notified() => {}
             }
         } else {
@@ -354,7 +354,7 @@ async fn background_worker(shared: Arc<SolidShared>) {
 #[cfg(test)]
 mod test {
 
-    use chrono::Timelike;
+    use chrono::{TimeZone, Timelike};
 
     use crate::proposal::ProposalAccept;
 
@@ -476,18 +476,36 @@ mod test {
     }
 
     #[test]
+    fn round_millis_works() {
+        let time = Utc
+            .with_ymd_and_hms(2023, 1, 1, 1, 1, 1)
+            .unwrap()
+            .with_nanosecond(123_000_123)
+            .unwrap();
+
+        let expected = Utc
+            .with_ymd_and_hms(2023, 1, 1, 1, 1, 1)
+            .unwrap()
+            .with_nanosecond(123_000_000)
+            .unwrap();
+
+        assert_eq!(round_millis(time), expected);
+    }
+
+    #[test]
     fn test_tick_send_skip() {
         let [p1, _, _] = create_peers();
         let config = SolidConfig::default();
         let register = Solid::genesis(p1, create_peers().to_vec(), config);
 
+        let now = Utc::now();
+
         // Add an expired skip_timeout instant
-        register.shared.skip_timeout.store(Some(Utc::now()));
+        register.shared.skip_timeout.store(Some(now));
 
         let next_tick = register.shared.tick();
 
         // Should return the next tick
-        let now = Utc::now();
         assert!(
             next_tick > Some(now + chrono::Duration::seconds(3)),
             "next tick {next_tick:?} should be more than 3 seconds away from now: {now:?}",
