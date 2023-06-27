@@ -93,7 +93,11 @@ jobs:
       - name: Install deps
         working-directory: polybase-ts
         run: yarn install && yarn build
-        
+
+      - name: Wait for server
+        run: |
+          timeout 30 bash -c 'while [[ "$(curl -s -o /dev/null -w ''%{http_code}'' localhost:8080)" != "200" ]]; do sleep 1; done' || false
+
       - name: Run E2E tests
         working-directory: polybase-ts/packages/client
         run: yarn test:e2e
