@@ -1,7 +1,7 @@
 use abi::Parser;
 use actix_web::{dev::Server, get, post, web, App, HttpResponse, HttpServer, Responder};
 use base64::Engine;
-use prover::{Inputs, ProgramExt};
+use polybase_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use serde::Deserialize;
 use std::{
     collections::hash_map::DefaultHasher,
@@ -36,7 +36,7 @@ struct ProveRequest {
 ))]
 #[post("/prove")]
 async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, actix_web::Error> {
-    let program = prover::compile_program(&req.abi, &req.miden_code).map_err(|e| {
+    let program = compile_program(&req.abi, &req.miden_code).map_err(|e| {
         actix_web::error::ErrorInternalServerError(format!("failed to compile program: {}", e))
     })?;
 
@@ -45,7 +45,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, actix_web
         .clone()
         .unwrap_or(req.abi.default_this_value()?.into());
 
-    let this_hash = prover::hash_this(
+    let this_hash = hash_this(
         req.abi.this_type.clone().ok_or_else(|| {
             actix_web::error::ErrorInternalServerError("ABI is missing `this` type")
         })?,
@@ -66,7 +66,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, actix_web
         args: req.args.clone(),
     };
 
-    let output = prover::prove(&program, &inputs)?;
+    let output = polybase_prover::prove(&program, &inputs)?;
 
     let program_info = program.to_program_info_bytes();
     let new_this = Into::<serde_json::Value>::into(output.new_this);

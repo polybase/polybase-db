@@ -1,13 +1,13 @@
 [package]
 name = "prover"
-version = "0.1.0"
+version = "0.6.4"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-prover = { git = "https://github.com/polybase/polylang", rev = "5da3733cff92618e9714886fb62bec47c12743c5" }
-abi = { git = "https://github.com/polybase/polylang", rev = "5da3733cff92618e9714886fb62bec47c12743c5" }
+polybase_prover = { package = "prover", git = "https://github.com/polybase/polylang", rev = "ec91f176173f03f0f1f3eaf99a2e5b1beaf70135" }
+abi = { git = "https://github.com/polybase/polylang", rev = "ec91f176173f03f0f1f3eaf99a2e5b1beaf70135" }
 actix-web = "4"
 base64 = "0.21"
 serde = { version = "1.0", features = ["derive"] }
