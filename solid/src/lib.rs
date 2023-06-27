@@ -4,6 +4,7 @@ mod cache;
 mod key;
 mod solid;
 mod store;
+mod util;
 
 pub mod config;
 pub mod event;

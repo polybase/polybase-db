@@ -24,6 +24,7 @@ hex = "0.4.3"
 bs58 = "0.5.0"
 parking_lot = { version = "0.12.1", features = ["deadlock_detection"] }
 # async-trait = "0.1"
+chrono = "0.4"
 
 
 [dev-dependencies]
@@ -31,3 +32,5 @@ quickcheck = "1.0.3"
 slog-term = "2.9.0"
 slog-async = "2.7.0"
 rand = "0.8"
+proptest = "1"
+test-strategy = "0.3"
