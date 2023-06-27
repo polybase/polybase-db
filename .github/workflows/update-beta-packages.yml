@@ -23,7 +23,7 @@ jobs:
       - name: Create a PR  # Action will update PR automatically if it already exists
         uses: peter-evans/create-pull-request@v3
         with:
-          token: ${{ secrets.ADMIN_TOKEN }}
+          token: ${{ secrets.ADMIN_PAT }}
           title: Update beta cargo packages
           branch: update-cargo-beta-packages
           delete-branch: true
