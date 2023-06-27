@@ -83,7 +83,7 @@ struct PortPool {
     ports: HashSet<u16>,
 }
 
-static API_PORT_POOL: Lazy<Mutex<PortPool>> = once_cell::sync::Lazy::new(|| {
+static PORT_POOL: Lazy<Mutex<PortPool>> = once_cell::sync::Lazy::new(|| {
     Mutex::new(PortPool {
         ports: (8081..8081 + 1000).collect(),
     })
@@ -123,7 +123,7 @@ impl Drop for Server {
     fn drop(&mut self) {
         self.process.kill().expect("Failed to stop polybase");
         if !self.keep_port_after_drop {
-            API_PORT_POOL.lock().unwrap().release(self.api_port);
+            PORT_POOL.lock().unwrap().release(self.api_port);
         }
     }
 }
@@ -132,7 +132,8 @@ impl Server {
     fn setup(config: Option<ServerConfig>) -> Arc<Self> {
         let root_dir: tempfile::TempDir =
             tempfile::tempdir().expect("Failed to create temp root dir");
-        let api_port = API_PORT_POOL.lock().unwrap().get();
+        let api_port = PORT_POOL.lock().unwrap().get();
+        let prover_api_port = PORT_POOL.lock().unwrap().get();
 
         let mut command = Command::new(find_binary());
 
@@ -150,6 +151,9 @@ impl Server {
         command
             .arg("--rpc-laddr")
             .arg(format!("127.0.0.1:{api_port}"));
+        command
+            .arg("--prover-laddr")
+            .arg(format!("127.0.0.1:{prover_api_port}"));
 
         if !std::env::var("LOG_POLYBASE_OUTPUT")
             .map(|v| v == "1")
