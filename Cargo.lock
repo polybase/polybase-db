@@ -15,7 +15,7 @@ dependencies = [
 [[package]]
 name = "abi"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=ec91f176173f03f0f1f3eaf99a2e5b1beaf70135#ec91f176173f03f0f1f3eaf99a2e5b1beaf70135"
+source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
 dependencies = [
  "base64 0.21.0",
  "serde",
@@ -3709,7 +3709,7 @@ dependencies = [
  "parking_lot",
  "prost",
  "prost-build",
- "prover 0.6.4",
+ "prover",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",
@@ -3753,7 +3753,7 @@ dependencies = [
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=ec91f176173f03f0f1f3eaf99a2e5b1beaf70135#ec91f176173f03f0f1f3eaf99a2e5b1beaf70135"
+source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
 dependencies = [
  "abi",
  "actix-web",
@@ -3763,7 +3763,7 @@ dependencies = [
  "miden-processor",
  "miden-stdlib",
  "miden-vm",
- "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=ec91f176173f03f0f1f3eaf99a2e5b1beaf70135)",
+ "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c)",
  "quickcheck",
  "quickcheck_macros",
  "regex",
@@ -3771,6 +3771,19 @@ dependencies = [
  "serde_json",
  "wasm-bindgen",
  "winter-math 0.4.2",
+]
+
+[[package]]
+name = "polylang-prover"
+version = "0.1.0"
+source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
+dependencies = [
+ "abi",
+ "miden-processor",
+ "miden-stdlib",
+ "miden-vm",
+ "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c)",
+ "serde_json",
 ]
 
 [[package]]
@@ -3788,7 +3801,7 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=ec91f176173f03f0f1f3eaf99a2e5b1beaf70135#ec91f176173f03f0f1f3eaf99a2e5b1beaf70135"
+source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
@@ -3942,25 +3955,12 @@ dependencies = [
 
 [[package]]
 name = "prover"
-version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=ec91f176173f03f0f1f3eaf99a2e5b1beaf70135#ec91f176173f03f0f1f3eaf99a2e5b1beaf70135"
-dependencies = [
- "abi",
- "miden-processor",
- "miden-stdlib",
- "miden-vm",
- "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=ec91f176173f03f0f1f3eaf99a2e5b1beaf70135)",
- "serde_json",
-]
-
-[[package]]
-name = "prover"
 version = "0.6.4"
 dependencies = [
  "abi",
  "actix-web",
  "base64 0.21.0",
- "prover 0.1.0",
+ "polylang-prover",
  "serde",
  "serde_json",
  "tracing",

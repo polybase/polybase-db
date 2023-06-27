@@ -1,7 +1,7 @@
 use abi::Parser;
 use actix_web::{dev::Server, get, post, web, App, HttpResponse, HttpServer, Responder};
 use base64::Engine;
-use polybase_prover::{compile_program, hash_this, Inputs, ProgramExt};
+use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use serde::Deserialize;
 use std::{
     collections::hash_map::DefaultHasher,
@@ -66,7 +66,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, actix_web
         args: req.args.clone(),
     };
 
-    let output = polybase_prover::prove(&program, &inputs)?;
+    let output = polylang_prover::prove(&program, &inputs)?;
 
     let program_info = program.to_program_info_bytes();
     let new_this = Into::<serde_json::Value>::into(output.new_this);
