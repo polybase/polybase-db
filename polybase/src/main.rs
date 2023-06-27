@@ -45,7 +45,7 @@ type Result<T> = std::result::Result<T, AppError>;
 ///   - for profiling
 async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<()> {
     // common filter - show only `warn` and above for external crates.
-    let mut filter = tracing_subscriber::EnvFilter::try_new("warn")?;
+    let mut filter = tracing_subscriber::EnvFilter::try_new("trace")?;
 
     for proj_crate in ["polybase", "indexer", "gateway", "solid", "prover"] {
         filter = filter.add_directive(format!("{proj_crate}={}", log_level).parse()?);

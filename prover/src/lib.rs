@@ -3,6 +3,19 @@ use actix_web::{dev::Server, get, post, web, App, HttpResponse, HttpServer, Resp
 use base64::Engine;
 use prover::{Inputs, ProgramExt};
 use serde::Deserialize;
+use std::{
+    collections::hash_map::DefaultHasher,
+    hash::{Hash, Hasher},
+};
+
+fn hash<T>(obj: T) -> u64
+where
+    T: Hash,
+{
+    let mut hasher = DefaultHasher::new();
+    obj.hash(&mut hasher);
+    hasher.finish()
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +27,13 @@ struct ProveRequest {
     args: Vec<serde_json::Value>,
 }
 
+#[tracing::instrument(skip_all, fields(
+    miden_code_hash = %hash(&req.miden_code),
+    abi = ?req.abi,
+    ctx_public_key = ?req.ctx_public_key,
+    this = ?req.this,
+    args = ?req.args,
+))]
 #[post("/prove")]
 async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, actix_web::Error> {
     let program = prover::compile_program(&req.abi, &req.miden_code).map_err(|e| {
@@ -73,11 +93,13 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, actix_web
     })))
 }
 
+#[tracing::instrument]
 #[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body("Polybase Prover Service")
 }
 
+#[tracing::instrument]
 pub fn server(addr: &str) -> std::io::Result<Server> {
     Ok(HttpServer::new(|| App::new().service(index).service(prove))
         .bind(addr)?

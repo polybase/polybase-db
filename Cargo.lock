@@ -3950,6 +3950,7 @@ dependencies = [
  "prover 0.1.0 (git+https://github.com/polybase/polylang?rev=5da3733cff92618e9714886fb62bec47c12743c5)",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
