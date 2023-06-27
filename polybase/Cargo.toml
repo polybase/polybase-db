@@ -13,7 +13,8 @@ actix-server = "2.2"
 indexer = { path = "../indexer" }
 gateway = { path = "../gateway" }
 solid = { path = "../solid" }
-prover = { path = "../prover" }
+polylang-prover = { git = "https://github.com/polybase/polylang", rev = "e9da93f7db1bdd68c461e02e3a88f31f81455caf", version = "0.1.0" }
+abi = { git = "https://github.com/polybase/polylang", rev = "e9da93f7db1bdd68c461e02e3a88f31f81455caf", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = { version = "2.2", features = ["json"] }
@@ -62,6 +63,7 @@ tracing = { version = "0.1.37", features = ["valuable"] }
 tracing-subscriber = {version = "0.3.17", features = ["env-filter", "fmt", "std", "registry", "ansi", "json"] }
 tracing-stackdriver = "0.7.2"
 valuable = { version = "0.1.0", features = ["derive"] }
+base64 = "0.21"
 
 [dev-dependencies]
 tokio-test = "0.4.2"
@@ -70,8 +72,6 @@ tempfile = "3"
 url = "*"
 once_cell = "1"
 urlencoding = "2"
-base64 = "0.21"
-
 
 [build-dependencies]
 tonic-build = "0.8.4"

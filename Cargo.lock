@@ -3681,6 +3681,7 @@ dependencies = [
 name = "polybase"
 version = "0.6.4"
 dependencies = [
+ "abi",
  "actix-cors",
  "actix-server",
  "actix-web",
@@ -3707,9 +3708,9 @@ dependencies = [
  "libp2p-quic",
  "once_cell",
  "parking_lot",
+ "polylang-prover",
  "prost",
  "prost-build",
- "prover",
  "rand 0.8.5",
  "reqwest",
  "secp256k1",
@@ -3951,19 +3952,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "213622a1460818959ac1181aaeb2dc9c7f63df720db7d788b3e24eacd1983e13"
 dependencies = [
  "prost",
-]
-
-[[package]]
-name = "prover"
-version = "0.6.4"
-dependencies = [
- "abi",
- "actix-web",
- "base64 0.21.0",
- "polylang-prover",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]

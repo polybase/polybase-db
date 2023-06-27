@@ -47,7 +47,7 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
     // common filter - show only `warn` and above for external crates.
     let mut filter = tracing_subscriber::EnvFilter::try_new("warn")?;
 
-    for proj_crate in ["polybase", "indexer", "gateway", "solid", "prover"] {
+    for proj_crate in ["polybase", "indexer", "gateway", "solid"] {
         filter = filter.add_directive(format!("{proj_crate}={}", log_level).parse()?);
     }
 
@@ -582,8 +582,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    let prover_server = prover::server(&config.prover_laddr)?;
-
     // Check for deadlocks
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(10));
@@ -613,10 +611,6 @@ async fn main() -> Result<()> {
         },
         res = main_handle => {
             error!("Main handle exited unexpectedly {res:#?}");
-            res?
-        },
-        res = prover_server => {
-            error!("Prover server handle exited unexpectedly {res:#?}");
             res?
         },
         _ = tokio::signal::ctrl_c() => {

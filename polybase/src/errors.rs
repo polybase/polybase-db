@@ -55,6 +55,18 @@ pub enum AppError {
     #[error("namespace public key is invalid, expected {0} got {1}")]
     InvalidNamespacePublicKey(String, String),
 
+    #[error("failed to compile Miden program")]
+    MidenCompile(Box<dyn std::error::Error>),
+
+    #[error("ABI is missing `this` type")]
+    ABIIsMissingThisType,
+
+    #[error("prover error")]
+    ProveError(Box<dyn std::error::Error>),
+
+    #[error("abi error")]
+    ABIError(Box<dyn std::error::Error>),
+
     #[error("tracing parse error")]
     TracingParse(#[from] tracing_subscriber::filter::ParseError),
 

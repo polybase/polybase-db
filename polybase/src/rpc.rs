@@ -1,6 +1,5 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-use crate::auth;
 use crate::db::{Db, DbWaitResult};
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
@@ -8,10 +7,14 @@ use crate::errors::metrics::MetricsData;
 use crate::errors::reason::ReasonCode;
 use crate::errors::AppError;
 use crate::txn::CallTxn;
+use crate::{auth, util::hash};
+use abi::Parser;
 use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
+use base64::Engine;
 use indexer::AuthUser;
+use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
@@ -408,6 +411,115 @@ async fn call_function(
             None => serde_json::Value::Null,
         },
     }))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProveRequest {
+    miden_code: String,
+    abi: abi::Abi,
+    ctx_public_key: Option<abi::publickey::Key>,
+    this: Option<serde_json::Value>,
+    args: Vec<serde_json::Value>,
+}
+
+#[tracing::instrument(skip_all, fields(
+    miden_code_hash = %hash(&req.miden_code),
+    abi = ?req.abi,
+    ctx_public_key = ?req.ctx_public_key,
+    this = ?req.this,
+    args = ?req.args,
+))]
+#[post("/v0/prove")]
+async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError> {
+    let program = compile_program(&req.abi, &req.miden_code).map_err(|e| {
+        HTTPError::new(
+            ReasonCode::Internal,
+            Some(Box::new(AppError::MidenCompile(e))),
+        )
+    })?;
+
+    let this = req.this.clone().unwrap_or(
+        req.abi
+            .default_this_value()
+            .map_err(|err| {
+                HTTPError::new(
+                    ReasonCode::Internal,
+                    Some(Box::new(AppError::ABIError(err))),
+                )
+            })?
+            .into(),
+    );
+
+    let this_hash = hash_this(
+        req.abi.this_type.clone().ok_or_else(|| {
+            HTTPError::new(
+                ReasonCode::Internal,
+                Some(Box::new(AppError::ABIIsMissingThisType)),
+            )
+        })?,
+        &req.abi
+            .this_type
+            .as_ref()
+            .ok_or_else(|| {
+                HTTPError::new(
+                    ReasonCode::Internal,
+                    Some(Box::new(AppError::ABIIsMissingThisType)),
+                )
+            })?
+            .parse(&this)
+            .map_err(|err| {
+                HTTPError::new(
+                    ReasonCode::Internal,
+                    Some(Box::new(AppError::ABIError(err))),
+                )
+            })?,
+    )
+    .map_err(|err| {
+        HTTPError::new(
+            ReasonCode::Internal,
+            Some(Box::new(AppError::ProveError(err))),
+        )
+    })?;
+
+    let inputs = Inputs {
+        abi: req.abi.clone(),
+        ctx_public_key: req.ctx_public_key.clone(),
+        this: this.clone(),
+        this_hash,
+        args: req.args.clone(),
+    };
+
+    let output = polylang_prover::prove(&program, &inputs).map_err(|err| {
+        HTTPError::new(
+            ReasonCode::Internal,
+            Some(Box::new(AppError::ProveError(err))),
+        )
+    })?;
+
+    let program_info = program.to_program_info_bytes();
+    let new_this = Into::<serde_json::Value>::into(output.new_this);
+
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "old": {
+            "this": this,
+            "hash": inputs.this_hash,
+        },
+        "new": {
+            "selfDestructed": output.self_destructed,
+            "this": new_this,
+            "hash": output.new_hash,
+        },
+        "stack": {
+            "input": inputs.stack_values(),
+            "output": output.stack,
+        },
+        "programInfo": base64::engine::general_purpose::STANDARD.encode(program_info),
+        "proof": base64::engine::general_purpose::STANDARD.encode(output.proof),
+        "debug": {
+            "logs": output.run_output.logs(),
+        }
+    })))
 }
 
 #[get("/v0/health")]

@@ -4,6 +4,8 @@ use crate::errors::Result;
 use chrono::prelude::*;
 use libp2p::identity;
 use rand::RngCore;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 pub(crate) fn get_key_path(dir: &str) -> Option<PathBuf> {
@@ -48,4 +50,13 @@ pub(crate) fn unix_now() -> usize {
     let now = Utc::now();
     let timestamp = now.timestamp();
     timestamp as usize
+}
+
+pub(crate) fn hash<T>(obj: T) -> u64
+where
+    T: Hash,
+{
+    let mut hasher = DefaultHasher::new();
+    obj.hash(&mut hasher);
+    hasher.finish()
 }
