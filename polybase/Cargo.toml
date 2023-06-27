@@ -13,6 +13,7 @@ actix-server = "2.2"
 indexer = { path = "../indexer" }
 gateway = { path = "../gateway" }
 solid = { path = "../solid" }
+prover = { path = "../prover" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = { version = "2.2", features = ["json"] }

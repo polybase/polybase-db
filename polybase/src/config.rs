@@ -92,6 +92,10 @@ pub struct Config {
     /// Restrict namespaces to pk/<pk>/<collection_name>
     #[arg(long, env = "RESTRICT_NAMESPACES", default_value = "false")]
     pub restrict_namespaces: bool,
+
+    /// Prover listen addr
+    #[arg(long, env = "RPC_LADDR", default_value = "0.0.0.0:8090")]
+    pub prover_laddr: String,
 }
 
 #[derive(Subcommand, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
