@@ -93,13 +93,11 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, actix_web
     })))
 }
 
-#[tracing::instrument]
 #[get("/")]
 async fn index() -> impl Responder {
     HttpResponse::Ok().body("Polybase Prover Service")
 }
 
-#[tracing::instrument]
 pub fn server(addr: &str) -> std::io::Result<Server> {
     Ok(HttpServer::new(|| App::new().service(index).service(prove))
         .bind(addr)?
