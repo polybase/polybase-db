@@ -15,7 +15,7 @@ dependencies = [
 [[package]]
 name = "abi"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
+source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
 dependencies = [
  "base64 0.21.0",
  "serde",
@@ -3753,7 +3753,7 @@ dependencies = [
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
+source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
 dependencies = [
  "abi",
  "actix-web",
@@ -3763,7 +3763,7 @@ dependencies = [
  "miden-processor",
  "miden-stdlib",
  "miden-vm",
- "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c)",
+ "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf)",
  "quickcheck",
  "quickcheck_macros",
  "regex",
@@ -3776,13 +3776,13 @@ dependencies = [
 [[package]]
 name = "polylang-prover"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
+source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
 dependencies = [
  "abi",
  "miden-processor",
  "miden-stdlib",
  "miden-vm",
- "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c)",
+ "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf)",
  "serde_json",
 ]
 
@@ -3801,7 +3801,7 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=4921640d4b63742c70b40179ef6fd1b48abc423c#4921640d4b63742c70b40179ef6fd1b48abc423c"
+source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
 dependencies = [
  "lalrpop",
  "lalrpop-util",
