@@ -36,7 +36,7 @@ jobs:
   
       - name: Create Pull Request
         env:
-          GITHUB_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.ADMIN_PAT }}
         run: |
           branch_name=$(echo ${{ github.ref }} | sed 's/refs\/heads\///')
           curl -X POST \
