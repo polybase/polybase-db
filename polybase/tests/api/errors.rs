@@ -794,7 +794,7 @@ collection Test {
 async fn invalid_index_name_update() {
     let server = Server::setup_and_wait(None).await;
 
-    let collection = server
+    server
         .create_collection_untyped(
             "ns/InvalidIndexTest",
             r#"
@@ -818,7 +818,6 @@ async fn invalid_index_name_update() {
         server
             .update_collection_untyped(
                 "ns/InvalidIndexTest",
-                &collection.id,
                 r#"
         @public
         collection InvalidIndexTest {
