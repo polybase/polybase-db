@@ -12,6 +12,7 @@ mod map_field;
 mod nested_field;
 mod other_collection_fns;
 mod restrict_namespaces;
+mod schema_index_update;
 mod start_stop;
 mod store_other_collection_records;
 mod whitelist;
@@ -456,11 +457,10 @@ impl Server {
     async fn update_collection<T: DeserializeOwned>(
         self: &Arc<Self>,
         collection: &str,
-        record: &str,
         schema: &str,
         signer: Option<&Signer>,
     ) -> Result<Collection<T>, Error> {
-        self.update_record::<serde_json::Value>("Collection", record, json!([schema]), signer)
+        self.update_record::<serde_json::Value>("Collection", collection, json!([schema]), signer)
             .await?;
 
         Ok(self.collection(collection))
@@ -469,12 +469,10 @@ impl Server {
     async fn update_collection_untyped(
         self: &Arc<Self>,
         collection: &str,
-        record: &str,
         schema: &str,
         signer: Option<&Signer>,
     ) -> Result<Collection<serde_json::Value>, Error> {
-        self.update_collection(collection, record, schema, signer)
-            .await
+        self.update_collection(collection, schema, signer).await
     }
 
     async fn create_collection_untyped(

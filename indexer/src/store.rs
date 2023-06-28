@@ -2,6 +2,7 @@ use crate::snapshot::{SnapshotChunk, SnapshotIterator};
 use parking_lot::Mutex;
 use prost::Message;
 use rocksdb::WriteBatch;
+use std::collections::HashMap;
 use std::mem;
 use std::{convert::AsRef, path::Path, sync::Arc};
 
@@ -54,8 +55,14 @@ pub(crate) struct Store {
     state: Arc<Mutex<StoreState>>,
 }
 
+enum StoreOp {
+    Put(Vec<u8>),
+    Delete,
+}
+
 pub(crate) struct StoreState {
-    batch: WriteBatch,
+    // batch: WriteBatch,
+    pending: HashMap<Vec<u8>, StoreOp>,
 }
 
 impl Store {
@@ -69,7 +76,8 @@ impl Store {
         Ok(Self {
             db: Arc::new(db),
             state: Arc::new(Mutex::new(StoreState {
-                batch: WriteBatch::default(),
+                // batch: WriteBatch::default(),
+                pending: HashMap::new(),
             })),
         })
     }
@@ -79,12 +87,23 @@ impl Store {
         // let batch = Arc::clone(&self.batch);
         let db = Arc::clone(&self.db);
 
-        let batch = {
+        let pending = {
             let mut state = self.state.lock();
-            mem::take(&mut state.batch)
+            mem::take(&mut state.pending)
         };
 
-        tokio::task::spawn_blocking(move || db.write(batch)).await??;
+        let mut db_batch = WriteBatch::default();
+
+        tokio::task::spawn_blocking(move || {
+            for (key, op) in pending {
+                match op {
+                    StoreOp::Put(value) => db_batch.put(key, value),
+                    StoreOp::Delete => db_batch.delete(key),
+                }
+            }
+            db.write(db_batch)
+        })
+        .await??;
 
         Ok(())
     }
@@ -102,7 +121,7 @@ impl Store {
         let value = value.serialize()?;
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || {
-            state.lock().batch.put(key, value);
+            state.lock().pending.insert(key, StoreOp::Put(value));
         })
         .await?;
 
@@ -113,10 +132,15 @@ impl Store {
     pub(crate) async fn get(&self, key: &Key<'_>) -> Result<Option<RecordRoot>> {
         let key = key.serialize()?;
         let db = Arc::clone(&self.db);
+        let state = Arc::clone(&self.state);
 
-        tokio::task::spawn_blocking(move || match db.get_pinned(key)? {
-            Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
-            None => Ok(None),
+        tokio::task::spawn_blocking(move || match state.lock().pending.get(&key) {
+            Some(StoreOp::Put(value)) => Ok(Some(bincode::deserialize_from(value.as_slice())?)),
+            Some(StoreOp::Delete) => Ok(None),
+            None => match db.get_pinned(key)? {
+                Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
+                None => Ok(None),
+            },
         })
         .await?
     }
@@ -126,7 +150,7 @@ impl Store {
         let key = key.serialize()?;
         let state = Arc::clone(&self.state);
         tokio::task::spawn_blocking(move || {
-            state.lock().batch.delete(key);
+            state.lock().pending.insert(key, StoreOp::Delete);
         })
         .await?;
 
