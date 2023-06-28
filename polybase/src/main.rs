@@ -604,7 +604,7 @@ async fn main() -> Result<()> {
         res = server => { // TODO: check if err
             error!("HTTP server exited unexpectedly {res:#?}");
             res?
-        }
+        },
         res = solid_handle => {
             error!("Solid handle exited unexpectedly {res:#?}");
             res?
