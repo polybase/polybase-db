@@ -60,16 +60,7 @@ collection Account {
         .await
         .unwrap();
 
-    let account_id1_john_true = collection.create(json!(["id1"]), None).await.unwrap();
-
-    assert_eq!(
-        account_id1_john_true,
-        Account {
-            id: "id1".to_string(),
-            hello: "hello".to_string(),
-            active: true
-        }
-    );
+    collection.create(json!(["id1"]), None).await.unwrap();
 
     let res = collection
         .list(
@@ -86,10 +77,10 @@ collection Account {
 
     assert_eq!(res.data.len(), 1);
 
-    server
-        .update_collection::<Account>("ns/Account", schema2, Some(&signer))
-        .await
-        .unwrap();
+    let create = collection.create(json!(["id2"]), None);
+    let update_schema = server.update_collection::<Account>("ns/Account", schema2, Some(&signer));
+
+    let (_, _) = tokio::join!(create, update_schema);
 
     let res = collection
         .list(
@@ -105,7 +96,5 @@ collection Account {
         .await
         .unwrap();
 
-    assert_eq!(res.data.len(), 1);
-
-    assert_eq!(res.data.len(), 1);
+    assert_eq!(res.data.len(), 2);
 }

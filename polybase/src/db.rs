@@ -319,10 +319,16 @@ impl Db {
 
     #[tracing::instrument(skip(self))]
     pub fn propose_txns(&self, height: usize) -> Result<Vec<solid::txn::Txn>> {
-        // TODO: check txns do not affect the same record
-        self.mempool
+        type TxnList = Vec<([u8; 32], CallTxn)>;
+        let (mut collection_txns, mut other_txns): (TxnList, TxnList) = self
+            .mempool
             .lease_batch(height, self.config.block_txns_count)
             .into_iter()
+            .partition(|(_, call_txn)| call_txn.collection_id == "Collection");
+
+        collection_txns
+            .drain(..)
+            .chain(other_txns.drain(..)) // Chain the two parts
             .map(|(id, call_txn)| {
                 Ok(solid::txn::Txn {
                     // TODO: remove unwrap
