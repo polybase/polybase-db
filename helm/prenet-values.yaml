@@ -7,6 +7,13 @@ labels:
    kube-monkey/kill-mode: "random-max-percent"
    kube-monkey/kill-value: '60'
 
+podLabels:
+   kube-monkey/enabled: enabled
+   kube-monkey/identifier: polybase
+   kube-monkey/mtbf: '1'
+   kube-monkey/kill-mode: "random-max-percent"
+   kube-monkey/kill-value: '60'
+
 replicaCount: 3
 
 image:
