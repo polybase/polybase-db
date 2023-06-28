@@ -135,9 +135,7 @@ impl Store {
         let state = Arc::clone(&self.state);
 
         tokio::task::spawn_blocking(move || match state.lock().pending.get(&key) {
-            Some(StoreOp::Put(value)) => {
-                return Ok(Some(bincode::deserialize_from(value.as_slice())?))
-            }
+            Some(StoreOp::Put(value)) => Ok(Some(bincode::deserialize_from(value.as_slice())?)),
             Some(StoreOp::Delete) => Ok(None),
             None => match db.get_pinned(key)? {
                 Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
