@@ -58,13 +58,15 @@ pub(crate) async fn check_for_migration(store: &store::Store) -> Result<()> {
     }
 }
 
-// Currenty loading this all into memory, but its only indexes so it should be fine.
+/// Migration can fail half way through, but because we only commit the version at the end
+/// it will restart the migration process.
 async fn migrate_to_v1(store: &store::Store) -> Result<()> {
     info!("Migrating database to v1");
 
     // Delete index
     info!("Deleting all indexes");
     delete_all_index_records(store).await?;
+    store.commit().await?;
 
     // Apply indexes
     info!("Reapplying indexes");
@@ -143,6 +145,9 @@ async fn delete_all_index_records(store: &store::Store) -> Result<()> {
 async fn apply_indexes(store: &store::Store) -> Result<()> {
     for collection_id in get_collection_ids(store).await? {
         build_collection_indexes(store, collection_id).await?;
+
+        // Commiting here to release the memory
+        store.commit().await?;
     }
     Ok(())
 }
