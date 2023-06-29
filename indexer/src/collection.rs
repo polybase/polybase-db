@@ -1086,7 +1086,12 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
-    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
+    pub(crate) async fn add_indexes(
+        &self,
+        record_id: &str,
+        data_key: &keys::Key<'_>,
+        record: &RecordRoot,
+    ) {
         let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: match data_key.serialize() {
                 Ok(data) => data,

@@ -94,13 +94,16 @@ pub struct Db {
 }
 
 impl Db {
-    pub fn new(root_dir: String, config: DbConfig) -> Result<Self> {
+    pub async fn new(root_dir: String, config: DbConfig) -> Result<Self> {
         let (sender, receiver) = mpsc::channel::<CallTxn>(100);
 
         // Create the indexer
         #[allow(clippy::unwrap_used)]
         let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
         let indexer = Indexer::new(indexer_dir)?;
+
+        // Check for any migrations
+        indexer.check_for_migration().await?;
 
         Ok(Self {
             mempool: Mempool::new(),

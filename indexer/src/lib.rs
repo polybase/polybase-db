@@ -5,6 +5,7 @@ use std::path::Path;
 pub mod collection;
 mod index;
 pub mod keys;
+mod migrate;
 mod proto;
 pub mod publickey;
 mod record;
@@ -50,6 +51,9 @@ pub enum IndexerError {
 
     #[error("where query error")]
     WhereQuery(#[from] where_query::WhereQueryError),
+
+    #[error("migration error")]
+    Migration(#[from] migrate::Error),
 }
 
 pub struct Indexer {
@@ -60,6 +64,12 @@ impl Indexer {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let store = store::Store::open(path)?;
         Ok(Self { store })
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn check_for_migration(&self) -> Result<()> {
+        let store = &self.store;
+        Ok(migrate::check_for_migration(store).await?)
     }
 
     #[tracing::instrument(skip(self))]
