@@ -102,7 +102,7 @@ spec:
           - name: NETWORK_LADDR
             value: "/ip4/0.0.0.0/tcp/5001"
           - name: LOG_FORMAT
-            value: "JSON"
+            value: "STACK_DRIVER"
             {{- if .Values.extraEnvVars }}
             {{- include "polybase.render" (dict "value" .Values.extraEnvVars "context" $) | nindent 10 }}
             {{- end }}
