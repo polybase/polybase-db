@@ -73,12 +73,14 @@ pub enum DbWaitResult<T> {
 #[derive(Debug)]
 pub struct DbConfig {
     block_txns_count: usize,
+    migration_batch_size: usize,
 }
 
 impl Default for DbConfig {
     fn default() -> Self {
         DbConfig {
             block_txns_count: 2000,
+            migration_batch_size: 1000,
         }
     }
 }
@@ -103,7 +105,9 @@ impl Db {
         let indexer = Indexer::new(indexer_dir)?;
 
         // Check for any migrations
-        indexer.check_for_migration().await?;
+        indexer
+            .check_for_migration(config.migration_batch_size)
+            .await?;
 
         Ok(Self {
             mempool: Mempool::new(),

@@ -67,9 +67,9 @@ impl Indexer {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn check_for_migration(&self) -> Result<()> {
+    pub async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
         let store = &self.store;
-        Ok(migrate::check_for_migration(store).await?)
+        Ok(migrate::check_for_migration(store, migration_batch_size).await?)
     }
 
     #[tracing::instrument(skip(self))]
