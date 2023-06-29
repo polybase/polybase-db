@@ -577,6 +577,7 @@ pub fn create_rpc_server(
             .service(root)
             .service(health)
             .service(status)
+            .service(prove)
             .service(
                 web::scope("/v0/collections")
                     .service(get_record)
