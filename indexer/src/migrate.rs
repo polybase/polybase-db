@@ -121,6 +121,7 @@ async fn delete_all_index_records(store: &store::Store) -> Result<()> {
     // records, as it would be very hard to recover if we lost these
     let keep_cids = get_collection_cids(store).await?;
 
+    let mut i = 0;
     for entry in store.db.iterator_opt(rocksdb::IteratorMode::Start, opts) {
         let (key, _) = entry?;
         let index_key = keys::Key::deserialize(&key)?;
@@ -136,6 +137,14 @@ async fn delete_all_index_records(store: &store::Store) -> Result<()> {
             }
             _ => continue,
         }
+
+        // Commit every 1k records
+        if i % 1000 == 0 && i > 0 {
+            info!("Commiting changes");
+            store.commit().await?;
+        }
+
+        i += 1;
     }
 
     Ok(())
@@ -232,6 +241,7 @@ async fn build_collection_indexes(store: &store::Store, collection_id: String) -
         _ => return Err(CollectionError::CollectionRecordMissingAST)?,
     };
 
+    let mut i = 0;
     let end_key = start_key.clone().wildcard();
     for entry in store.list(&start_key, &end_key, false)? {
         let (_, value) = entry?;
@@ -253,6 +263,14 @@ async fn build_collection_indexes(store: &store::Store, collection_id: String) -
         collection
             .add_indexes(id.as_str(), &data_key, &new_data)
             .await;
+
+        // Commit every 1k records
+        if i % 1000 == 0 && i > 0 {
+            info!("Commiting changes");
+            store.commit().await?;
+        }
+
+        i += 1;
     }
 
     Ok(())
