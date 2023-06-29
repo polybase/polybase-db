@@ -1086,7 +1086,7 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
-    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
+    pub(crate) async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
         let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: match data_key.serialize() {
                 Ok(data) => data,
@@ -1270,7 +1270,7 @@ impl<'a> Collection<'a> {
     }
 
     #[async_recursion]
-    async fn rebuild(
+    pub(crate) async fn rebuild(
         &self,
         // The old collection record, loaded before the AST was changed
         old_collection: Collection<'async_recursion>,

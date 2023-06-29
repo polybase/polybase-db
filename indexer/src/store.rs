@@ -51,7 +51,7 @@ impl<'a> Value<'a> {
 }
 
 pub(crate) struct Store {
-    db: Arc<rocksdb::DB>,
+    pub(crate) db: Arc<rocksdb::DB>,
     state: Arc<Mutex<StoreState>>,
 }
 
