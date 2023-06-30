@@ -5459,12 +5459,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac98e757a488cc11d6a84a52d223b970e11c99e5158cc2ff07b8544ccc260078"
 dependencies = [
  "Inflector",
+ "http",
  "serde",
  "serde_json",
  "thiserror",
  "time 0.3.21",
  "tracing-core",
  "tracing-subscriber",
+ "url",
+ "valuable",
+ "valuable-serde",
 ]
 
 [[package]]
@@ -5732,6 +5736,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "valuable-serde"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5285cfff30cdabe26626736a54d989687dd9cab84f51f4048b61d6d0ae8b0907"
+dependencies = [
+ "serde",
+ "valuable",
 ]
 
 [[package]]
