@@ -28,3 +28,5 @@ extraEnvVars:
     value: "/dns/polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-1.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-2.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001"
   - name: BLOCK_CACHE_SIZE
     value: "7200"
+  - name: MIGRATION_BATCH_SIZE
+    value: "10000"

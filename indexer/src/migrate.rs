@@ -43,11 +43,14 @@ pub enum Error {
     RocksDBError(#[from] rocksdb::Error),
 }
 
-pub(crate) async fn check_for_migration(store: &store::Store) -> Result<()> {
+pub(crate) async fn check_for_migration(
+    store: &store::Store,
+    migration_batch_size: usize,
+) -> Result<()> {
     let version = get_migration_version(store).await?;
 
     match version {
-        0 => migrate_to_v1(store).await,
+        0 => migrate_to_v1(store, migration_batch_size).await,
         _ => {
             info!(
                 version = version,
@@ -60,17 +63,17 @@ pub(crate) async fn check_for_migration(store: &store::Store) -> Result<()> {
 
 /// Migration can fail half way through, but because we only commit the version at the end
 /// it will restart the migration process.
-async fn migrate_to_v1(store: &store::Store) -> Result<()> {
+async fn migrate_to_v1(store: &store::Store, migration_batch_size: usize) -> Result<()> {
     info!("Migrating database to v1");
 
     // Delete index
     info!("Deleting all indexes");
-    delete_all_index_records(store).await?;
+    delete_all_index_records(store, migration_batch_size).await?;
     store.commit().await?;
 
     // Apply indexes
     info!("Reapplying indexes");
-    apply_indexes(store).await?;
+    apply_indexes(store, migration_batch_size).await?;
 
     // Save version
     set_migration_version(store, 1).await?;
@@ -112,7 +115,7 @@ async fn get_collection(store: &store::Store, id: String) -> Result<Collection<'
 }
 
 /// Delete all index records (except for `id` index)
-async fn delete_all_index_records(store: &store::Store) -> Result<()> {
+async fn delete_all_index_records(store: &store::Store, migration_batch_size: usize) -> Result<()> {
     let mut opts = rocksdb::ReadOptions::default();
     opts.set_iterate_lower_bound([2]);
     opts.set_iterate_upper_bound([3]);
@@ -138,9 +141,9 @@ async fn delete_all_index_records(store: &store::Store) -> Result<()> {
             _ => continue,
         }
 
-        // Commit every 1k records
-        if i % 1000 == 0 && i > 0 {
-            info!("Commiting changes");
+        // Commit every X records
+        if i % migration_batch_size == 0 && i > 0 {
+            info!(count = i, "Commit index delete");
             store.commit().await?;
         }
 
@@ -151,9 +154,18 @@ async fn delete_all_index_records(store: &store::Store) -> Result<()> {
 }
 
 /// For every collection, build all indexes
-async fn apply_indexes(store: &store::Store) -> Result<()> {
-    for collection_id in get_collection_ids(store).await? {
-        build_collection_indexes(store, collection_id).await?;
+async fn apply_indexes(store: &store::Store, migration_batch_size: usize) -> Result<()> {
+    let collection_ids = get_collection_ids(store).await?;
+    info!(
+        count = collection_ids.len(),
+        "Building indexes for all collections"
+    );
+    for collection_id in collection_ids {
+        info!(
+            collection_id = collection_id.as_str(),
+            "Building indexes for collection"
+        );
+        build_collection_indexes(store, collection_id, migration_batch_size).await?;
 
         // Commiting here to release the memory
         store.commit().await?;
@@ -215,7 +227,11 @@ async fn get_collection_cids(store: &store::Store) -> Result<HashSet<Vec<u8>>> {
 
 /// Loop through every record for a collection, and rebuild the index for each record, mostly copied
 /// from `Collection::rebuild`
-async fn build_collection_indexes(store: &store::Store, collection_id: String) -> Result<()> {
+async fn build_collection_indexes(
+    store: &store::Store,
+    collection_id: String,
+    migration_batch_size: usize,
+) -> Result<()> {
     // Get the id index
     let start_key = keys::Key::new_index(
         collection_id.to_string(),
@@ -260,13 +276,10 @@ async fn build_collection_indexes(store: &store::Store, collection_id: String) -
         let new_data: HashMap<String, RecordValue> =
             json_to_record(&collection_ast, json_data, true)?;
 
-        collection
-            .add_indexes(id.as_str(), &data_key, &new_data)
-            .await;
+        collection.set(id, &new_data).await?;
 
         // Commit every 1k records
-        if i % 1000 == 0 && i > 0 {
-            info!("Commiting changes");
+        if i % migration_batch_size == 0 && i > 0 {
             store.commit().await?;
         }
 

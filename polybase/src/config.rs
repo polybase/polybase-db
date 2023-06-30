@@ -92,6 +92,10 @@ pub struct Config {
     /// Restrict namespaces to pk/<pk>/<collection_name>
     #[arg(long, env = "RESTRICT_NAMESPACES", default_value = "false")]
     pub restrict_namespaces: bool,
+
+    /// Restrict namespaces to pk/<pk>/<collection_name>
+    #[arg(long, env = "MIGRATION_BATCH_SIZE", default_value = "1000")]
+    pub migration_batch_size: usize,
 }
 
 #[derive(Subcommand, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum, Debug)]
