@@ -133,9 +133,15 @@ async fn main() -> Result<()> {
     // that is thread safe
     #[allow(clippy::unwrap_used)]
     let db: Arc<Db> = Arc::new(
-        Db::new(config.root_dir.clone(), DbConfig::default())
-            .await
-            .unwrap(),
+        Db::new(
+            config.root_dir.clone(),
+            DbConfig {
+                migration_batch_size: config.migration_batch_size,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap(),
     );
 
     // Get the keypair (provided or auto-generated)

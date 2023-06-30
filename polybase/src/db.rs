@@ -72,8 +72,8 @@ pub enum DbWaitResult<T> {
 
 #[derive(Debug)]
 pub struct DbConfig {
-    block_txns_count: usize,
-    migration_batch_size: usize,
+    pub block_txns_count: usize,
+    pub migration_batch_size: usize,
 }
 
 impl Default for DbConfig {
