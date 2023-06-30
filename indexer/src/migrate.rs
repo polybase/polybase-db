@@ -280,6 +280,7 @@ async fn build_collection_indexes(
 
         // Commit every 1k records
         if i % migration_batch_size == 0 && i > 0 {
+            info!(count = i, "Commit index set");
             store.commit().await?;
         }
 
