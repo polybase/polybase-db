@@ -403,7 +403,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         path.pop();
                     }
 
-                    if !o.is_empty() {
+                    if !o.is_empty() && !always_cast {
                         let path = path.join(".");
                         return Err(RecordUserError::UnexpectedFields {
                             fields: o.keys().map(|k| path.clone() + "." + k).collect::<Vec<_>>(),
@@ -483,7 +483,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                             r
                         };
 
-                        if !o.is_empty() {
+                        if !o.is_empty() && !always_cast {
                             let path = path.join(".");
 
                             return Err(RecordUserError::UnexpectedFields {

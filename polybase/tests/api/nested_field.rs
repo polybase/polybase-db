@@ -145,3 +145,46 @@ collection Account {
         ]
     );
 }
+
+#[tokio::test]
+async fn nested_field_extraneous_fields() {
+    let server = Server::setup_and_wait(None).await;
+
+    let schema = r#"
+@public
+collection Account {
+    id: string;
+    info: {
+        name: string;
+    };
+
+    constructor (id: string, info: map<string, string>) {
+        this.id = id;
+        this.info = info;
+    }
+}"#;
+
+    let col = server
+        .create_collection_untyped("test/Account", schema, None)
+        .await
+        .unwrap();
+
+    let err = col
+        .create(
+            json!(["id1", {
+                "name": "John",
+                "surname": "Doe",
+                "age": "30",
+            }]),
+            None,
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(err.error.code, "invalid-argument");
+    assert_eq!(err.error.reason, "record/invalid-field");
+    assert!(matches!(
+        err.error.message.as_str(),
+        "unexpected fields: info.age, info.surname" | "unexpected fields: info.surname, info.age"
+    ));
+}
