@@ -155,7 +155,7 @@ async fn nested_field_extraneous_fields() {
 collection Account {
     id: string;
     info: {
-        name: string;
+        name?: string;
     };
 
     constructor (id: string, info: map<string, string>) {
@@ -172,7 +172,6 @@ collection Account {
     let err = col
         .create(
             json!(["id1", {
-                "name": "John",
                 "surname": "Doe",
                 "age": "30",
             }]),
@@ -183,8 +182,13 @@ collection Account {
 
     assert_eq!(err.error.code, "invalid-argument");
     assert_eq!(err.error.reason, "record/invalid-field");
-    assert!(matches!(
-        err.error.message.as_str(),
-        "unexpected fields: info.age, info.surname" | "unexpected fields: info.surname, info.age"
-    ));
+    assert!(
+        matches!(
+            err.error.message.as_str(),
+            "unexpected fields: info.age, info.surname"
+                | "unexpected fields: info.surname, info.age"
+        ),
+        "{}",
+        err.error.message
+    );
 }
