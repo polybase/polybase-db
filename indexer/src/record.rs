@@ -382,7 +382,9 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                 serde_json::Value::Object(mut o) => {
                     let mut map = HashMap::with_capacity(o.len());
 
+                    let path_len_before_loop = path.len();
                     for field in &t.fields {
+                        path.truncate(path_len_before_loop);
                         path.push(Cow::Owned(field.name.to_string()));
 
                         let Some((k, v)) = o.remove_entry(field.name.as_ref()) else {
@@ -399,9 +401,8 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                         };
 
                         map.insert(k, Converter::convert((&field.type_, v), path, always_cast)?);
-
-                        path.pop();
                     }
+                    path.truncate(path_len_before_loop);
 
                     if !o.is_empty() && !always_cast {
                         let path = path.join(".");
