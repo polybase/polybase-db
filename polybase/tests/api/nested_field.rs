@@ -147,7 +147,7 @@ collection Account {
 }
 
 #[tokio::test]
-async fn nested_field_extranous_fields() {
+async fn nested_field_extraneous_fields() {
     let server = Server::setup_and_wait(None).await;
 
     let schema = r#"
