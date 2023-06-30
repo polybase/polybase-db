@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::api::{ErrorData, ListQuery, Server};
+use crate::api::{ListQuery, Server};
 
 #[tokio::test]
 async fn collection_nested_field() {
