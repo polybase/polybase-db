@@ -12,6 +12,7 @@ mod map_field;
 mod nested_field;
 mod other_collection_fns;
 mod restrict_namespaces;
+mod schema_field_update;
 mod schema_index_update;
 mod start_stop;
 mod store_other_collection_records;
