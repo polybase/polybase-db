@@ -105,9 +105,9 @@ impl Db {
         let indexer = Indexer::new(indexer_dir)?;
 
         // Check for any migrations
-        indexer
-            .check_for_migration(config.migration_batch_size)
-            .await?;
+        // indexer
+        //     .check_for_migration(config.migration_batch_size)
+        //     .await?;
 
         Ok(Self {
             mempool: Mempool::new(),
