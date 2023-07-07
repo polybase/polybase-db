@@ -134,7 +134,7 @@ resources:
     memory: 1Gi
 
 livenessProbe:
-  enabled: false
+  enabled: true
   initialDelaySeconds: 60
   periodSeconds: 30
   timeoutSeconds: 30
