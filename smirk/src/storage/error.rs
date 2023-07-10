@@ -1,9 +1,10 @@
-use crate::hash::Hash;
+use crate::hash::Digest;
 
+/// An error en
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("A key referenced this hash as a child, but it wasn't present: {0}")]
-    MissingKeyReferenced(Hash),
+    MissingKeyReferenced(Digest),
     #[error("the `structure` key was not defined")]
     Unknown(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error("json: {0}")]

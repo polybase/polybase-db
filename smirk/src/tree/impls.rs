@@ -2,30 +2,33 @@ use std::{iter::Chain, option};
 
 use traversal::{Bft, DftPre};
 
+use crate::hash::Hashable;
+
 use super::{MerkleTree, TreeNode};
 
-impl<T: Ord> FromIterator<T> for MerkleTree<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        // TODO: this is probably pretty inefficient, clean this up later
+impl<K: Ord, V: Hashable> FromIterator<(K, V)> for MerkleTree<K, V> {
+    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
         let mut tree = MerkleTree::new();
 
-        for elem in iter {
-            tree.insert(elem);
+        for (key, value) in iter {
+            tree.insert(key, value);
         }
 
         tree
     }
 }
 
-impl<T> MerkleTree<T> {
-    pub fn depth_first<'a>(&'a self) -> DepthFirstIter<'a, T> {
+impl<K, V> MerkleTree<K, V> {
+    /// Returns an iterator over the keys and values in depth-first order
+    pub fn depth_first<'a>(&'a self) -> DepthFirstIter<'a, K, V> {
         match &self.inner {
             None => DepthFirstIter { inner: None },
             Some(node) => node.depth_first(),
         }
     }
 
-    pub fn breadth_first<'a>(&'a self) -> BreadthFirstIter<'a, T> {
+    /// Returns an iterator over the keys and values in breadth-first order
+    pub fn breadth_first<'a>(&'a self) -> BreadthFirstIter<'a, K, V> {
         match &self.inner {
             None => BreadthFirstIter { inner: None },
             Some(node) => node.breadth_first(),
@@ -33,60 +36,77 @@ impl<T> MerkleTree<T> {
     }
 }
 
-impl<T> TreeNode<T> {
+impl<K, V> TreeNode<K, V> {
     /// Get an iterator over the values in this node in depth-first order
-    pub fn depth_first<'a>(&'a self) -> DepthFirstIter<'a, T> {
+    fn depth_first<'a>(&'a self) -> DepthFirstIter<'a, K, V> {
         let inner = DftPre::new(self, children);
-        let inner = Box::new(inner.map(|(_, node)| node));
+        let inner = Box::new(inner.map(|(_, node)| (&node.key, &node.value)));
 
         DepthFirstIter { inner: Some(inner) }
     }
 
     /// Get an iterator over the values in this node in breadth-first order
-    pub fn breadth_first(&self) -> BreadthFirstIter<'_, T> {
+    fn breadth_first(&self) -> BreadthFirstIter<'_, K, V> {
         let inner = Bft::new(self, children);
-        let inner = Box::new(inner.map(|(_, node)| node));
+        let inner = Box::new(inner.map(|(_, node)| (&node.key, &node.value)));
 
         BreadthFirstIter { inner: Some(inner) }
     }
 }
 
-fn children<'a, T>(node: &'a TreeNode<T>) -> ChildIter<'a, T> {
+fn children<'a, K, V>(node: &'a TreeNode<K, V>) -> ChildIter<'a, K, V> {
     node.left
         .as_deref()
         .into_iter()
         .chain(node.right.as_deref().into_iter())
 }
 
-type ChildIter<'a, T> = Chain<option::IntoIter<&'a TreeNode<T>>, option::IntoIter<&'a TreeNode<T>>>;
+type ChildIter<'a, K, V> =
+    Chain<option::IntoIter<&'a TreeNode<K, V>>, option::IntoIter<&'a TreeNode<K, V>>>;
 
-pub struct DepthFirstIter<'a, T> {
-    inner: Option<Box<dyn Iterator<Item = &'a TreeNode<T>> + 'a>>,
+pub struct DepthFirstIter<'a, K, V> {
+    inner: Option<Box<dyn Iterator<Item = (&'a K, &'a V)> + 'a>>,
 }
 
-impl<'a, T> Iterator for DepthFirstIter<'a, T> {
-    type Item = &'a T;
+impl<'a, K, V> Iterator for DepthFirstIter<'a, K, V> {
+    type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner
-            .as_mut()
-            .map(|iter| iter.next().map(|node| &node.value))
-            .flatten()
+        self.inner.as_mut().map(|iter| iter.next()).flatten()
     }
 }
 
-pub struct BreadthFirstIter<'a, T> {
-    inner: Option<Box<dyn Iterator<Item = &'a TreeNode<T>> + 'a>>,
+pub struct BreadthFirstIter<'a, K, V> {
+    inner: Option<Box<dyn Iterator<Item = (&'a K, &'a V)> + 'a>>,
 }
 
-impl<'a, T> Iterator for BreadthFirstIter<'a, T> {
-    type Item = &'a T;
+impl<'a, K, V> Iterator for BreadthFirstIter<'a, K, V> {
+    type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner
-            .as_mut()
-            .map(|iter| iter.next().map(|node| &node.value))
-            .flatten()
+        self.inner.as_mut().map(|iter| iter.next()).flatten()
+    }
+}
+
+#[cfg(any(test, feature = "proptest"))]
+mod proptest_impls {
+    use std::fmt::Debug;
+
+    use super::*;
+
+    use proptest::{arbitrary::StrategyFor, prelude::*, strategy::Map};
+
+    impl<K, V> Arbitrary for MerkleTree<K, V>
+    where
+        K: Debug + Arbitrary + Ord,
+        V: Debug + Arbitrary + Hashable,
+    {
+        type Parameters = ();
+        type Strategy = Map<StrategyFor<Vec<(K, V)>>, fn(Vec<(K, V)>) -> Self>;
+
+        fn arbitrary_with(_args: Self::Parameters) -> Self::Strategy {
+            any::<Vec<(K, V)>>().prop_map(|v| v.into_iter().collect())
+        }
     }
 }
 
@@ -97,11 +117,13 @@ mod tests {
     #[test]
     fn depth_first_test() {
         let tree = example_node();
-        let items: Vec<_> = tree.depth_first().copied().collect();
-        assert_eq!(items, vec![1, 2, 3, 4, 5]);
+        let items: Vec<_> = tree.depth_first().map(|(k, v)| (*k, *v)).collect();
+        assert_eq!(items, vec![(1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]);
 
         assert_eq!(
-            MerkleTree::from_iter::<[i32; 0]>([]).depth_first().count(),
+            MerkleTree::from_iter::<[(i32, i32); 0]>([])
+                .depth_first()
+                .count(),
             0
         );
     }
@@ -109,11 +131,11 @@ mod tests {
     #[test]
     fn breadth_first_test() {
         let tree = example_node();
-        let items: Vec<_> = tree.breadth_first().copied().collect();
-        assert_eq!(items, vec![1, 2, 5, 3, 4]);
+        let items: Vec<_> = tree.breadth_first().map(|(k, v)| (*k, *v)).collect();
+        assert_eq!(items, vec![(1, 1), (2, 2), (5, 5), (3, 3), (4, 4)]);
 
         assert_eq!(
-            MerkleTree::from_iter::<[i32; 0]>([])
+            MerkleTree::from_iter::<[(i32, i32); 0]>([])
                 .breadth_first()
                 .count(),
             0

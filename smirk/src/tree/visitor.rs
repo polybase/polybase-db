@@ -1,29 +1,36 @@
 use super::{MerkleTree, TreeNode};
 
-pub trait Visitor<T> {
-    fn visit(&mut self, item: &T);
+/// A trait for types which can visit nodes in a Merkle tree
+///
+/// Note: currently only immutable access is given to prevent invalidating memoized hashes
+pub trait Visitor<K, V> {
+    /// The function to be called on each node
+    fn visit(&mut self, key: &K, value: &V);
 }
 
-impl<T, V> Visitor<T> for &mut V
+impl<Vis, K, V> Visitor<K, V> for &mut Vis
 where
-    V: Visitor<T>,
+    Vis: Visitor<K, V>,
 {
-    fn visit(&mut self, item: &T) {
-        V::visit(self, item)
+    fn visit(&mut self, key: &K, value: &V) {
+        Vis::visit(self, key, value)
     }
 }
 
-impl<T> MerkleTree<T> {
-    pub fn visit<V: Visitor<T>>(&self, mut visitor: V) {
+impl<K, V> MerkleTree<K, V> {
+    /// Apply a visitor to all the nodes in a tree
+    ///
+    /// The visitor will run on `self`, then `left` (if it is `Some`), then `right` (if it is `Some`)
+    pub fn visit<Vis: Visitor<K, V>>(&self, mut visitor: Vis) {
         if let Some(inner) = &self.inner {
             inner.visit(&mut visitor);
         }
     }
 }
 
-impl<T> TreeNode<T> {
-    pub fn visit<V: Visitor<T>>(&self, visitor: &mut V) {
-        visitor.visit(&self.value);
+impl<K, V> TreeNode<K, V> {
+    fn visit<Vis: Visitor<K, V>>(&self, visitor: &mut Vis) {
+        visitor.visit(&self.key, &self.value);
 
         if let Some(left) = &self.left {
             left.visit(visitor);
@@ -43,13 +50,13 @@ mod tests {
     fn counter_example() {
         struct Counter(usize);
 
-        impl<T> Visitor<T> for Counter {
-            fn visit(&mut self, _item: &T) {
+        impl<K, V> Visitor<K, V> for Counter {
+            fn visit(&mut self, _: &K, _: &V) {
                 self.0 += 1;
             }
         }
 
-        let tree = MerkleTree::from_iter([1, 2, 3]);
+        let tree = MerkleTree::from_iter([(1, 1), (2, 2), (3, 3)]);
         let mut counter = Counter(0);
         tree.visit(&mut counter);
 
@@ -60,17 +67,16 @@ mod tests {
     fn sum_example() {
         struct Sum(i32);
 
-        impl Visitor<i32> for Sum {
-            fn visit(&mut self, item: &i32) {
-                self.0 += *item;
+        impl Visitor<i32, i32> for Sum {
+            fn visit(&mut self, key: &i32, _value: &i32) {
+                self.0 += *key;
             }
         }
 
-        let tree = MerkleTree::from_iter([1, 2, 3]);
+        let tree = MerkleTree::from_iter([(1, 1), (2, 2), (3, 3)]);
         let mut sum = Sum(0);
         tree.visit(&mut sum);
 
         assert_eq!(sum.0, 6);
-
     }
 }

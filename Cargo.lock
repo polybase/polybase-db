@@ -4931,10 +4931,12 @@ version = "0.1.0"
 dependencies = [
  "hex",
  "miden-crypto 0.6.0",
+ "proptest",
  "rocksdb",
  "serde",
  "serde_json",
  "tempdir",
+ "test-strategy",
  "thiserror",
  "traversal",
 ]
