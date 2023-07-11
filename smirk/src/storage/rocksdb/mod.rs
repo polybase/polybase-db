@@ -1,6 +1,6 @@
 use std::{fmt::Debug, path::Path};
 
-use rocksdb::{IteratorMode, TransactionDB, DB};
+use rocksdb::{IteratorMode, TransactionDB};
 use serde::{Deserialize, Serialize};
 
 use crate::{

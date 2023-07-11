@@ -46,7 +46,7 @@ where
     T: Hashable,
 {
     fn hash(&self) -> Digest {
-        <T as Hashable>::hash(&self)
+        <T as Hashable>::hash(self)
     }
 }
 
@@ -55,7 +55,7 @@ where
     T: Hashable + Clone,
 {
     fn hash(&self) -> Digest {
-        <T as Hashable>::hash(&self)
+        <T as Hashable>::hash(self)
     }
 }
 
@@ -64,7 +64,7 @@ where
     T: Hashable,
 {
     fn hash(&self) -> Digest {
-        <T as Hashable>::hash(&self)
+        <T as Hashable>::hash(self)
     }
 }
 
@@ -73,7 +73,7 @@ where
     T: Hashable,
 {
     fn hash(&self) -> Digest {
-        <T as Hashable>::hash(&self)
+        <T as Hashable>::hash(self)
     }
 }
 

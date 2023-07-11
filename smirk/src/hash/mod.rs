@@ -2,7 +2,10 @@
 //!
 //! In particular, the [`Digest`] type and the [`Hashable`] trait
 
-use std::{fmt::{Display, Debug}, hash::Hash};
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+};
 
 use miden_crypto::{
     hash::rpo::{Rpo256, RpoDigest},
@@ -34,7 +37,7 @@ impl Display for Digest {
 
 impl Hash for Digest {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        <[u8; 32] as Hash>::hash(&self.to_bytes(), state)
+        <[u8; 32] as Hash>::hash(&self.to_bytes(), state);
     }
 }
 
@@ -57,6 +60,7 @@ impl Digest {
 
     /// Get the representation of this hash as a byte array
     #[inline]
+    #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::LEN] {
         self.0.as_bytes()
     }
@@ -68,6 +72,7 @@ impl Digest {
     /// Any byte array returned from [`Digets::to_bytes`] will be valid for this function, and the
     /// resulting hash will be equal to the hash that created the byte array
     #[inline]
+    #[must_use]
     pub fn from_bytes(bytes: [u8; 32]) -> Option<Self> {
         let mut reader = SliceReader::new(&bytes);
         RpoDigest::read_from(&mut reader).ok().map(Digest)
@@ -75,6 +80,7 @@ impl Digest {
 
     /// Calculate the hash of the given bytes
     #[inline]
+    #[must_use]
     pub fn calculate(bytes: &[u8]) -> Self {
         Self(Rpo256::hash(bytes))
     }
@@ -104,12 +110,14 @@ impl MerklePath {
     /// The components should be the hashes that form the path, with the root of the tree at the
     /// end
     #[inline]
+    #[must_use]
     pub fn new(components: Vec<Digest>) -> Self {
         Self { components }
     }
 
     /// Get a slice of hashes representing the components of the path
     #[inline]
+    #[must_use]
     pub fn components(&self) -> &[Digest] {
         &self.components
     }

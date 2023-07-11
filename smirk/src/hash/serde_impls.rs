@@ -1,7 +1,7 @@
-use super::*;
-
 use serde::{de::Visitor, Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
+
+use super::Digest;
 
 impl Serialize for Digest {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>

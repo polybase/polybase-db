@@ -11,7 +11,7 @@ pub struct EncodeError(rmp_serde::encode::Error);
 #[error("decode error: {0}")]
 pub struct DecodeError(rmp_serde::decode::Error);
 
-pub(super) fn encode<'a, T>(t: &'a T) -> Result<Vec<u8>, EncodeError>
+pub(super) fn encode<T>(t: &T) -> Result<Vec<u8>, EncodeError>
 where
     T: Serialize,
 {

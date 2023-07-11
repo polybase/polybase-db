@@ -81,12 +81,27 @@ impl Structure {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prop_assert_eq;
     use test_strategy::proptest;
 
     use super::*;
 
     #[proptest]
     fn to_from_structure(tree: MerkleTree<i32, String>) {
+        let structure = Structure::from_tree(&tree).unwrap();
+        let mut values = tree
+            .iter()
+            .map(|node| {
+                let hash = node.value().hash();
+                let key = *node.key();
+                let value = node.value().clone();
 
+                (hash, (key, value))
+            })
+            .collect();
+
+        let tree_again = structure.to_tree(&mut values).unwrap();
+
+        prop_assert_eq!(tree, tree_again);
     }
 }
