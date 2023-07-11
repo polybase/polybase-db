@@ -1,6 +1,5 @@
 use super::*;
 
-use miden_crypto::utils::{Deserializable, Serializable, SliceReader};
 use serde::{de::Visitor, Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 
@@ -9,8 +8,7 @@ impl Serialize for Digest {
     where
         S: Serializer,
     {
-        let mut bytes = vec![0; 32];
-        self.0.write_into(&mut bytes);
+        let bytes = self.to_bytes();
         serializer.serialize_bytes(&bytes)
     }
 }
@@ -26,25 +24,20 @@ impl<'de> Deserialize<'de> for Digest {
                 formatter.write_str("bytes representing a rescue-prime optimized hash")
             }
 
-            type Value = RpoDigest;
+            type Value = Digest;
 
             fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                if v.len() != 32 {
-                    return Err(E::custom(format!(
-                        "wrong number of bytes - expected 32, found {}",
-                        v.len()
-                    )));
-                }
+                let bytes = v
+                    .try_into()
+                    .map_err(|_| E::custom(format!("incorrect number of bytes: {}", v.len())))?;
 
-                let mut reader = SliceReader::new(v);
-                RpoDigest::read_from(&mut reader)
-                    .map_err(|e| E::custom(format!("deserialization error: {e}")))
+                Digest::from_bytes(bytes).ok_or(E::custom("deserialization error"))
             }
         }
 
-        deserializer.deserialize_bytes(V).map(Digest)
+        deserializer.deserialize_bytes(V)
     }
 }

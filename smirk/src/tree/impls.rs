@@ -2,21 +2,7 @@ use std::{iter::Chain, option};
 
 use traversal::{Bft, DftPre};
 
-use crate::hash::Hashable;
-
 use super::{MerkleTree, TreeNode};
-
-impl<K: Ord, V: Hashable> FromIterator<(K, V)> for MerkleTree<K, V> {
-    fn from_iter<T: IntoIterator<Item = (K, V)>>(iter: T) -> Self {
-        let mut tree = MerkleTree::new();
-
-        for (key, value) in iter {
-            tree.insert(key, value);
-        }
-
-        tree
-    }
-}
 
 impl<K, V> MerkleTree<K, V> {
     /// Returns an iterator over the keys and values in depth-first order
@@ -92,6 +78,8 @@ impl<'a, K, V> Iterator for BreadthFirstIter<'a, K, V> {
 mod proptest_impls {
     use std::fmt::Debug;
 
+    use crate::hash::Hashable;
+
     use super::*;
 
     use proptest::{arbitrary::StrategyFor, prelude::*, strategy::Map};
@@ -112,7 +100,32 @@ mod proptest_impls {
 
 #[cfg(test)]
 mod tests {
-    use crate::{testing::example_node, tree::MerkleTree};
+    use crate::{hash::Digest, tree::MerkleTree, TreeNode};
+
+    // 1
+    // |\
+    // 2 5
+    // |\
+    // 3 4
+    fn example_node() -> TreeNode<i32, i32> {
+        let mut node = TreeNode {
+            key: 1,
+            value: 1,
+            hash: Digest::NULL,
+            left: Some(Box::new(TreeNode {
+                key: 2,
+                value: 2,
+                hash: Digest::NULL,
+                left: Some(Box::new(TreeNode::new(3, 3))),
+                right: Some(Box::new(TreeNode::new(4, 4))),
+                height: 0,
+            })),
+            right: Some(Box::new(TreeNode::new(5, 5))),
+            height: 0,
+        };
+        node.update_height();
+        node
+    }
 
     #[test]
     fn depth_first_test() {

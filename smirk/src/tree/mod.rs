@@ -2,8 +2,13 @@ use std::{borrow::Borrow, cmp::Ordering};
 
 use crate::hash::{Digest, Hashable, MerklePath};
 
+mod iterator;
+pub use iterator::*;
+
 mod impls;
-pub mod macros;
+pub use impls::*;
+
+mod macros;
 pub mod visitor;
 
 #[cfg(test)]
@@ -55,6 +60,12 @@ pub struct MerkleTree<K, V> {
     pub(crate) inner: Option<Box<TreeNode<K, V>>>,
 }
 
+impl<K, V: Hashable> PartialEq for MerkleTree<K, V> {
+    fn eq(&self, other: &Self) -> bool {
+        self.root_hash() == other.root_hash()
+    }
+}
+
 impl<K, V> MerkleTree<K, V> {
     /// Create a new, empty [`MerkleTree`]
     ///
@@ -75,6 +86,7 @@ impl<K, V> MerkleTree<K, V> {
     ///
     /// assert_eq!(tree.get(&1).unwrap(), "hello");
     /// ```
+    /// If the key is already present in the tree, the tree is left unchanged
     pub fn insert(&mut self, key: K, value: V)
     where
         K: Ord,
@@ -145,23 +157,6 @@ impl<K, V> MerkleTree<K, V> {
         new_root
     }
 
-    /// Remove the entry corresponding to the given key (if it exists)
-    ///
-    /// If the key does exist, the key-value pair is returned, otherwise, `None` is returned
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<(K, V)>
-    where
-        Q: Borrow<K> + ?Sized,
-        K: Ord,
-    {
-        // TODO: this impelementation is HORRIBLE, but we're probably not gonna be removing much -
-        // fix this later anyways though
-        if !self.contains(key) {
-            return None;
-        }
-
-        
-    }
-
     /// The number of elements in the tree
     ///
     /// ```rust
@@ -186,6 +181,11 @@ impl<K, V> MerkleTree<K, V> {
         self.visit(&mut counter);
 
         counter.0
+    }
+
+    /// Returns true if and only if the tree contains no elements
+    pub fn is_empty(&self) -> bool {
+        self.size() == 0
     }
 
     /// Returns `true` if and only if `key` is present in the tree
@@ -424,7 +424,7 @@ impl<K, V: Hashable> TreeNode<K, V> {
     }
 
     /// Update the `hash` field of this node, and all child nodes
-    fn recalculate_hash_recursive(&mut self) {
+    pub(crate) fn recalculate_hash_recursive(&mut self) {
         let mut new_hash = self.value.hash();
 
         if let Some(left) = &mut self.left {

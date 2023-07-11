@@ -1,10 +1,4 @@
-use std::{
-    borrow::Cow,
-    ffi::{OsStr, OsString},
-    path::{Path, PathBuf},
-    rc::Rc,
-    sync::Arc,
-};
+use std::{borrow::Cow, rc::Rc, sync::Arc};
 
 use miden_crypto::hash::rpo::Rpo256;
 
@@ -85,10 +79,6 @@ where
 
 /// COLLECTION IMPLS
 
-
-
-
-
 macro_rules! int_impl {
     ($int:ty) => {
         impl Hashable for $int {
@@ -135,5 +125,3 @@ as_ref_impl!([u8]);
 as_ref_impl!(Vec<u8>);
 as_ref_impl!(str);
 as_ref_impl!(String);
-
-

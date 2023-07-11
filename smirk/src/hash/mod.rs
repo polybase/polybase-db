@@ -2,7 +2,7 @@
 //!
 //! In particular, the [`Digest`] type and the [`Hashable`] trait
 
-use std::fmt::Display;
+use std::{fmt::{Display, Debug}, hash::Hash};
 
 use miden_crypto::{
     hash::rpo::{Rpo256, RpoDigest},
@@ -12,13 +12,19 @@ use miden_crypto::{
 
 mod hashable;
 pub use hashable::Hashable;
-mod serde_impls;
 #[cfg(any(test, feature = "proptest"))]
 mod proptest_impls;
+mod serde_impls;
 
 /// A Rescue-Prime Optimized digest
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Digest(RpoDigest);
+
+impl Debug for Digest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Hash({})", hex::encode(self.0.as_bytes()))
+    }
+}
 
 impl Display for Digest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -26,6 +32,11 @@ impl Display for Digest {
     }
 }
 
+impl Hash for Digest {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        <[u8; 32] as Hash>::hash(&self.to_bytes(), state)
+    }
+}
 
 impl Digest {
     /// The null hash
@@ -126,6 +137,14 @@ mod tests {
     fn digest_bytes_round_trip(digest: Digest) {
         let bytes = digest.to_bytes();
         let digest_again = Digest::from_bytes(bytes).unwrap();
+
+        prop_assert_eq!(digest, digest_again);
+    }
+
+    #[proptest]
+    fn digest_bytes_serde_round_trip(digest: Digest) {
+        let mp_bytes = rmp_serde::to_vec(&digest).unwrap();
+        let digest_again: Digest = rmp_serde::from_slice(&mp_bytes).unwrap();
 
         prop_assert_eq!(digest, digest_again);
     }
