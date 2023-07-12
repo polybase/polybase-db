@@ -1,0 +1,92 @@
+syntax = "proto3";
+
+package indexer;
+
+import  "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+message Collection {
+  string id = 1;
+  string code = 2;
+  google.protobuf.Struct ast = 3;
+  google.protobuf.Struct public_key = 4;
+}
+
+message CollectionRecord {
+  google.protobuf.Struct data = 2;
+}
+
+
+// collections
+
+// empty
+message ListCollectionsRequest {}
+
+message ListCollectionsResponse {
+ repeated Collection collections = 1; 
+}
+
+message CreateCollectionRequest {
+  Collection collection = 1;
+}
+
+message CreateCollectionResponse {
+  Collection collection = 1;
+}
+
+message GetCollectionRequest {
+  string collection_id = 1;
+}
+
+message GetCollectionResponse {
+  Collection collection = 1;
+}
+
+
+// collection records
+
+// empty
+message ListCollectionRecordsRequest {
+  string collection_id = 1;
+}
+
+message ListCollectionRecordsResponse {
+  repeated CollectionRecord collection_records = 1;
+}
+
+message CreateCollectionRecordRequest {
+  string collection_id = 1;
+  CollectionRecord collection_record = 2;
+}
+
+message CreateCollectionRecordResponse {
+  CollectionRecord collection_record = 1;
+}
+
+message GetCollectionRecordRequest {
+  string collection_id = 1;
+  string collection_record_id = 2;
+}
+
+message GetCollectionRecordResponse {
+  CollectionRecord collection_record = 1;
+}
+
+message ShutdownRequest {}
+message ShutdownResponse {}
+
+service Indexer {
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+
+  rpc ListCollections(ListCollectionsRequest) returns (ListCollectionsResponse);
+  rpc CreateCollection(CreateCollectionRequest) returns (CreateCollectionResponse);
+  rpc GetCollection(GetCollectionRequest) returns (GetCollectionResponse);
+
+  rpc ListCollectionRecords(ListCollectionRecordsRequest) returns (ListCollectionRecordsResponse);
+  rpc CreateCollectionRecord(CreateCollectionRecordRequest) returns (CreateCollectionRecordResponse);
+  rpc GetCollectionRecord(GetCollectionRecordRequest) returns (GetCollectionRecordResponse);
+}
+
+
+
+

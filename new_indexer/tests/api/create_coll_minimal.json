@@ -1,0 +1,83 @@
+{
+   "id":"pk/0x1fdb4bead8bc2e85d4de75694b893de5dfb0fbe69e8ed1d2531c805db483ba350ea28d4b1c7acf6171d902586e439a04f22cb0827b08a29cbdf3dd0e5c994ec9/App001/App001Coll",
+   "code":"@public collection App001Coll { id: string; constructor(id: string) { this.id = id; }}",
+   "ast":
+      {
+         "kind":"collection",
+         "namespace":{
+            "kind":"namespace",
+            "value":"pk/0x1fdb4bead8bc2e85d4de75694b893de5dfb0fbe69e8ed1d2531c805db483ba350ea28d4b1c7acf6171d902586e439a04f22cb0827b08a29cbdf3dd0e5c994ec9/App001"
+         },
+         "name":"App002Coll",
+         "attributes":[
+            {
+               "kind":"property",
+               "name":"id",
+               "type":{
+                  "kind":"primitive",
+                  "value":"string"
+               },
+               "directives":[
+                  
+               ],
+               "required":true
+            },
+            {
+               "kind":"property",
+               "name":"name",
+               "type":{
+                  "kind":"primitive",
+                  "value":"string"
+               },
+               "directives":[
+                  
+               ],
+               "required":true
+
+            },
+            {
+              "kind": "property",
+              "name": "age",
+              "type": {
+                "kind": "primitive",
+                "value": "number"
+              },
+              "directives": [],
+              "required": true
+            },
+            {
+              "kind": "property",
+              "name": "salary",
+              "type": {
+                "kind": "primitive",
+                "value": "number"
+              },
+              "directives": [],
+              "required": false
+            },
+            {
+               "kind":"method",
+               "name":"constructor",
+               "attributes":[
+                  {
+                     "kind":"parameter",
+                     "name":"id",
+                     "type":{
+                        "kind":"primitive",
+                        "value":"string"
+                     },
+                     "required":true
+                  }
+               ],
+               "code":"this.id = id;"
+            },
+            {
+               "kind":"directive",
+               "name":"public",
+               "arguments":[
+                  
+               ]
+            }
+         ]
+      }
+}
