@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use rand::Rng;
+use rand::{rngs::OsRng, Rng, RngCore};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::oneshot;
@@ -12,14 +12,6 @@ use new_indexer::indexer::{
 };
 
 use crate::api;
-
-#[tokio::test]
-async fn test_db() -> Result<(), Box<dyn std::error::Error>> {
-    api::create_db("polybase_test_db").await?;
-    api::drop_db("polybase_test_db").await?;
-
-    Ok(())
-}
 
 async fn setup(
     test_db_name: &str,
@@ -52,12 +44,14 @@ async fn teardown(
     Ok(())
 }
 
+fn get_random_number() -> u32 {
+    let mut rng = OsRng;
+    rng.next_u32()
+}
+
 #[tokio::test]
-async fn test_create_collection() -> Result<(), Box<dyn std::error::Error>> {
-    let test_db_name = format!(
-        "test_create_collection_{}",
-        rand::thread_rng().gen_range(1..1000)
-    );
+async fn test_collection() -> Result<(), Box<dyn std::error::Error>> {
+    let test_db_name = format!("test_create_collection_{}", get_random_number());
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
@@ -69,17 +63,19 @@ async fn test_create_collection() -> Result<(), Box<dyn std::error::Error>> {
     let indexer_service_addr = format!("http://{}", api::INDEXER_SERVER_ADDR);
     let mut indexer_client = IndexerClient::connect(indexer_service_addr).await?;
 
-    let req = Request::new(CreateCollectionRequest {
+    let create_coll_req = Request::new(CreateCollectionRequest {
         collection: Some(collection),
     });
 
     let created_collection = indexer_client
-        .create_collection(req)
+        .create_collection(create_coll_req)
         .await?
         .into_inner()
         .collection;
 
-    println!("created_collection = {created_collection:#?}");
+    println!("created_collection = {created_collection:?}");
+
+    test_list_collections(&mut indexer_client).await?;
 
     // shutdown indexer
     let req = Request::new(ShutdownRequest {});
@@ -99,8 +95,36 @@ async fn test_get_collection() {}
 #[tokio::test]
 async fn test_get_collection_record() {}
 
-#[tokio::test]
-async fn test_list_collections() {}
+async fn test_list_collections(
+    indexer_client: &mut IndexerClient<tonic::transport::Channel>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let collection: Collection = serde_json::from_str(include_str!("create_coll_minimal.json"))?;
+
+    // create the collection
+
+    //let create_coll_req = Request::new(CreateCollectionRequest {
+    //    collection: Some(collection),
+    //});
+
+    //let _ = indexer_client
+    //    .create_collection(create_coll_req)
+    //    .await?
+    //    .into_inner()
+    //    .collection;
+
+    // list the collections
+
+    let list_colls_req = Request::new(ListCollectionsRequest {});
+
+    let (_, collections, _) = indexer_client
+        .list_collections(list_colls_req)
+        .await?
+        .into_parts();
+
+    println!("collections = {collections:?}");
+
+    Ok(())
+}
 
 #[tokio::test]
 async fn test_list_collection_records() {}
