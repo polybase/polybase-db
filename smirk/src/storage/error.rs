@@ -1,6 +1,6 @@
 use crate::hash::Digest;
 
-use super::rocksdb::DecodeError;
+use super::{DecodeError, EncodeError};
 
 /// An error encountered while persisting or restoring a [`MerkleTree`]
 #[derive(Debug, thiserror::Error)]
@@ -29,7 +29,15 @@ pub enum Error {
     #[error("malformed structure: {0}")]
     MalformedStructure(DecodeError),
 
-    /// Unknown error
-    #[error("unknown error: {0}")]
-    Unknown(Box<dyn std::error::Error + Send + Sync + 'static>),
+    /// Error encoding data to binary format
+    #[error("error encoding data to binary format: {0}")]
+    Encode(#[from] EncodeError),
+
+    /// Error decoding data from binary format
+    #[error("error decoding data from binary format: {0}")]
+    Decode(#[from] DecodeError),
+
+    /// Rocksdb error
+    #[error("rocksdb error: {0}")]
+    Unknown(#[from] rocksdb::Error),
 }

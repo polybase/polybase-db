@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, cmp::Ordering};
 
-use crate::hash::{Digest, Hashable, MerklePath};
+use crate::hash::{Digest, Hashable};
 
 mod iterator;
 pub use iterator::*;
@@ -10,6 +10,8 @@ pub use impls::*;
 
 mod macros;
 pub mod visitor;
+
+mod proof;
 
 #[cfg(test)]
 mod tests;
@@ -260,69 +262,6 @@ impl<K, V> MerkleTree<K, V> {
         K: Ord,
     {
         self.inner.as_ref().and_then(|node| node.get_node(key))
-    }
-
-    /// Get the root hash of the Merkle tree
-    pub fn root_hash(&self) -> Digest
-    where
-        V: Hashable,
-    {
-        match &self.inner {
-            None => Digest::NULL, // should this function return an option?
-            Some(node) => node.hash(),
-        }
-    }
-
-    /// Generate a [`MerklePath`] for the a given value
-    pub fn path_for<Q>(&self, key: &Q) -> Option<MerklePath>
-    where
-        Q: Borrow<K> + ?Sized,
-        K: Ord,
-        V: Hashable,
-    {
-        let mut components = Vec::with_capacity(self.height());
-
-        let mut opt_node = self.inner.as_deref();
-
-        loop {
-            let node = opt_node?;
-
-            components.push(node.hash());
-
-            match key.borrow().cmp(&node.key) {
-                Ordering::Less => opt_node = node.left.as_deref(),
-                Ordering::Greater => opt_node = node.right.as_deref(),
-                Ordering::Equal => {
-                    components.reverse();
-                    return Some(MerklePath::new(components));
-                }
-            }
-        }
-    }
-
-    /// Verify that the given value exists in the tree, by using the provided [`MerklePath`]
-    pub fn verify<Q>(&self, path: &MerklePath, value: &V) -> bool
-    where
-        Q: Ord + Borrow<K> + ?Sized,
-        V: Hashable,
-    {
-        if path.components().last() != Some(&self.root_hash()) {
-            return false;
-        }
-
-        let mut hash = value.hash();
-
-        for slice in path.components().windows(2) {
-            let first = &slice[0];
-            let second = &slice[1];
-
-            hash.merge(first);
-            if hash != *second {
-                return false;
-            }
-        }
-
-        true
     }
 }
 

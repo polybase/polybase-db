@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 6e85196b5344d7133cab69db71ca9a46a12257da4c53012c14c15a50073fa318 # shrinks to input = _ToFromStructureArgs { tree: MerkleTree { inner: Some(TreeNode { key: 0, value: "", hash: Hash(f0db3924f3e2d677a51924b09ecef8a12416a6ceb09fadd39785bb4f685cab66), left: Some(TreeNode { key: -1, value: "", hash: Hash(0000000000000000000000000000000000000000000000000000000000000000), left: None, right: None, height: 0 }), right: None, height: 1 }) } }
