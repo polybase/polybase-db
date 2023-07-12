@@ -21,16 +21,11 @@ async fn test_db() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::test]
-async fn test_create_collection() -> Result<(), Box<dyn std::error::Error>> {
-    let test_db_name = format!(
-        "test_create_collection_{}",
-        rand::thread_rng().gen_range(1..1000)
-    );
-
+async fn setup(
+    test_db_name: &str,
+    shutdown_rx: oneshot::Receiver<()>,
+) -> Result<(), Box<dyn std::error::Error>> {
     api::create_db(&test_db_name).await?;
-
-    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
     tokio::spawn(async move {
         if let Err(err) = api::start_indexer_service(shutdown_rx).await {
@@ -40,6 +35,33 @@ async fn test_create_collection() -> Result<(), Box<dyn std::error::Error>> {
 
     // wait for service to become active
     tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+
+    Ok(())
+}
+
+async fn teardown(
+    test_db_name: &str,
+    shutdown_tx: oneshot::Sender<()>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // shutdown indexer service
+    let _ = shutdown_tx.send(());
+
+    // drop the test database
+    api::drop_db(&test_db_name).await?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_create_collection() -> Result<(), Box<dyn std::error::Error>> {
+    let test_db_name = format!(
+        "test_create_collection_{}",
+        rand::thread_rng().gen_range(1..1000)
+    );
+
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    setup(&test_db_name, shutdown_rx).await;
 
     let collection: Collection = serde_json::from_str(include_str!("create_coll_minimal.json"))?;
 
@@ -63,11 +85,7 @@ async fn test_create_collection() -> Result<(), Box<dyn std::error::Error>> {
     let req = Request::new(ShutdownRequest {});
     let _ = indexer_client.shutdown(req).await?;
 
-    // shutdown indexer service
-    let _ = shutdown_tx.send(());
-
-    // drop the test database
-    api::drop_db(&test_db_name).await?;
+    teardown(&test_db_name, shutdown_tx).await?;
 
     Ok(())
 }
