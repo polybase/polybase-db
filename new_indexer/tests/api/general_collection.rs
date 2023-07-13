@@ -13,7 +13,7 @@ async fn setup(
     test_db_name: &str,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    api::create_db(&test_db_name).await?;
+    api::create_db(test_db_name).await?;
 
     tokio::spawn(async move {
         if let Err(err) = api::start_indexer_service(shutdown_rx).await {
@@ -35,7 +35,7 @@ async fn teardown(
     let _ = shutdown_tx.send(());
 
     // drop the test database
-    api::drop_db(&test_db_name).await?;
+    api::drop_db(test_db_name).await?;
 
     Ok(())
 }
@@ -77,7 +77,7 @@ async fn test_collection() -> Result<(), Box<dyn std::error::Error>> {
     let req = Request::new(ShutdownRequest {});
     let _ = indexer_client.shutdown(req).await?;
 
-    let _ = teardown(&test_db_name, shutdown_tx).await?;
+    teardown(&test_db_name, shutdown_tx).await?;
 
     Ok(())
 }

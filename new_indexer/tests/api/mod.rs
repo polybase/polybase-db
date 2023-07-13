@@ -9,7 +9,7 @@ use new_indexer::{
     PolybaseIndexer,
 };
 
-const POSTGRES_TEST_SERVER: &'static str =
+const POSTGRES_TEST_SERVER: &str =
     "postgres://polybase_test_user:polybase_test_password@127.0.0.1:9000";
 
 pub async fn create_db(db_name: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -71,7 +71,7 @@ pub async fn drop_db(db_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub const INDEXER_SERVER_ADDR: &'static str = "[::1]:9003";
+pub const INDEXER_SERVER_ADDR: &str = "[::1]:9003";
 
 async fn start_indexer_service(
     shutdown_rx: oneshot::Receiver<()>,
