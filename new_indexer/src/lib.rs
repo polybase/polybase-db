@@ -66,7 +66,7 @@ where
     ) -> std::result::Result<Response<ShutdownResponse>, Status> {
         println!("Got a request for: shutdown");
 
-        self.indexer.shutdown().await;
+        let _ = self.indexer.shutdown().await;
 
         Ok(Response::new(ShutdownResponse {}))
     }
@@ -205,7 +205,7 @@ where
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        self.db.shutdown().await;
+        let _ = self.db.shutdown().await;
 
         Ok(())
     }
@@ -235,14 +235,11 @@ where
             .attributes
             .iter()
             .filter(|attr| attr.kind == "property")
-            .map(|attr| {
-                let mut column = Column::default();
-
-                column.name = attr.name.clone();
-                column.type_kind = attr.type_.as_ref().unwrap().kind.clone();
-                column.type_value = attr.type_.as_ref().unwrap().value.clone();
-                column.required = attr.required.is_some();
-                column
+            .map(|attr| Column {
+                name: attr.name.clone(),
+                type_kind: attr.type_.as_ref().unwrap().kind.clone(),
+                type_value: attr.type_.as_ref().unwrap().value.clone(),
+                required: attr.required.is_some(),
             })
             .collect::<Vec<_>>())
     }

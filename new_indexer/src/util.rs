@@ -9,9 +9,7 @@ pub(crate) mod rpo {
     pub fn hash_and_encode(s: &str) -> String {
         base64::engine::general_purpose::URL_SAFE
             .encode(compute_miden256_hash(s.as_bytes()))
-            .replace('+', "_") // todo - do this or simply use a custom alphabet?
-            .replace('-', "_")
-            .replace('=', "_")
+            .replace(['+', '-', '='], "_")
     }
 
     fn compute_miden256_hash(data: &[u8]) -> Vec<u8> {

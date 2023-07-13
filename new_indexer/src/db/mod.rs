@@ -13,12 +13,10 @@ pub enum DbError {
 pub type Result<T> = std::result::Result<T, DbError>;
 
 mod models {
-    use std::collections::HashMap;
-
     use chrono::{DateTime, Utc};
     use serde::{Deserialize, Serialize};
-    use serde_json::{Map, Number, Value};
-    use sqlx::{postgres::PgRow, types::Json, Column, FromRow, Row, Type, ValueRef};
+    use serde_json::Value;
+    use sqlx::{Column, FromRow, Row};
 
     #[derive(Debug, FromRow, Serialize, Deserialize)]
     pub struct Collection {
@@ -50,7 +48,7 @@ mod models {
                         data.insert(column_name.to_owned(), serde_json::Value::String(val));
                     }
 
-                    Err(e) => match row.try_get::<sqlx::types::BigDecimal, _>(column_name) {
+                    Err(_) => match row.try_get::<sqlx::types::BigDecimal, _>(column_name) {
                         Ok(val) => {
                             data.insert(
                                 column_name.to_owned(),
@@ -102,29 +100,26 @@ pub(crate) mod helpers {
     pub fn convert_to_proto_collection(
         collection: &crate::db::models::Collection,
     ) -> crate::indexer::Collection {
-        let mut proto_collection = crate::indexer::Collection::default();
-        proto_collection.id = collection.id.clone();
-        proto_collection.code = collection.code.clone();
-        proto_collection.ast = Some(convert_to_proto_struct(&collection.ast));
-        proto_collection.public_key = collection
-            .public_key
-            .as_ref()
-            .map(|value| convert_to_proto_struct(value));
-        proto_collection
+        crate::indexer::Collection {
+            id: collection.id.clone(),
+            code: collection.code.clone(),
+            ast: Some(convert_to_proto_struct(&collection.ast)),
+            public_key: collection.public_key.as_ref().map(convert_to_proto_struct),
+        }
     }
 
     pub fn convert_to_proto_collection_record(
         collection_record: &crate::db::models::CollectionRecord,
     ) -> crate::indexer::CollectionRecord {
-        let mut proto_collection_record = crate::indexer::CollectionRecord::default();
-        proto_collection_record.data = Some(convert_to_proto_struct(&collection_record.data));
-        proto_collection_record
+        crate::indexer::CollectionRecord {
+            data: Some(convert_to_proto_struct(&collection_record.data)),
+        }
     }
 
     pub fn convert_to_proto_struct(value: &sqlx::types::JsonValue) -> Struct {
         let json_string = value.to_string();
         let prost_wkt_value: prost_wkt_types::Struct = serde_json::from_str(&json_string).unwrap();
-        prost_wkt_types::Struct::from(prost_wkt_value)
+        prost_wkt_value
     }
 
     pub fn get_collection_table_name(collection_id: &str) -> String {

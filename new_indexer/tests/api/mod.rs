@@ -1,25 +1,11 @@
 mod general_collection;
 
-use std::{
-    collections::HashSet,
-    path::PathBuf,
-    process::Command,
-    sync::{Arc, Mutex},
-    time::SystemTime,
-};
-
-use async_trait::async_trait;
-use dotenv::dotenv;
-use once_cell::sync::Lazy;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use serde_json::json;
-use sha3::Digest;
 use sqlx::postgres::PgPoolOptions;
 use tokio::sync::oneshot;
 use tonic::transport::Server;
 
 use new_indexer::{
-    db::postgres::PostgresDB, indexer::indexer_server::IndexerServer, IndexerError, IndexerService,
+    db::postgres::PostgresDB, indexer::indexer_server::IndexerServer, IndexerService,
     PolybaseIndexer,
 };
 
@@ -33,7 +19,7 @@ pub async fn create_db(db_name: &str) -> Result<(), Box<dyn std::error::Error>> 
         .await?;
 
     // create the test db
-    let create_db_query = sqlx::query(&format!("create database {}", db_name))
+    sqlx::query(&format!("create database {}", db_name))
         .execute(&conn)
         .await?;
 
@@ -71,7 +57,7 @@ pub async fn drop_db(db_name: &str) -> Result<(), Box<dyn std::error::Error>> {
         .connect(POSTGRES_TEST_SERVER)
         .await?;
 
-    let delete_db_query = sqlx::query(&format!("drop database {}", db_name))
+    sqlx::query(&format!("drop database {}", db_name))
         .execute(&conn)
         .await?;
 

@@ -1,14 +1,10 @@
-use async_trait::async_trait;
-use rand::{rngs::OsRng, Rng, RngCore};
-use serde::Deserialize;
-use serde_json::json;
+use rand::{rngs::OsRng, RngCore};
 use tokio::sync::oneshot;
 use tonic::Request;
 
 use new_indexer::indexer::{
-    indexer_client::IndexerClient, Collection, CollectionRecord, CreateCollectionRecordRequest,
-    CreateCollectionRequest, GetCollectionRecordRequest, GetCollectionRequest,
-    ListCollectionRecordsRequest, ListCollectionsRequest, ShutdownRequest, ShutdownResponse,
+    indexer_client::IndexerClient, Collection, CreateCollectionRequest, ListCollectionsRequest,
+    ShutdownRequest,
 };
 
 use crate::api;
@@ -55,7 +51,7 @@ async fn test_collection() -> Result<(), Box<dyn std::error::Error>> {
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
-    setup(&test_db_name, shutdown_rx).await;
+    let _ = setup(&test_db_name, shutdown_rx).await;
 
     let collection: Collection = serde_json::from_str(include_str!("create_coll_minimal.json"))?;
 
@@ -81,24 +77,15 @@ async fn test_collection() -> Result<(), Box<dyn std::error::Error>> {
     let req = Request::new(ShutdownRequest {});
     let _ = indexer_client.shutdown(req).await?;
 
-    teardown(&test_db_name, shutdown_tx).await?;
+    let _ = teardown(&test_db_name, shutdown_tx).await?;
 
     Ok(())
 }
 
-#[tokio::test]
-async fn test_create_collection_record() {}
-
-#[tokio::test]
-async fn test_get_collection() {}
-
-#[tokio::test]
-async fn test_get_collection_record() {}
-
 async fn test_list_collections(
     indexer_client: &mut IndexerClient<tonic::transport::Channel>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let collection: Collection = serde_json::from_str(include_str!("create_coll_minimal.json"))?;
+    //let collection: Collection = serde_json::from_str(include_str!("create_coll_minimal.json"))?;
 
     // create the collection
 

@@ -49,7 +49,7 @@ impl DbInit for PostgresDB {
         };
 
         PostgresDB {
-            state: DbState { pool: pool.clone() },
+            state: DbState { pool },
         }
     }
 }
@@ -115,7 +115,7 @@ impl Db for PostgresDB {
             .bind( ast_json.to_owned())
             .bind( public_key_json.to_owned())
             .fetch_one(&mut txn)
-            .await.and_then(|coll| Ok(helpers::convert_to_proto_collection(&coll))).map_err(|e| DbError::from(PostgresError::from(e)))?;
+            .await.map(|coll| helpers::convert_to_proto_collection(&coll)).map_err(|e| DbError::from(PostgresError::from(e)))?;
 
         // So here we simply create a new table for the collection using the attributes as columns
 
@@ -144,17 +144,17 @@ impl Db for PostgresDB {
             if column.required {
                 col_create_query.push_str(" not null,");
             } else {
-                col_create_query.push_str(",");
+                col_create_query.push(',');
             }
 
             create_coll_table_query.push_str(&col_create_query);
         }
 
-        if create_coll_table_query.ends_with(",") {
+        if create_coll_table_query.ends_with(',') {
             create_coll_table_query.pop();
         }
 
-        create_coll_table_query.push_str(")");
+        create_coll_table_query.push(')');
 
         sqlx::query(&create_coll_table_query)
             .execute(&mut txn)
@@ -298,7 +298,7 @@ impl Db for PostgresDB {
 
         let coll_rec_data = collection_record.data.unwrap(); // todo
 
-        let mut create_coll_rec_values_query = format!("values(");
+        let mut create_coll_rec_values_query = "values(".to_string();
         let mut create_coll_rec_query = format!("insert into {}(", collection_table_name);
 
         for column in column_names {
@@ -308,15 +308,15 @@ impl Db for PostgresDB {
             create_coll_rec_values_query.push(',');
         }
 
-        if create_coll_rec_query.ends_with(",") {
+        if create_coll_rec_query.ends_with(',') {
             create_coll_rec_query.pop();
         }
         create_coll_rec_query.push_str(") ");
 
-        if create_coll_rec_values_query.ends_with(",") {
+        if create_coll_rec_values_query.ends_with(',') {
             create_coll_rec_values_query.pop();
         }
-        create_coll_rec_values_query.push_str(")");
+        create_coll_rec_values_query.push(')');
 
         create_coll_rec_query.push_str(&create_coll_rec_values_query);
         create_coll_rec_query.push_str(" returning *");
