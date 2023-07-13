@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "gateway"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-recursion",
  "indexer",
@@ -2292,7 +2292,7 @@ dependencies = [
 
 [[package]]
 name = "indexer"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-recursion",
  "base64 0.21.0",
@@ -3686,7 +3686,7 @@ dependencies = [
 
 [[package]]
 name = "polybase"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "abi",
  "actix-cors",
@@ -4868,7 +4868,7 @@ dependencies = [
 
 [[package]]
 name = "solid"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "bincode",
  "bs58 0.5.0",
