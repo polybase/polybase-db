@@ -78,7 +78,7 @@ where
                     {
                         if let Some(metrics_data) = res.response().extensions().get::<MetricsData>()
                         {
-                            info!(metrics_data = metrics_data.as_value(),);
+                            info!(metrics_data = metrics_data.as_value(), "Metrics data");
                         }
                     }
                     Ok(res)
