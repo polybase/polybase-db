@@ -1,0 +1,123 @@
+//! The abstract interface for a store (database).
+//! Various concrete implemementations can exists, each implementing the
+//! contract specified by this interface.
+
+trait Database {
+    fn open(path: impl AsRef<Path>) -> Result<Self>;
+
+    pub(crate) async fn commit(&self) -> Result<()> {
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub(crate) async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
+        match (key, value) {
+            (Key::Data { .. }, Value::DataValue(_)) => {}
+            (Key::SystemData { .. }, Value::DataValue(_)) => {}
+            (Key::Index { .. }, Value::IndexValue(_)) => {}
+            _ => return Err(StoreError::InvalidKeyValueCombination),
+        }
+
+        let key = key.serialize()?;
+        let value = value.serialize()?;
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            state.lock().pending.insert(key, StoreOp::Put(value));
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub(crate) async fn get(&self, key: &Key<'_>) -> Result<Option<RecordRoot>> {
+        let key = key.serialize()?;
+        let db = Arc::clone(&self.db);
+        let state = Arc::clone(&self.state);
+
+        tokio::task::spawn_blocking(move || match state.lock().pending.get(&key) {
+            Some(StoreOp::Put(value)) => Ok(Some(bincode::deserialize_from(value.as_slice())?)),
+            Some(StoreOp::Delete) => Ok(None),
+            None => match db.get_pinned(key)? {
+                Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
+                None => Ok(None),
+            },
+        })
+        .await?
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub(crate) async fn delete(&self, key: &Key<'_>) -> Result<()> {
+        let key = key.serialize()?;
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            state.lock().pending.insert(key, StoreOp::Delete);
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub(crate) fn list(
+        &self,
+        lower_bound: &Key,
+        upper_bound: &Key,
+        reverse: bool,
+    ) -> Result<impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>)>> + '_> {
+        let mut opts = rocksdb::ReadOptions::default();
+        opts.set_iterate_lower_bound(lower_bound.serialize()?);
+        opts.set_iterate_upper_bound(upper_bound.serialize()?);
+
+        Ok(self
+            .db
+            .iterator_opt(
+                if reverse {
+                    rocksdb::IteratorMode::End
+                } else {
+                    rocksdb::IteratorMode::Start
+                },
+                opts,
+            )
+            .map(|res| {
+                let (key, value) = res?;
+                Ok((key, value))
+            }))
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub(crate) fn destroy(self) -> Result<()> {
+        let path = self.db.path().to_path_buf();
+        drop(self.db);
+        rocksdb::DB::destroy(&rocksdb::Options::default(), path)?;
+        Ok(())
+    }
+
+    pub fn reset(&self) -> Result<()> {
+        let iter = SnapshotIterator::new(&self.db, 100 * 1024 * 1024);
+        for entry in iter {
+            let mut batch = WriteBatch::default();
+            for entry in entry? {
+                batch.delete(entry.key);
+            }
+            self.db.write(batch)?;
+        }
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn snapshot(&self, chunk_size: usize) -> SnapshotIterator {
+        SnapshotIterator::new(&self.db, chunk_size)
+    }
+
+    // TODO:
+    #[tracing::instrument(skip(self))]
+    pub fn restore(&self, chunk: SnapshotChunk) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        for entry in chunk {
+            batch.put(entry.key, entry.value);
+        }
+        self.db.write(batch)?;
+        Ok(())
+    }
+}

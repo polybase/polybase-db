@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "gateway"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-recursion",
  "indexer",
@@ -2292,9 +2292,37 @@ dependencies = [
 
 [[package]]
 name = "indexer"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "async-recursion",
+ "base64 0.21.0",
+ "bincode",
+ "cid",
+ "futures",
+ "hex",
+ "once_cell",
+ "parking_lot",
+ "polylang 0.1.0 (git+https://github.com/polybase/polylang?branch=main)",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "rand 0.8.5",
+ "rocksdb",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "indexer_db_adaptor"
+version = "0.1.0"
+dependencies = [
+ "async-recursion",
+ "async-trait",
  "base64 0.21.0",
  "bincode",
  "cid",
@@ -3686,7 +3714,7 @@ dependencies = [
 
 [[package]]
 name = "polybase"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "abi",
  "actix-cors",
@@ -4868,7 +4896,7 @@ dependencies = [
 
 [[package]]
 name = "solid"
-version = "0.6.4"
+version = "0.6.5"
 dependencies = [
  "bincode",
  "bs58 0.5.0",
