@@ -4,12 +4,9 @@ pub mod collection;
 mod db;
 mod index;
 pub mod keys;
-mod proto;
 pub mod publickey;
 mod record;
-pub mod snapshot;
 mod stableast_ext;
-mod store;
 pub mod where_query;
 
 pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
@@ -20,7 +17,6 @@ pub use record::{
     json_to_record, record_to_json, Converter, ForeignRecordReference, IndexValue, PathFinder,
     RecordError, RecordRoot, RecordUserError, RecordValue,
 };
-use snapshot::SnapshotChunk;
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 
@@ -31,9 +27,6 @@ pub type Result<T> = std::result::Result<T, IndexerError>;
 pub enum IndexerError {
     #[error("collection error")]
     Collection(#[from] collection::CollectionError),
-
-    #[error("store error")]
-    Store(#[from] store::StoreError),
 
     #[error("database error")]
     Database(#[from] crate::db::DatabaseError),
@@ -54,6 +47,7 @@ pub enum IndexerError {
     WhereQuery(#[from] where_query::WhereQueryError),
 }
 
+/// The new Polybase Indexer
 pub struct Indexer<D>
 where
     D: db::Database,
@@ -80,10 +74,9 @@ where
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
-        self.db.snapshot(chunk_size)
-    }
-
+    //pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
+    //    self.db.snapshot(chunk_size)
+    //}
     #[tracing::instrument(skip(self))]
     pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
         Ok(self.db.restore(data)?)
@@ -101,17 +94,22 @@ where
 
     #[tracing::instrument(skip(self))]
     pub async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
-        let system_key = keys::Key::new_system_data(key)?;
+        todo!();
+        //let system_key = keys::Key::new_system_data(key)?;
 
-        Ok(self
-            .db
-            .set(&system_key, &db::Value::DataValue(data))
-            .await?)
+        //Ok(self
+        //    .db
+        //    .set(&system_key, &db::Value::DataValue(data))
+        //    .await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
-        let system_key = keys::Key::new_system_data(key)?;
-        Ok(self.db.get(&system_key).await?)
+        todo!();
+        //let system_key = keys::Key::new_system_data(key)?;
+        //Ok(self.db.get(&system_key).await?)
     }
 }
+
+#[cfg(test)]
+mod tests {}

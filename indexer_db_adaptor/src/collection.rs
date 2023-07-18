@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    db, index, keys, proto,
+    db, index, keys,
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
     stableast_ext::FieldWalker,
@@ -16,7 +16,6 @@ use base64::Engine;
 use futures::StreamExt;
 use once_cell::sync::Lazy;
 use polylang::stableast;
-use prost::Message;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
@@ -77,9 +76,6 @@ pub enum CollectionError {
 
     #[error("serde_json error")]
     SerdeJSONError(#[from] serde_json::Error),
-
-    #[error("prost decode error")]
-    ProstDecodeError(#[from] prost::DecodeError),
 
     #[error("database error")]
     DatabaseError(#[from] db::DatabaseError),

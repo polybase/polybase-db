@@ -1,12 +1,8 @@
 use std::{borrow::Cow, cmp::Ordering, fmt};
 
 use cid::multihash::{Hasher, MultihashDigest};
-use prost::Message;
 
-use crate::{
-    proto,
-    record::{IndexValue, RecordRoot},
-};
+use crate::record::{IndexValue, RecordRoot};
 
 pub type Result<T> = std::result::Result<T, KeysError>;
 
