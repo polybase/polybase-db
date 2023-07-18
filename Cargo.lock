@@ -15,11 +15,13 @@ dependencies = [
 [[package]]
 name = "abi"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
+source = "git+https://github.com/polybase/polylang?rev=72b19082ece80f03f79a8eaecfd8407b9f013dcd#72b19082ece80f03f79a8eaecfd8407b9f013dcd"
 dependencies = [
  "base64 0.21.0",
+ "error",
  "serde",
  "serde_json",
+ "snafu",
 ]
 
 [[package]]
@@ -1583,6 +1585,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc-comment"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
+
+[[package]]
 name = "ecdsa"
 version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1717,6 +1725,17 @@ checksum = "aa68f1b12764fab894d2755d2518754e71b4fd80ecfb822714a1206c2aab39bf"
 dependencies = [
  "cc",
  "libc",
+]
+
+[[package]]
+name = "error"
+version = "0.1.0"
+source = "git+https://github.com/polybase/polylang?rev=72b19082ece80f03f79a8eaecfd8407b9f013dcd#72b19082ece80f03f79a8eaecfd8407b9f013dcd"
+dependencies = [
+ "derive_more",
+ "parking_lot",
+ "serde",
+ "snafu",
 ]
 
 [[package]]
@@ -2967,8 +2986,8 @@ dependencies = [
 
 [[package]]
 name = "miden-air"
-version = "0.5.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.6.0"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "miden-core",
  "winter-air",
@@ -2976,8 +2995,8 @@ dependencies = [
 
 [[package]]
 name = "miden-assembly"
-version = "0.5.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.6.1"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "miden-core",
  "num_enum",
@@ -2985,8 +3004,8 @@ dependencies = [
 
 [[package]]
 name = "miden-core"
-version = "0.5.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.6.1"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "miden-crypto",
  "winter-crypto 0.6.4",
@@ -2996,9 +3015,9 @@ dependencies = [
 
 [[package]]
 name = "miden-crypto"
-version = "0.2.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2a2946d394b9e5ce4351ccdea70d3a1c8e38870d7ed3d0221ad7acd0f1b80f23"
+checksum = "9cf95db953ee5fc8ef5a1df2d2e6e55e41587861c793fa26b45a214d3cc0f798"
 dependencies = [
  "blake3",
  "winter-crypto 0.6.4",
@@ -3008,18 +3027,19 @@ dependencies = [
 
 [[package]]
 name = "miden-processor"
-version = "0.5.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.6.1"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "log",
+ "miden-air",
  "miden-core",
  "winter-prover",
 ]
 
 [[package]]
 name = "miden-prover"
-version = "0.5.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.6.0"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "log",
  "miden-air",
@@ -3029,16 +3049,16 @@ dependencies = [
 
 [[package]]
 name = "miden-stdlib"
-version = "0.4.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.5.0"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "miden-assembly",
 ]
 
 [[package]]
 name = "miden-verifier"
-version = "0.5.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.6.0"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "miden-air",
  "miden-core",
@@ -3047,8 +3067,8 @@ dependencies = [
 
 [[package]]
 name = "miden-vm"
-version = "0.5.0"
-source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
+version = "0.6.0"
+source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.6.1#3022d257eec9cdeca2273b0b66b633bcb3552274"
 dependencies = [
  "log",
  "miden-assembly",
@@ -3365,23 +3385,23 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.5.11"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
+checksum = "7a015b430d3c108a207fd776d2e2196aaf8b1cf8cf93253e3a097ff3085076a1"
 dependencies = [
  "num_enum_derive",
 ]
 
 [[package]]
 name = "num_enum_derive"
-version = "0.5.11"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
+checksum = "96667db765a921f7b295ffee8b60472b686a51d4f21c2ee4ffdb94c7013b65a6"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.16",
 ]
 
 [[package]]
@@ -3761,17 +3781,19 @@ dependencies = [
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
+source = "git+https://github.com/polybase/polylang?rev=72b19082ece80f03f79a8eaecfd8407b9f013dcd#72b19082ece80f03f79a8eaecfd8407b9f013dcd"
 dependencies = [
  "abi",
- "actix-web",
  "base64 0.21.0",
  "console_error_panic_hook",
+ "derive_more",
+ "error",
  "lazy_static",
  "miden-processor",
  "miden-stdlib",
  "miden-vm",
- "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf)",
+ "parking_lot",
+ "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=72b19082ece80f03f79a8eaecfd8407b9f013dcd)",
  "quickcheck",
  "quickcheck_macros",
  "regex",
@@ -3784,13 +3806,14 @@ dependencies = [
 [[package]]
 name = "polylang-prover"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
+source = "git+https://github.com/polybase/polylang?rev=72b19082ece80f03f79a8eaecfd8407b9f013dcd#72b19082ece80f03f79a8eaecfd8407b9f013dcd"
 dependencies = [
  "abi",
+ "error",
  "miden-processor",
  "miden-stdlib",
  "miden-vm",
- "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf)",
+ "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=72b19082ece80f03f79a8eaecfd8407b9f013dcd)",
  "serde_json",
 ]
 
@@ -3809,8 +3832,10 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
+source = "git+https://github.com/polybase/polylang?rev=72b19082ece80f03f79a8eaecfd8407b9f013dcd#72b19082ece80f03f79a8eaecfd8407b9f013dcd"
 dependencies = [
+ "derive_more",
+ "error",
  "lalrpop",
  "lalrpop-util",
  "regex",
@@ -4838,6 +4863,28 @@ name = "smallvec"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
+
+[[package]]
+name = "snafu"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4de37ad025c587a29e8f3f5605c00f70b98715ef90b9061a815b9e59e9042d6"
+dependencies = [
+ "doc-comment",
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.7.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "990079665f075b699031e9c08fd3ab99be5029b96f3b78dc0709e8f77e4efebf"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
 
 [[package]]
 name = "snow"
