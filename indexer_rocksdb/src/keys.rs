@@ -1,8 +1,12 @@
 use std::{borrow::Cow, cmp::Ordering, fmt};
 
 use cid::multihash::{Hasher, MultihashDigest};
+use prost::Message;
 
-use crate::record::{IndexValue, RecordRoot};
+use crate::{
+    proto,
+    record::{IndexValue, RecordRoot},
+};
 
 pub type Result<T> = std::result::Result<T, KeysError>;
 
@@ -148,7 +152,7 @@ fn generate_cid(data: &[u8], out: &mut Vec<u8>) -> std::result::Result<(), cid::
 }
 
 #[derive(PartialEq, Clone)]
-pub enum Key<'a> {
+pub(crate) enum Key<'a> {
     /// A wildcard key is always greater than a key whose prefix matches the inner key.
     Wildcard(Box<Key<'a>>),
     /// A data key is a key that points to a record.

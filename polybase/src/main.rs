@@ -53,6 +53,7 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
         "gateway",
         "solid",
         "indexer_db_adaptor",
+        "indexer_rocksdb",
     ] {
         filter = filter.add_directive(format!("{proj_crate}={}", log_level).parse()?);
     }

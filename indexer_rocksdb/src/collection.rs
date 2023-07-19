@@ -5,10 +5,12 @@ use std::{
 };
 
 use crate::{
-    db, index, keys,
+    index, json_to_record, keys, proto,
     publickey::PublicKey,
     record::{self, PathFinder, RecordRoot, RecordValue},
+    record_to_json,
     stableast_ext::FieldWalker,
+    store::{self},
     where_query,
 };
 use async_recursion::async_recursion;
@@ -16,6 +18,7 @@ use base64::Engine;
 use futures::StreamExt;
 use once_cell::sync::Lazy;
 use polylang::stableast;
+use prost::Message;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
@@ -62,6 +65,9 @@ pub enum CollectionError {
     #[error("keys error")]
     KeysError(#[from] keys::KeysError),
 
+    #[error("store error")]
+    StoreError(#[from] store::StoreError),
+
     #[error("where query error")]
     WhereQueryError(#[from] where_query::WhereQueryError),
 
@@ -77,8 +83,8 @@ pub enum CollectionError {
     #[error("serde_json error")]
     SerdeJSONError(#[from] serde_json::Error),
 
-    #[error("database error")]
-    DatabaseError(#[from] db::DatabaseError),
+    #[error("prost decode error")]
+    ProstDecodeError(#[from] prost::DecodeError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -206,11 +212,8 @@ pub(crate) struct Authorization {
 }
 
 #[derive(Clone)]
-pub struct Collection<'a, D>
-where
-    D: db::Database,
-{
-    db: &'a D,
+pub struct Collection<'a> {
+    store: &'a store::Store,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
     authorization: Authorization,
@@ -334,7 +337,7 @@ pub fn validate_schema_change(
 }
 
 #[tracing::instrument]
-pub fn validate_collection_record<D: db::Database>(record: &RecordRoot) -> Result<()> {
+pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
     let (namespace, name) = if let Some(RecordValue::String(id)) = record.get("id") {
         let Some((namespace, name)) = id.rsplit_once('/') else {
                 return Err(CollectionUserError::CollectionIdMissingNamespace)?;
@@ -364,7 +367,7 @@ pub fn validate_collection_record<D: db::Database>(record: &RecordRoot) -> Resul
 
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast)?;
 
-    let Some(collection) = collection_ast_from_root(ast, &Collection::<D>::normalize_name( name)) else {
+    let Some(collection) = collection_ast_from_root(ast, &Collection::normalize_name( name)) else {
         return Err(CollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
     };
 
@@ -494,28 +497,25 @@ pub fn validate_collection_record<D: db::Database>(record: &RecordRoot) -> Resul
     Ok(())
 }
 
-impl<'a, D> Collection<'a, D>
-where
-    D: db::Database + Send + Sync,
-{
+impl<'a> Collection<'a> {
     fn new(
-        db: &'a D,
+        store: &'a store::Store,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
         authorization: Authorization,
     ) -> Self {
         Self {
-            db,
+            store,
             collection_id,
             indexes,
             authorization,
         }
     }
 
-    #[tracing::instrument(skip(db))]
-    pub(crate) async fn load(db: &'a D, id: String) -> Result<Collection<'_, D>> {
+    #[tracing::instrument(skip(store))]
+    pub(crate) async fn load(store: &'a store::Store, id: String) -> Result<Collection<'_>> {
         let collection_collection = Self::new(
-            db,
+            store,
             "Collection".to_string(),
             vec![
                 index::CollectionIndex::new(vec![index::CollectionIndexField::new(
@@ -557,7 +557,7 @@ where
             None => return Err(CollectionError::CollectionRecordMissingID),
         };
 
-        let short_collection_name = Collection::<D>::normalize_name(id.as_str());
+        let short_collection_name = Collection::normalize_name(id.as_str());
 
         let collection_ast: stableast::Collection = match record.get("ast") {
             Some(RecordValue::String(ast)) => {
@@ -625,7 +625,7 @@ where
         let is_call_all = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
         Ok(Self {
-            db,
+            store,
             collection_id: id.to_string(),
             indexes,
             authorization: Authorization {
@@ -668,7 +668,7 @@ where
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.db, "Collection".to_owned())
+        let Some(record) = Self::load(self.store, "Collection".to_owned())
             .await?
             .get(self.collection_id.clone(), None)
             .await? else {
@@ -796,7 +796,7 @@ where
 
             for foreign_record_reference in foreign_record_references {
                 let collection =
-                    Collection::load(self.db, foreign_record_reference.collection_id).await?;
+                    Collection::load(self.store, foreign_record_reference.collection_id).await?;
 
                 let Some(record) = collection
                     .get(foreign_record_reference.id, Some(user))
@@ -840,8 +840,8 @@ where
             };
 
             #[async_recursion]
-            async fn check_delegate_value<D: db::Database>(
-                self_col: &Collection<'_, D>,
+            async fn check_delegate_value(
+                self_col: &Collection<'_>,
                 delegate_value: &RecordValue,
                 user: &AuthUser,
             ) -> Result<bool> {
@@ -864,7 +864,7 @@ where
                     }
                     RecordValue::ForeignRecordReference(fr) => {
                         let collection =
-                            Collection::load(self_col.db, fr.collection_id.clone()).await?;
+                            Collection::load(self_col.store, fr.collection_id.clone()).await?;
 
                         let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
                             return Ok(false);
@@ -903,10 +903,10 @@ where
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        self.db
+        self.store
             .set(
                 &collection_metadata_key,
-                &db::Value::DataValue(
+                &store::Value::DataValue(
                     &[(
                         "lastRecordUpdatedAt".into(),
                         RecordValue::String(
@@ -927,7 +927,7 @@ where
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        let Some(record) = self.db.get(&collection_metadata_key).await? else {
+        let Some(record) = self.store.get(&collection_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -954,10 +954,10 @@ where
             &self.collection_id, record_id
         ))?;
 
-        self.db
+        self.store
             .set(
                 &record_metadata_key,
-                &db::Value::DataValue(
+                &store::Value::DataValue(
                     &[(
                         "updatedAt".into(),
                         RecordValue::String(
@@ -981,7 +981,7 @@ where
             &self.collection_id, record_id
         ))?;
 
-        let Some(record) = self.db.get(&record_metadata_key).await? else {
+        let Some(record) = self.store.get(&record_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -1009,8 +1009,8 @@ where
             None => return Err(CollectionError::RecordMissingID),
         }
 
-        let _collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.db, id.clone()).await {
+        let collection_before = if self.collection_id == "Collection" {
+            match Collection::load(self.store, id.clone()).await {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -1025,7 +1025,9 @@ where
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
-        self.db.set(&data_key, &db::Value::DataValue(value)).await?;
+        self.store
+            .set(&data_key, &store::Value::DataValue(value))
+            .await?;
 
         self.update_metadata(&SystemTime::now()).await?;
         self.update_record_metadata(id.clone(), &SystemTime::now())
@@ -1038,6 +1040,18 @@ where
 
         self.add_indexes(&id, &data_key, value).await;
 
+        if self.collection_id == "Collection" && id != "Collection" {
+            if let Some(collection_before) = collection_before {
+                // Unwrap is safe because collection_before had to load the existing record.
+                #[allow(clippy::unwrap_used)]
+                let old_value = old_value.unwrap();
+
+                let target_col = Collection::load(self.store, id).await?;
+
+                target_col.rebuild(collection_before, &old_value).await?;
+            }
+        }
+
         Ok(())
     }
 
@@ -1047,7 +1061,7 @@ where
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.db.get(&key).await? else {
+        let Some(value) = self.store.get(&key).await? else {
             return Ok(None);
         };
 
@@ -1065,7 +1079,7 @@ where
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.db.get(&key).await? else {
+        let Some(value) = self.store.get(&key).await? else {
             return Ok(None);
         };
 
@@ -1078,7 +1092,7 @@ where
         data_key: &keys::Key<'_>,
         record: &RecordRoot,
     ) {
-        let index_value = db::Value::IndexValue(proto::IndexRecord {
+        let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: match data_key.serialize() {
                 Ok(data) => data,
                 Err(e) => {
@@ -1097,7 +1111,7 @@ where
                     record,
                 )?;
 
-                self.db.set(&index_key, &index_value).await?;
+                self.store.set(&index_key, &index_value).await?;
 
                 Ok::<_, CollectionError>(())
             }
@@ -1127,7 +1141,7 @@ where
                     record,
                 )?;
 
-                self.db.delete(&index_key).await?;
+                self.store.delete(&index_key).await?;
 
                 Ok::<_, CollectionError>(())
             }
@@ -1155,7 +1169,7 @@ where
 
         let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
-        self.db.delete(&key).await?;
+        self.store.delete(&key).await?;
 
         let now = SystemTime::now();
         self.update_metadata(&now).await?;
@@ -1216,60 +1230,127 @@ where
             (None, None) => key_range,
         };
 
-        Ok(
-            futures::stream::iter(self.db.list(&key_range.lower, &key_range.upper, reverse)?)
-                .map(|res| async {
-                    let (k, v) = res?;
-
-                    let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
-                    let index_record = proto::IndexRecord::decode(&v[..])?;
-                    let data_key = keys::Key::deserialize(&index_record.id)?;
-                    let data = match self.db.get(&data_key).await? {
-                        Some(d) => d,
-                        None => return Ok(None),
-                    };
-
-                    Ok(Some((index_key, data)))
-                })
-                .filter_map(|r| async {
-                    match r.await {
-                        // Skip records that we couldn't find by the data key
-                        Ok(None) => None,
-                        Ok(Some(x)) => Some(Ok(x)),
-                        Err(e) => Some(Err(e)),
-                    }
-                })
-                .filter_map(|r| async {
-                    match r {
-                        Ok((cursor, record)) => {
-                            match self.user_can_read(&record, user).await {
-                                Ok(false) => None,
-                                Ok(true) => Some(Ok((cursor, record))),
-                                Err(e) => {
-                                    // TODO: should we propagate this error?
-                                    warn!("failed to check if user can read record: {e:#?}",);
-                                    None
-                                }
-                            }
-                        }
-                        Err(e) => Some(Err(e)),
-                    }
-                })
-                .take(limit.unwrap_or(usize::MAX)),
+        Ok(futures::stream::iter(
+            self.store
+                .list(&key_range.lower, &key_range.upper, reverse)?,
         )
+        .map(|res| async {
+            let (k, v) = res?;
+
+            let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
+            let index_record = proto::IndexRecord::decode(&v[..])?;
+            let data_key = keys::Key::deserialize(&index_record.id)?;
+            let data = match self.store.get(&data_key).await? {
+                Some(d) => d,
+                None => return Ok(None),
+            };
+
+            Ok(Some((index_key, data)))
+        })
+        .filter_map(|r| async {
+            match r.await {
+                // Skip records that we couldn't find by the data key
+                Ok(None) => None,
+                Ok(Some(x)) => Some(Ok(x)),
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .filter_map(|r| async {
+            match r {
+                Ok((cursor, record)) => {
+                    match self.user_can_read(&record, user).await {
+                        Ok(false) => None,
+                        Ok(true) => Some(Ok((cursor, record))),
+                        Err(e) => {
+                            // TODO: should we propagate this error?
+                            warn!("failed to check if user can read record: {e:#?}",);
+                            None
+                        }
+                    }
+                }
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .take(limit.unwrap_or(usize::MAX)))
+    }
+
+    #[async_recursion]
+    async fn rebuild(
+        &self,
+        // The old collection record, loaded before the AST was changed
+        old_collection: Collection<'async_recursion>,
+        old_collection_record: &RecordRoot,
+    ) -> Result<()> {
+        let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
+        let meta = collection_collection
+            .get(self.id().to_string(), None)
+            .await?;
+        let Some(meta) = meta else {
+            return Err(CollectionUserError::CollectionNotFound { name: self.name() })?;
+        };
+
+        let collection_ast = match meta.get("ast") {
+            Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
+            _ => return Err(CollectionError::CollectionRecordMissingAST),
+        };
+
+        let old_collection_ast = match old_collection_record.get("ast") {
+            Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
+            _ => return Err(CollectionError::CollectionRecordMissingAST),
+        };
+
+        if collection_ast == old_collection_ast {
+            // Collection code was not changed, no need to rebuild anything
+            return Ok(());
+        }
+
+        // TODO: diff old and new ASTs to determine which indexes need to be rebuilt
+        // For now, let's just rebuild all indexes
+
+        let start_key = keys::Key::new_index(
+            self.id().to_string(),
+            &[&["id"]],
+            &[keys::Direction::Ascending],
+            vec![],
+        )?;
+        let end_key = start_key.clone().wildcard();
+        for entry in self.store.list(&start_key, &end_key, false)? {
+            let (_, value) = entry?;
+            let index_record = proto::IndexRecord::decode(&value[..])?;
+            let data_key = keys::Key::deserialize(&index_record.id)?;
+            let data = self.store.get(&data_key).await?;
+            let Some(data) = data else {
+                continue;
+            };
+            let Some(RecordValue::String(id)) = data.get("id") else {
+                return Err(CollectionError::RecordMissingID);
+            };
+            let id = id.clone();
+
+            let json_data = record_to_json(data)?;
+            let new_data = json_to_record(&collection_ast, json_data, true)?;
+            // Delete from the old collection object (loaded from old ast), to delete the old data and indexes
+            old_collection.delete(id.clone()).await?;
+            // Insert into the new collection object (loaded from new ast), to create the new data and indexes
+            self.set(id.clone(), &new_data).await?;
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::{db::Database, store::tests::TestStore};
     use futures::TryStreamExt;
+
+    use crate::store::tests::TestStore;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_collection_collection_load() {
-        let db = TestStore::default();
-        let collection = Collection::load(&db, "Collection".to_string())
+        let store = TestStore::default();
+        let collection = Collection::load(&store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1294,10 +1375,10 @@ mod tests {
     }
 
     async fn create_collection<'a>(
-        db: &'a TestStore,
+        store: &'a TestStore,
         ast: stableast::Root<'_>,
-    ) -> Vec<Collection<'a, TestStore>> {
-        let collection_collection = Collection::<TestStore>::load(db, "Collection".to_string())
+    ) -> Vec<Collection<'a>> {
+        let collection_collection = Collection::load(store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1327,9 +1408,9 @@ mod tests {
                 .await
                 .unwrap();
 
-            db.commit().await.unwrap();
+            store.commit().await.unwrap();
 
-            collections.push(Collection::load(db, id).await.unwrap());
+            collections.push(Collection::load(store, id).await.unwrap());
         }
 
         collections
@@ -1337,10 +1418,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_collection() {
-        let db = TestStore::default();
+        let store = TestStore::default();
 
         let collection_account = create_collection(
-            &db,
+            &store,
             stableast::Root(vec![stableast::RootNode::Collection(
                 stableast::Collection {
                     namespace: stableast::Namespace { value: "ns".into() },
@@ -1385,7 +1466,7 @@ mod tests {
         .next()
         .unwrap();
 
-        db.commit().await.unwrap();
+        store.commit().await.unwrap();
 
         assert_eq!(collection_account.collection_id, "ns/Account");
         assert_eq!(
@@ -1423,9 +1504,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_set_get() {
-        let db = TestStore::default();
+        let store = TestStore::default();
         let collection = Collection::new(
-            &db,
+            &store,
             "test".to_string(),
             vec![],
             Authorization {
@@ -1442,7 +1523,7 @@ mod tests {
         ]);
 
         collection.set("1".into(), &value).await.unwrap();
-        db.commit().await.unwrap();
+        store.commit().await.unwrap();
 
         let record = collection.get("1".into(), None).await.unwrap().unwrap();
         assert_eq!(record.get("id").unwrap(), &RecordValue::String("1".into()));
@@ -1454,10 +1535,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_set_list() {
-        let db = TestStore::default();
+        let store = TestStore::default();
 
         {
-            let collection = Collection::load(&db, "Collection".to_owned())
+            let collection = Collection::load(&store, "Collection".to_owned())
                 .await
                 .unwrap();
             collection
@@ -1517,9 +1598,11 @@ mod tests {
                 .unwrap();
         }
 
-        db.commit().await.unwrap();
+        store.commit().await.unwrap();
 
-        let collection = Collection::load(&db, "test/test".to_owned()).await.unwrap();
+        let collection = Collection::load(&store, "test/test".to_owned())
+            .await
+            .unwrap();
 
         let value_1 = HashMap::from([
             ("id".to_string(), RecordValue::String("1".into())),
@@ -1533,7 +1616,7 @@ mod tests {
         ]);
         collection.set("2".into(), &value_2).await.unwrap();
 
-        db.commit().await.unwrap();
+        store.commit().await.unwrap();
 
         let mut results = collection
             .list(

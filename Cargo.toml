@@ -1,6 +1,6 @@
 [workspace]
 
-members = ["polybase", "indexer", "gateway", "solid", "indexer_db_adaptor"]
+members = ["polybase", "indexer", "gateway", "solid", "indexer_db_adaptor", "indexer_rocksdb"]
 
 [profile.release]
 debug-assertions = true

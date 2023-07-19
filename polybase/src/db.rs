@@ -4,8 +4,8 @@ use crate::txn::{self, CallTxn};
 use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
-use indexer::snapshot::{SnapshotChunk, SnapshotIterator};
-use indexer::{
+use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
+use indexer_rocksdb::{
     collection::validate_collection_record, validate_schema_change, Cursor, Indexer, ListQuery,
     RecordRoot,
 };
@@ -40,10 +40,10 @@ pub enum Error {
     Gateway(#[from] gateway::GatewayError),
 
     #[error("indexer error")]
-    Indexer(#[from] indexer::IndexerError),
+    Indexer(#[from] indexer_rocksdb::IndexerError),
 
     #[error("collection error")]
-    Collection(#[from] indexer::collection::CollectionError),
+    Collection(#[from] indexer_rocksdb::collection::CollectionError),
 
     #[error("serialize error")]
     Serializer(#[from] bincode::Error),

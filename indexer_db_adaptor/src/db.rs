@@ -1,5 +1,5 @@
-//! The abstract interface for a store (database).
-//! Various concrete implementations can exists, each implementing the
+//! The abstract interface for a store (database backend).
+//! Various concrete implementations can exist, each implementing the
 //! contract specified by this interface.
 
 use crate::record::RecordRoot;
@@ -10,19 +10,22 @@ pub enum DatabaseError {
     #[error("invalid key/value combination")]
     InvalidKeyValueCombination,
 
-    #[error("bincode error")]
-    BincodeError(#[from] bincode::Error),
-
     #[error("tokio task join error")]
     TokioTaskJoinError(#[from] tokio::task::JoinError),
 }
 
 pub type Result<T> = std::result::Result<T, DatabaseError>;
 
+/// The Database trait
+///
+/// This trait expresses the essential functionality of the Indexer, regardless
+/// of the concrete backend in use (rocksdb, postgres, etc.).
 #[async_trait]
-pub trait Database: Send + Sync {
+pub trait Database: Send + Sync + 'static {
     type Key: From<String>;
     type Value: From<RecordRoot> + Into<RecordRoot>;
+    //type Chunk;
+    //type ChunkIterator;
 
     async fn commit(&self) -> Result<()>;
     async fn set(&self, key: &Self::Key, value: &Self::Value) -> Result<()>;
@@ -37,4 +40,6 @@ pub trait Database: Send + Sync {
 
     fn destroy(self) -> Result<()>;
     fn reset(&self) -> Result<()>;
+    //fn snapshot(&self, chunk_size: usize) -> Self::ChunkIterator;
+    //fn restore(&self, chunk: Self::Chunk) -> Result<()>;
 }
