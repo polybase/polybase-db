@@ -9,6 +9,8 @@ use crate::{index, json_to_record, keys, proto, record_to_json};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 
+use indexer_db_adaptor::db::Database;
+
 const VERSION_SYSTEM_KEY: &str = "database_version";
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -44,7 +46,7 @@ pub enum Error {
 }
 
 pub(crate) async fn check_for_migration(
-    store: &store::Store,
+    store: &store::RocksDB,
     migration_batch_size: usize,
 ) -> Result<()> {
     let version = get_migration_version(store).await?;
@@ -63,7 +65,7 @@ pub(crate) async fn check_for_migration(
 
 /// Migration can fail half way through, but because we only commit the version at the end
 /// it will restart the migration process.
-async fn migrate_to_v1(store: &store::Store, migration_batch_size: usize) -> Result<()> {
+async fn migrate_to_v1(store: &store::RocksDB, migration_batch_size: usize) -> Result<()> {
     info!("Migrating database to v1");
 
     // Delete index
@@ -88,7 +90,7 @@ async fn migrate_to_v1(store: &store::Store, migration_batch_size: usize) -> Res
 }
 
 /// Gets the migration version
-async fn get_migration_version(store: &store::Store) -> Result<u64> {
+async fn get_migration_version(store: &store::RocksDB) -> Result<u64> {
     let system_key = keys::Key::new_system_data(VERSION_SYSTEM_KEY.to_string())?;
     let record = store.get(&system_key).await?;
     match record.and_then(|mut r| r.remove(VERSION_SYSTEM_KEY)) {
@@ -98,7 +100,7 @@ async fn get_migration_version(store: &store::Store) -> Result<u64> {
 }
 
 // Sets the migration version
-async fn set_migration_version(store: &store::Store, version: u64) -> Result<()> {
+async fn set_migration_version(store: &store::RocksDB, version: u64) -> Result<()> {
     let system_key = keys::Key::new_system_data(VERSION_SYSTEM_KEY.to_string())?;
     let value = RecordValue::Number(version as f64);
     let mut record = RecordRoot::new();
@@ -110,12 +112,18 @@ async fn set_migration_version(store: &store::Store, version: u64) -> Result<()>
 }
 
 /// Get a Collection instance for given collection_id
-async fn get_collection(store: &store::Store, id: String) -> Result<Collection<'_>> {
+async fn get_collection(
+    store: &store::RocksDB,
+    id: String,
+) -> Result<Collection<'_, store::RocksDB>> {
     Ok(Collection::load(store, id).await?)
 }
 
 /// Delete all index records (except for `id` index)
-async fn delete_all_index_records(store: &store::Store, migration_batch_size: usize) -> Result<()> {
+async fn delete_all_index_records(
+    store: &store::RocksDB,
+    migration_batch_size: usize,
+) -> Result<()> {
     let mut opts = rocksdb::ReadOptions::default();
     opts.set_iterate_lower_bound([2]);
     opts.set_iterate_upper_bound([3]);
@@ -154,7 +162,7 @@ async fn delete_all_index_records(store: &store::Store, migration_batch_size: us
 }
 
 /// For every collection, build all indexes
-async fn apply_indexes(store: &store::Store, migration_batch_size: usize) -> Result<()> {
+async fn apply_indexes(store: &store::RocksDB, migration_batch_size: usize) -> Result<()> {
     let collection_ids = get_collection_ids(store).await?;
     info!(
         count = collection_ids.len(),
@@ -174,7 +182,7 @@ async fn apply_indexes(store: &store::Store, migration_batch_size: usize) -> Res
 }
 
 /// Get a list of all collections
-async fn get_collection_ids(store: &store::Store) -> Result<Vec<String>> {
+async fn get_collection_ids(store: &store::RocksDB) -> Result<Vec<String>> {
     // Get a list of all collections
     let start_key = keys::Key::new_index(
         "Collection".to_string(),
@@ -206,7 +214,7 @@ async fn get_collection_ids(store: &store::Store) -> Result<Vec<String>> {
 }
 
 /// Gets the cid of every collection, including Collection (we use this to exclude the `id` index)
-async fn get_collection_cids(store: &store::Store) -> Result<HashSet<Vec<u8>>> {
+async fn get_collection_cids(store: &store::RocksDB) -> Result<HashSet<Vec<u8>>> {
     let mut collections = HashSet::new();
 
     for collection_id in get_collection_ids(store).await? {
@@ -228,7 +236,7 @@ async fn get_collection_cids(store: &store::Store) -> Result<HashSet<Vec<u8>>> {
 /// Loop through every record for a collection, and rebuild the index for each record, mostly copied
 /// from `Collection::rebuild`
 async fn build_collection_indexes(
-    store: &store::Store,
+    store: &store::RocksDB,
     collection_id: String,
     migration_batch_size: usize,
 ) -> Result<()> {

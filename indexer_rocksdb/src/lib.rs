@@ -9,9 +9,9 @@ mod migrate;
 mod proto;
 pub mod publickey;
 mod record;
-mod rocksdb;
 pub mod snapshot;
 mod stableast_ext;
+mod store;
 pub mod where_query;
 
 pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
@@ -56,9 +56,6 @@ pub enum IndexerError {
 
     #[error("migration error")]
     Migration(#[from] migrate::Error),
-
-    #[error("database error")]
-    Database(#[from] db::DatabaseError),
 }
 
 /// The new Polybase Indexer
@@ -99,7 +96,7 @@ where
     // }
 
     #[tracing::instrument(skip(self))]
-    pub async fn collection(&self, id: String) -> Result<Collection> {
+    pub async fn collection(&self, id: String) -> Result<Collection<D>> {
         Ok(Collection::load(&self.db, id).await?)
     }
 
@@ -126,66 +123,3 @@ where
         //Ok(self.db.get(&system_key).await?)
     }
 }
-
-//pub struct Indexer {
-//    store: store::Store,
-//}
-//
-//impl Indexer {
-//    pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-//        let store = store::Store::open(path)?;
-//        Ok(Self { store })
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
-//        let store = &self.store;
-//        Ok(migrate::check_for_migration(store, migration_batch_size).await?)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub fn destroy(self) -> Result<()> {
-//        Ok(self.store.destroy()?)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub fn reset(&self) -> Result<()> {
-//        Ok(self.store.reset()?)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
-//        self.store.snapshot(chunk_size)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
-//        Ok(self.store.restore(data)?)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub async fn collection(&self, id: String) -> Result<Collection> {
-//        Ok(Collection::load(&self.store, id).await?)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub async fn commit(&self) -> Result<()> {
-//        Ok(self.store.commit().await?)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
-//        let system_key = keys::Key::new_system_data(key)?;
-//
-//        Ok(self
-//            .store
-//            .set(&system_key, &store::Value::DataValue(data))
-//            .await?)
-//    }
-//
-//    #[tracing::instrument(skip(self))]
-//    pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
-//        let system_key = keys::Key::new_system_data(key)?;
-//        Ok(self.store.get(&system_key).await?)
-//    }
-//}

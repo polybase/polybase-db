@@ -10,8 +10,7 @@ use crate::{
     record::{self, PathFinder, RecordRoot, RecordValue},
     record_to_json,
     stableast_ext::FieldWalker,
-    store::{self},
-    where_query,
+    store, where_query,
 };
 use async_recursion::async_recursion;
 use base64::Engine;
@@ -21,6 +20,8 @@ use polylang::stableast;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
+
+use indexer_db_adaptor::db::Database;
 
 pub type Result<T> = std::result::Result<T, CollectionError>;
 
@@ -65,7 +66,7 @@ pub enum CollectionError {
     #[error("keys error")]
     KeysError(#[from] keys::KeysError),
 
-    #[error("store error")]
+    #[error("rocksdb error")]
     StoreError(#[from] store::StoreError),
 
     #[error("where query error")]
@@ -212,8 +213,11 @@ pub(crate) struct Authorization {
 }
 
 #[derive(Clone)]
-pub struct Collection<'a> {
-    store: &'a store::Store,
+pub struct Collection<'a, D>
+where
+    D: Database,
+{
+    db: &'a D,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
     authorization: Authorization,
@@ -497,25 +501,28 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
     Ok(())
 }
 
-impl<'a> Collection<'a> {
+impl<'a, D> Collection<'a, D>
+where
+    D: Database,
+{
     fn new(
-        store: &'a store::Store,
+        db: &'a D,
         collection_id: String,
         indexes: Vec<index::CollectionIndex<'a>>,
         authorization: Authorization,
     ) -> Self {
         Self {
-            store,
+            db,
             collection_id,
             indexes,
             authorization,
         }
     }
 
-    #[tracing::instrument(skip(store))]
-    pub(crate) async fn load(store: &'a store::Store, id: String) -> Result<Collection<'_>> {
+    #[tracing::instrument(skip(db))]
+    pub(crate) async fn load(db: &'a D, id: String) -> Result<Collection<'_, D>> {
         let collection_collection = Self::new(
-            store,
+            db,
             "Collection".to_string(),
             vec![
                 index::CollectionIndex::new(vec![index::CollectionIndexField::new(
@@ -557,7 +564,7 @@ impl<'a> Collection<'a> {
             None => return Err(CollectionError::CollectionRecordMissingID),
         };
 
-        let short_collection_name = Collection::normalize_name(id.as_str());
+        let short_collection_name = Collection::<D>::normalize_name(id.as_str());
 
         let collection_ast: stableast::Collection = match record.get("ast") {
             Some(RecordValue::String(ast)) => {
@@ -625,7 +632,7 @@ impl<'a> Collection<'a> {
         let is_call_all = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
         Ok(Self {
-            store,
+            db,
             collection_id: id.to_string(),
             indexes,
             authorization: Authorization {
@@ -668,7 +675,7 @@ impl<'a> Collection<'a> {
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.store, "Collection".to_owned())
+        let Some(record) = Self::load(self.db, "Collection".to_owned())
             .await?
             .get(self.collection_id.clone(), None)
             .await? else {
@@ -796,7 +803,7 @@ impl<'a> Collection<'a> {
 
             for foreign_record_reference in foreign_record_references {
                 let collection =
-                    Collection::load(self.store, foreign_record_reference.collection_id).await?;
+                    Collection::load(self.db, foreign_record_reference.collection_id).await?;
 
                 let Some(record) = collection
                     .get(foreign_record_reference.id, Some(user))
@@ -840,8 +847,8 @@ impl<'a> Collection<'a> {
             };
 
             #[async_recursion]
-            async fn check_delegate_value(
-                self_col: &Collection<'_>,
+            async fn check_delegate_value<D: Database>(
+                self_col: &Collection<'_, D>,
                 delegate_value: &RecordValue,
                 user: &AuthUser,
             ) -> Result<bool> {
@@ -903,7 +910,7 @@ impl<'a> Collection<'a> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        self.store
+        self.db
             .set(
                 &collection_metadata_key,
                 &store::Value::DataValue(
@@ -927,7 +934,7 @@ impl<'a> Collection<'a> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
-        let Some(record) = self.store.get(&collection_metadata_key).await? else {
+        let Some(record) = self.db.get(&collection_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -954,7 +961,7 @@ impl<'a> Collection<'a> {
             &self.collection_id, record_id
         ))?;
 
-        self.store
+        self.db
             .set(
                 &record_metadata_key,
                 &store::Value::DataValue(
@@ -981,7 +988,7 @@ impl<'a> Collection<'a> {
             &self.collection_id, record_id
         ))?;
 
-        let Some(record) = self.store.get(&record_metadata_key).await? else {
+        let Some(record) = self.db.get(&record_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -1010,7 +1017,7 @@ impl<'a> Collection<'a> {
         }
 
         let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.store, id.clone()).await {
+            match Collection::load(self.db, id.clone()).await {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -1025,7 +1032,7 @@ impl<'a> Collection<'a> {
 
         let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
-        self.store
+        self.db
             .set(&data_key, &store::Value::DataValue(value))
             .await?;
 
@@ -1046,7 +1053,7 @@ impl<'a> Collection<'a> {
                 #[allow(clippy::unwrap_used)]
                 let old_value = old_value.unwrap();
 
-                let target_col = Collection::load(self.store, id).await?;
+                let target_col = Collection::load(self.db, id).await?;
 
                 target_col.rebuild(collection_before, &old_value).await?;
             }
@@ -1061,7 +1068,7 @@ impl<'a> Collection<'a> {
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
+        let Some(value) = self.db.get(key.into()).await? else {
             return Ok(None);
         };
 
@@ -1079,7 +1086,7 @@ impl<'a> Collection<'a> {
         }
 
         let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
+        let Some(value) = self.db.get(&key).await? else {
             return Ok(None);
         };
 
@@ -1111,7 +1118,7 @@ impl<'a> Collection<'a> {
                     record,
                 )?;
 
-                self.store.set(&index_key, &index_value).await?;
+                self.db.set(&index_key, &index_value).await?;
 
                 Ok::<_, CollectionError>(())
             }
@@ -1141,7 +1148,7 @@ impl<'a> Collection<'a> {
                     record,
                 )?;
 
-                self.store.delete(&index_key).await?;
+                self.db.delete(&index_key).await?;
 
                 Ok::<_, CollectionError>(())
             }
@@ -1169,7 +1176,7 @@ impl<'a> Collection<'a> {
 
         let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
 
-        self.store.delete(&key).await?;
+        self.db.delete(&key).await?;
 
         let now = SystemTime::now();
         self.update_metadata(&now).await?;
@@ -1230,58 +1237,57 @@ impl<'a> Collection<'a> {
             (None, None) => key_range,
         };
 
-        Ok(futures::stream::iter(
-            self.store
-                .list(&key_range.lower, &key_range.upper, reverse)?,
-        )
-        .map(|res| async {
-            let (k, v) = res?;
+        Ok(
+            futures::stream::iter(self.db.list(&key_range.lower, &key_range.upper, reverse)?)
+                .map(|res| async {
+                    let (k, v) = res?;
 
-            let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
-            let index_record = proto::IndexRecord::decode(&v[..])?;
-            let data_key = keys::Key::deserialize(&index_record.id)?;
-            let data = match self.store.get(&data_key).await? {
-                Some(d) => d,
-                None => return Ok(None),
-            };
+                    let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
+                    let index_record = proto::IndexRecord::decode(&v[..])?;
+                    let data_key = keys::Key::deserialize(&index_record.id)?;
+                    let data = match self.db.get(&data_key).await? {
+                        Some(d) => d,
+                        None => return Ok(None),
+                    };
 
-            Ok(Some((index_key, data)))
-        })
-        .filter_map(|r| async {
-            match r.await {
-                // Skip records that we couldn't find by the data key
-                Ok(None) => None,
-                Ok(Some(x)) => Some(Ok(x)),
-                Err(e) => Some(Err(e)),
-            }
-        })
-        .filter_map(|r| async {
-            match r {
-                Ok((cursor, record)) => {
-                    match self.user_can_read(&record, user).await {
-                        Ok(false) => None,
-                        Ok(true) => Some(Ok((cursor, record))),
-                        Err(e) => {
-                            // TODO: should we propagate this error?
-                            warn!("failed to check if user can read record: {e:#?}",);
-                            None
-                        }
+                    Ok(Some((index_key, data)))
+                })
+                .filter_map(|r| async {
+                    match r.await {
+                        // Skip records that we couldn't find by the data key
+                        Ok(None) => None,
+                        Ok(Some(x)) => Some(Ok(x)),
+                        Err(e) => Some(Err(e)),
                     }
-                }
-                Err(e) => Some(Err(e)),
-            }
-        })
-        .take(limit.unwrap_or(usize::MAX)))
+                })
+                .filter_map(|r| async {
+                    match r {
+                        Ok((cursor, record)) => {
+                            match self.user_can_read(&record, user).await {
+                                Ok(false) => None,
+                                Ok(true) => Some(Ok((cursor, record))),
+                                Err(e) => {
+                                    // TODO: should we propagate this error?
+                                    warn!("failed to check if user can read record: {e:#?}",);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => Some(Err(e)),
+                    }
+                })
+                .take(limit.unwrap_or(usize::MAX)),
+        )
     }
 
     #[async_recursion]
     async fn rebuild(
         &self,
         // The old collection record, loaded before the AST was changed
-        old_collection: Collection<'async_recursion>,
+        old_collection: Collection<'async_recursion, D>,
         old_collection_record: &RecordRoot,
     ) -> Result<()> {
-        let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
+        let collection_collection = Collection::load(self.db, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;
@@ -1314,11 +1320,11 @@ impl<'a> Collection<'a> {
             vec![],
         )?;
         let end_key = start_key.clone().wildcard();
-        for entry in self.store.list(&start_key, &end_key, false)? {
+        for entry in self.db.list(&start_key, &end_key, false)? {
             let (_, value) = entry?;
             let index_record = proto::IndexRecord::decode(&value[..])?;
             let data_key = keys::Key::deserialize(&index_record.id)?;
-            let data = self.store.get(&data_key).await?;
+            let data = self.db.get(&data_key).await?;
             let Some(data) = data else {
                 continue;
             };

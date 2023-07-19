@@ -14,10 +14,10 @@ use crate::{
 
 use indexer_db_adaptor::db::Database;
 
-pub type Result<T> = std::result::Result<T, RocksDBError>;
+pub type Result<T> = std::result::Result<T, StoreError>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum RocksDBError {
+pub enum StoreError {
     #[error("invalid key/value combination")]
     InvalidKeyValueCombination,
 
@@ -85,6 +85,7 @@ impl RocksDB {
 
 #[async_trait::async_trait]
 impl Database for RocksDB {
+    type Err = StoreError;
     type Key = String;
     type Value = RecordRoot;
 
@@ -120,7 +121,7 @@ impl Database for RocksDB {
             (Key::Data { .. }, Value::DataValue(_)) => {}
             (Key::SystemData { .. }, Value::DataValue(_)) => {}
             (Key::Index { .. }, Value::IndexValue(_)) => {}
-            _ => return Err(RocksDBError::InvalidKeyValueCombination),
+            _ => return Err(StoreError::InvalidKeyValueCombination),
         }
 
         let key = key.serialize()?;
@@ -169,25 +170,26 @@ impl Database for RocksDB {
         lower_bound: &Key,
         upper_bound: &Key,
         reverse: bool,
-    ) -> Resul<Box<dyn Iterator<Item = Result<(Box<[u8]>, Box<[u8]>)>> + '_>> {
+    ) -> Result<Box<dyn Iterator<Item = Result<(Box<[u8]>, Box<[u8]>)>> + '_>> {
         let mut opts = rocksdb::ReadOptions::default();
         opts.set_iterate_lower_bound(lower_bound.serialize()?);
         opts.set_iterate_upper_bound(upper_bound.serialize()?);
 
-        Ok(self
-            .db
-            .iterator_opt(
-                if reverse {
-                    rocksdb::IteratorMode::End
-                } else {
-                    rocksdb::IteratorMode::Start
-                },
-                opts,
-            )
-            .map(|res| {
-                let (key, value) = res?;
-                Ok((key, value))
-            }))
+        Ok(Box::new(
+            self.db
+                .iterator_opt(
+                    if reverse {
+                        rocksdb::IteratorMode::End
+                    } else {
+                        rocksdb::IteratorMode::Start
+                    },
+                    opts,
+                )
+                .map(|res| {
+                    let (key, value) = res?;
+                    Ok((key, value))
+                }),
+        ))
     }
 
     #[tracing::instrument(skip(self))]
