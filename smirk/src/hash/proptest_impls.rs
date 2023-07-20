@@ -1,5 +1,6 @@
-use super::*;
+use super::{Digest, RpoDigest};
 
+use miden_crypto::Felt;
 use proptest::{arbitrary::StrategyFor, prelude::*, strategy::Map};
 
 impl Arbitrary for Digest {

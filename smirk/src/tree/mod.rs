@@ -2,6 +2,8 @@ use std::{borrow::Borrow, cmp::Ordering};
 
 use crate::hash::{Digest, Hashable};
 
+/// Batch API for performing many operations on a [`MerkleTree`] at once
+pub mod batch;
 mod iterator;
 pub use iterator::*;
 
@@ -12,6 +14,9 @@ mod macros;
 pub mod visitor;
 
 mod proof;
+
+mod hash;
+pub use hash::key_value_hash;
 
 #[cfg(test)]
 mod tests;
@@ -48,7 +53,7 @@ mod tests;
 /// }
 /// ```
 /// Broadly speaking, to do anything useful with a Merkle tree, the key type must implement
-/// [`Ord`], and the value type must implement [`Hashable`]
+/// [`Ord`] and [`Hashable`], and the value type must implement [`Hashable`]
 ///
 /// Warning: *DO NOT* use types with interior mutability as either the
 /// key or value in this tree, since it can potentially invalidate hashes/ordering guarantees that
@@ -62,9 +67,15 @@ pub struct MerkleTree<K, V> {
     pub(crate) inner: Option<Box<TreeNode<K, V>>>,
 }
 
-impl<K, V: Hashable> PartialEq for MerkleTree<K, V> {
+impl<K: Hashable, V: Hashable> PartialEq for MerkleTree<K, V> {
     fn eq(&self, other: &Self) -> bool {
         self.root_hash() == other.root_hash()
+    }
+}
+
+impl<K, V> Default for MerkleTree<K, V> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -75,6 +86,8 @@ impl<K, V> MerkleTree<K, V> {
     /// # use smirk::MerkleTree;
     /// let tree = MerkleTree::<i32, i32>::new();
     /// ```
+    #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self { inner: None }
     }
@@ -89,9 +102,24 @@ impl<K, V> MerkleTree<K, V> {
     /// assert_eq!(tree.get(&1).unwrap(), "hello");
     /// ```
     /// If the key is already present in the tree, the tree is left unchanged
+    ///
+    /// Note: inserting a single value will potentially rebalance the tree, and also recompute hash
+    /// values, which can be expensive. If you are inserting many items, consider using
+    /// [`MerkleTree::apply_batch`]
     pub fn insert(&mut self, key: K, value: V)
     where
-        K: Ord,
+        K: Hashable + Ord,
+        V: Hashable,
+    {
+        self.insert_without_update(key, value);
+        self.recalculate_hash_recursive();
+    }
+
+    /// Basically [`MerkleTree::insert`] but without updating the hashes - performance optimization
+    /// for batch API
+    pub(crate) fn insert_without_update(&mut self, key: K, value: V)
+    where
+        K: Hashable + Ord,
         V: Hashable,
     {
         self.inner = Some(Self::insert_node(self.inner.take(), key, value));
@@ -99,24 +127,22 @@ impl<K, V> MerkleTree<K, V> {
 
     fn insert_node(node: Option<Box<TreeNode<K, V>>>, key: K, value: V) -> Box<TreeNode<K, V>>
     where
-        K: Ord,
+        K: Hashable + Ord,
         V: Hashable,
     {
-        let mut node = match node {
-            None => return Box::new(TreeNode::new(key, value)),
-            Some(node) => node,
-        };
+        let Some(mut node) = node else { return Box::new(TreeNode::new(key, value, None, None)) };
 
-        if key < node.key {
-            node.left = Some(Self::insert_node(node.left.take(), key, value));
-        } else if key > node.key {
-            node.right = Some(Self::insert_node(node.right.take(), key, value));
-        } else {
-            return node; // Duplicates not allowed
+        match key.cmp(&node.key) {
+            Ordering::Equal => return node,
+            Ordering::Less => {
+                node.left = Some(Self::insert_node(node.left.take(), key, value));
+            }
+            Ordering::Greater => {
+                node.right = Some(Self::insert_node(node.right.take(), key, value));
+            }
         }
 
         node.update_height();
-        node.recalculate_hash_recursive();
         Self::balance(node)
     }
 
@@ -171,11 +197,15 @@ impl<K, V> MerkleTree<K, V> {
     ///
     /// assert_eq!(tree.size(), 3);
     /// ```
+    #[must_use]
     pub fn size(&self) -> usize {
         struct Counter(usize);
         impl<K, V> visitor::Visitor<K, V> for Counter {
             fn visit(&mut self, _: &K, _: &V) {
-                self.0 += 1;
+                self.0 = self
+                    .0
+                    .checked_add(1)
+                    .expect("this is never going to overflow");
             }
         }
 
@@ -186,6 +216,7 @@ impl<K, V> MerkleTree<K, V> {
     }
 
     /// Returns true if and only if the tree contains no elements
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.size() == 0
     }
@@ -211,17 +242,17 @@ impl<K, V> MerkleTree<K, V> {
 
     /// The height of this tree
     #[inline]
+    #[must_use]
     pub fn height(&self) -> usize {
         match &self.inner {
             None => 0,
-            Some(node) => node.height() as usize,
+            Some(node) => node.height(),
         }
     }
 
     /// Get the value associated with the given key
     ///
     /// If you need access to the node itself, consider using [`MerkleTree::get_node`]
-    ///
     /// ```rust
     /// # use smirk::smirk;
     /// let tree = smirk! {
@@ -242,7 +273,6 @@ impl<K, V> MerkleTree<K, V> {
     /// Get the node associated with the given key
     ///
     /// If you only need access to the value stored in this node, consider using [`MerkleTree::get`]
-    ///
     /// ```rust
     /// # use smirk::smirk;
     /// # use smirk::hash::Digest;
@@ -273,7 +303,7 @@ pub struct TreeNode<K, V> {
     pub(crate) hash: Digest,
     pub(crate) left: Option<Box<TreeNode<K, V>>>,
     pub(crate) right: Option<Box<TreeNode<K, V>>>,
-    pub(crate) height: isize,
+    pub(crate) height: usize,
 }
 
 impl<K, V> TreeNode<K, V> {
@@ -283,8 +313,8 @@ impl<K, V> TreeNode<K, V> {
     ///  - A has height 1
     ///  - B has height 0
     ///  - C has height 0
-    #[inline]
-    pub fn height(&self) -> isize {
+    #[must_use]
+    pub fn height(&self) -> usize {
         self.height
     }
 
@@ -292,13 +322,21 @@ impl<K, V> TreeNode<K, V> {
     pub(crate) fn update_height(&mut self) {
         let left_height = self.left.as_ref().map_or(0, |x| x.height());
         let right_height = self.right.as_ref().map_or(0, |x| x.height());
-        self.height = 1 + std::cmp::max(left_height, right_height);
+        self.height = std::cmp::max(left_height, right_height)
+            .checked_add(1)
+            .expect("this is never going to overflow");
     }
 
     fn balance_factor(&self) -> isize {
         let left_height = self.left.as_ref().map_or(0, |x| x.height());
         let right_height = self.right.as_ref().map_or(0, |x| x.height());
-        left_height - right_height
+
+        let left_height = isize::try_from(left_height).expect("height never overflows");
+        let right_height = isize::try_from(right_height).expect("height never overflows");
+
+        left_height
+            .checked_sub(right_height)
+            .expect("this is never going to over/underflow")
     }
 
     fn get<Q>(&self, key: &Q) -> Option<&V>
@@ -323,19 +361,30 @@ impl<K, V> TreeNode<K, V> {
     }
 }
 
-impl<K, V: Hashable> TreeNode<K, V> {
-    // pub(crate) for testing only
-    pub(crate) fn new(key: K, value: V) -> Self {
-        let hash = value.hash();
+impl<K: Hashable, V: Hashable> TreeNode<K, V> {
+    pub(crate) fn new(
+        key: K,
+        value: V,
+        left: Option<TreeNode<K, V>>,
+        right: Option<TreeNode<K, V>>,
+    ) -> Self {
+        let hash = Digest::NULL;
+        let left = left.map(Box::new);
+        let right = right.map(Box::new);
 
-        Self {
+        let mut node = Self {
             key,
             value,
             hash,
-            left: None,
-            right: None,
+            left,
+            right,
             height: 0,
-        }
+        };
+
+        node.update_height();
+        node.recalculate_hash_recursive();
+
+        node
     }
 
     /// The key associated with this node
@@ -360,22 +409,5 @@ impl<K, V: Hashable> TreeNode<K, V> {
     #[inline]
     pub fn hash_of_value(&self) -> Digest {
         self.value.hash()
-    }
-
-    /// Update the `hash` field of this node, and all child nodes
-    pub(crate) fn recalculate_hash_recursive(&mut self) {
-        let mut new_hash = self.value.hash();
-
-        if let Some(left) = &mut self.left {
-            left.recalculate_hash_recursive();
-            new_hash.merge(&left.hash);
-        }
-
-        if let Some(right) = &mut self.right {
-            right.recalculate_hash_recursive();
-            new_hash.merge(&right.hash);
-        }
-
-        self.hash = new_hash;
     }
 }

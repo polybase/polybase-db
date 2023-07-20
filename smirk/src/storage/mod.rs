@@ -1,24 +1,43 @@
 //! Persistence layer for [`MerkleTree`]s
 use std::{fmt::Debug, path::Path};
 
-use crate::{hash::{Hashable, Digest}, tree::MerkleTree};
-use rocksdb::{TransactionDB, IteratorMode};
+use crate::{hash::Hashable, tree::MerkleTree};
+use rocksdb::{Transaction, TransactionDB};
 use serde::{Deserialize, Serialize};
 
-mod structure;
 mod codec;
-pub use codec::{EncodeError, DecodeError};
 mod error;
+
+#[cfg(test)]
+mod tests;
+
+pub use codec::{DecodeError, EncodeError};
 pub use error::Error;
-
-use self::structure::Structure;
-
 
 /// A rocksdb-based storage mechanism for [`MerkleTree`]s
 ///
-/// ```rust
-/// 
+/// ```rust,no_run
+/// # use std::path::Path;
+/// # use smirk::storage::Storage;
+/// # use smirk::smirk;
+/// let storage = Storage::open(Path::new("./db")).unwrap();
+///
+/// let tree = smirk! {
+///   1 => "hello".to_string(),
+///   2 => "world".to_string(),
+/// };
+///
+/// storage.store_tree(&tree).unwrap();
+///
+/// // 2x .unwrap() because it returns `Ok(None)` if no tree has been stored yet
+/// let tree_again = storage.load_tree().unwrap().unwrap();
+///
+/// // the root hashes are the same (since this is what the `Eq` impl for `MerkleTree` uses)
+/// assert_eq!(tree, tree_again);
 /// ```
+///
+/// This storage preserves the tree structure, meaning the root hash will not be changed by
+/// loading it from storage.
 pub struct Storage {
     instance: TransactionDB,
 }
@@ -30,7 +49,7 @@ impl Debug for Storage {
 }
 
 impl Storage {
-    /// Create a new [`RocksdbStorage`] from an existing rocksdb instance
+    /// Create a new [`Storage`] from an existing rocksdb instance
     ///
     /// This is useful if you want to create transactions that modify both data managed by smirk,
     /// as well as data external to smirk
@@ -38,13 +57,14 @@ impl Storage {
         Self { instance }
     }
 
-    /// Create a new [`RocksdbStorage`] by opening a new rocksdb instance at the given path
-    pub fn open(path: &Path) -> Result<Self, rocksdb::Error> {
+    /// Create a new [`Storage`] by opening a new rocksdb instance at the given path
+    pub fn open(path: &Path) -> Result<Self, Error> {
         let instance = TransactionDB::open_default(path)?;
         Ok(Self { instance })
     }
 
-    const STRUCTURE_KEY: &[u8] = b"structure";
+    /// Key used to store the value of the root of the database
+    const ROOT_KEY: &[u8] = b"root";
 }
 
 impl Storage {
@@ -55,70 +75,60 @@ impl Storage {
         V: Serialize + 'static + Hashable,
     {
         let tx = self.instance.transaction();
-
-        let structure = Structure::from_tree(tree);
-        let structure_bytes = codec::encode(&structure)?;
-
-        tx.put(Self::STRUCTURE_KEY, structure_bytes)?;
-
-        for node in tree.iter() {
-            let hash = node.value().hash();
-            let bytes = codec::encode(&(node.key(), node.value()))?;
-
-            tx.put(&hash.to_bytes(), &bytes)?;
-        }
-
+        self.store_tree_with_tx(tree, &tx)?;
         tx.commit()?;
 
         Ok(())
     }
 
+    /// Store a tree with a given transaction
+    pub fn store_tree_with_tx<K, V>(
+        &self,
+        tree: &MerkleTree<K, V>,
+        tx: &Transaction<TransactionDB>,
+    ) -> Result<(), Error>
+    where
+        K: Serialize + 'static + Ord,
+        V: Serialize + 'static + Hashable,
+    {
+        codec::write_tree_to_tx(&tx, tree)
+    }
+
     /// Load a tree from storage, if it is present
     pub fn load_tree<K, V>(&self) -> Result<Option<MerkleTree<K, V>>, Error>
     where
-        K: for<'a> Deserialize<'a> + 'static + Ord,
+        K: for<'a> Deserialize<'a> + 'static + Hashable + Ord,
         V: for<'a> Deserialize<'a> + 'static + Hashable,
     {
-        let Some(structure_bytes) = self.instance.get(Self::STRUCTURE_KEY)? else { 
-            return Ok(None); 
+        let tx = self.instance.transaction();
+        let tree = self.load_tree_with_tx(&tx)?;
+        tx.commit()?;
+
+        Ok(tree)
+    }
+
+    /// Load a tree from storage, if it is present, using the given transaction
+    pub fn load_tree_with_tx<K, V>(
+        &self,
+        tx: &Transaction<TransactionDB>,
+    ) -> Result<Option<MerkleTree<K, V>>, Error>
+    where
+        K: for<'a> Deserialize<'a> + 'static + Hashable + Ord,
+        V: for<'a> Deserialize<'a> + 'static + Hashable,
+    {
+        let key = tx.get(Self::ROOT_KEY)?;
+
+        let Some(key) = key else { return Ok(None) };
+
+        if key.is_empty() {
+            return Ok(Some(MerkleTree::new()));
+        }
+
+        let node = codec::load_node(&tx, &key)?;
+        let tree = MerkleTree {
+            inner: Some(Box::new(node)),
         };
-
-        let structure: Option<Structure> = codec::decode(&structure_bytes).map_err(Error::MalformedStructure)?;
-        let Some(structure) = structure else { return Ok(Some(MerkleTree::new())) };
-
-        let mut values = self.instance.iterator(IteratorMode::Start).filter(|result| {
-            match result {
-                // don't try to deserialize this key
-                Ok((hash, _data)) => hash.as_ref() != Self::STRUCTURE_KEY,
-                Err(_) => true,
-            }
-        }).map(|result| {
-            let (hash, data) = result?;
-
-            let hash = get_hash(&hash)?;
-            let data: (K, V) = codec::decode(&data)?;
-
-            Ok((hash, data))
-
-        }).collect::<Result<_, Error>>()?;
-        
-        let tree = structure.to_tree(&mut values)?;
 
         Ok(Some(tree))
     }
-
 }
-
-fn get_hash(bytes: &[u8]) -> Result<Digest, Error> {
-    let hash_bytes = bytes
-        .as_ref()
-        .try_into()
-        .map_err(|_| Error::InvalidHashBytes(bytes.to_vec()))?;
-
-    let hash = Digest::from_bytes(hash_bytes)
-        .ok_or_else(|| Error::InvalidHashBytes(hash_bytes.to_vec()))?;
-
-    Ok(hash)
-}
-
-

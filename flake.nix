@@ -28,6 +28,9 @@
             protobuf
 
             clang # required for rocksdb
+
+            cargo-insta # snapshot testing for smirk
+            gnuplot # criterion graphs
           ];
 
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib/";

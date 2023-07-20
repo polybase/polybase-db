@@ -1,15 +1,17 @@
 use std::{borrow::Borrow, cmp::Ordering};
 
 use crate::{
-    hash::{Digest, Hashable, MerklePath},
-    MerkleTree,
+    hash::{Digest, Hashable, MerklePath, Stage},
+    key_value_hash, MerkleTree,
 };
 
-impl<K, V: Hashable> MerkleTree<K, V> {
+use super::hash::hash_left_right_this;
+
+impl<K: Hashable, V: Hashable> MerkleTree<K, V> {
     /// Generate a [`MerklePath`] that proves that a given key exists in the tree
     ///
     /// ```rust
-    /// # use smirk::{smirk, MerklePath};
+    /// # use smirk::{smirk, hash::MerklePath};
     /// let tree = smirk! {
     ///   1 => "hello",
     ///   2 => "world",
@@ -25,53 +27,92 @@ impl<K, V: Hashable> MerkleTree<K, V> {
         K: Ord,
     {
         let Some(mut node) = self.inner.as_deref() else { return None };
-        let mut components = Vec::with_capacity(node.height() as usize);
+        let mut stages = Vec::with_capacity(node.height());
 
         loop {
-            components.push(node.hash());
+            match key.borrow().cmp(&node.key) {
+                Ordering::Less => {
+                    let this = key_value_hash(&node.key, &node.value);
+                    let right = node.right_hash();
+                    let stage = Stage::Left { this, right };
+                    stages.push(stage);
 
-            match key.borrow().cmp(node.key()) {
-                Ordering::Less => node = node.left.as_deref()?,
-                Ordering::Greater => node = node.right.as_deref()?,
+                    node = node.left.as_deref()?;
+                }
+                Ordering::Greater => {
+                    let this = key_value_hash(&node.key, &node.value);
+                    let left = node.left_hash();
+                    let stage = Stage::Right { this, left };
+                    stages.push(stage);
+
+                    node = node.left.as_deref()?;
+                }
                 Ordering::Equal => {
-                    components.reverse();
-                    return Some(MerklePath::new(components));
+                    let left = node.left_hash();
+                    let right = node.right_hash();
+                    let root_hash = self.root_hash();
+
+                    let path = MerklePath {
+                        stages,
+                        root_hash,
+                        left,
+                        right,
+                    };
+
+                    return Some(path);
                 }
             }
         }
     }
 
     /// Get the root hash of the Merkle tree
+    ///
+    /// The root hash can be viewed as a "summary" of the whole tree - any change to any key or
+    /// value will change the root hash. Changing the "layout" of the tree will also change the
+    /// root hash
+    #[must_use]
     pub fn root_hash(&self) -> Digest {
         match &self.inner {
             None => Digest::NULL, // should this function return an option?
-            Some(node) => node.hash(),
+            Some(node) => node.hash,
         }
     }
+}
 
-    /// Generate
-    /// Verify that the given value exists in the tree, by using the provided [`MerklePath`]
-    pub fn verify(&self, path: &MerklePath, value: &V) -> bool
-    where
-        V: Hashable,
-    {
-        if path.components().last() != Some(&self.root_hash()) {
-            dbg!("not end root hash");
-            return false;
-        }
+impl MerklePath {
+    /// Verify that the given key-value pair exists in the tree that generated this [`MerklePath`]
+    #[must_use = "this function indicates a verification failure by returning false"]
+    pub fn verify<K: Hashable, V: Hashable>(&self, key: &K, value: &V) -> bool {
+        let mut hash = key_value_hash(key, value);
 
-        let mut hash = value.hash();
-
-        for slice in path.components().windows(2) {
-            let first = &slice[0];
-            let second = &slice[1];
-
-            hash.merge(first);
-            if hash != *second {
-                return false;
+        for stage in self.stages.iter().rev() {
+            match *stage {
+                Stage::Left { this, right } => hash = hash_left_right_this(this, Some(hash), right),
+                Stage::Right { this, left } => hash = hash_left_right_this(this, left, Some(hash)),
             }
         }
 
-        true
+        hash == self.root_hash
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::smirk;
+
+    #[test]
+    fn simple_proof_example() {
+        let tree = smirk! {
+            1 => "hello",
+            2 => "world",
+        };
+
+        let path = tree.prove(&1).unwrap();
+
+        assert!(path.verify(&1, &"hello"));
+        assert!(!path.verify(&2, &"hello"));
+        assert!(!path.verify(&1, &"world"));
+
+        assert!(tree.prove(&3).is_none());
     }
 }

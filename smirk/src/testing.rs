@@ -2,7 +2,7 @@ use std::ops::Deref;
 
 use tempdir::TempDir;
 
-use crate::{storage::Storage, tree::MerkleTree};
+use crate::{storage::Storage, MerkleTree};
 
 /// Helper struct that makes it easier to test against a rocksdb instance
 #[derive(Debug)]
@@ -28,16 +28,11 @@ impl Deref for TestStorage {
     }
 }
 
+// snapshot test for a well-known tree - if we accidentally change how the hash is calculated, this
+// test will fail
 #[test]
-fn simple_storage_test() {
-    let db = TestStorage::new();
+fn root_hash_snapshot() {
+    let tree: MerkleTree<_, _> = (0..100).map(|i| (i, format!("the value is {i}"))).collect();
 
-    assert_eq!(db.load_tree().unwrap(), None::<MerkleTree<i32, String>>);
-
-    let tree = (0..10).map(|i| (i, format!("the data is {i}"))).collect();
-    db.store_tree(&tree).unwrap();
-
-    let tree_again: MerkleTree<i32, String> = db.load_tree().unwrap().unwrap();
-
-    assert_eq!(tree, tree_again);
+    insta::assert_snapshot!(tree.root_hash().to_hex());
 }

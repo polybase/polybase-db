@@ -21,7 +21,6 @@ pub trait Hashable {
     fn hash(&self) -> Digest;
 }
 
-// POINTER IMPLS
 
 impl<T: ?Sized> Hashable for &T
 where
@@ -77,8 +76,6 @@ where
     }
 }
 
-/// COLLECTION IMPLS
-
 macro_rules! int_impl {
     ($int:ty) => {
         impl Hashable for $int {
@@ -121,6 +118,8 @@ impl<const N: usize> Hashable for [u8; N] {
     }
 }
 
+// note, we implement the trait on `[u8]`, not `&[u8]` so it works with the above impls for types
+// like `Arc<[u8]>` or `Box<[u8]>` - the same logic applies to `str`
 as_ref_impl!([u8]);
 as_ref_impl!(Vec<u8>);
 as_ref_impl!(str);

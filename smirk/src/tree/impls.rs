@@ -6,7 +6,8 @@ use super::{MerkleTree, TreeNode};
 
 impl<K, V> MerkleTree<K, V> {
     /// Returns an iterator over the keys and values in depth-first order
-    pub fn depth_first<'a>(&'a self) -> DepthFirstIter<'a, K, V> {
+    #[allow(clippy::must_use_candidate)]
+    pub fn depth_first(&self) -> DepthFirstIter<K, V> {
         match &self.inner {
             None => DepthFirstIter { inner: None },
             Some(node) => node.depth_first(),
@@ -14,7 +15,8 @@ impl<K, V> MerkleTree<K, V> {
     }
 
     /// Returns an iterator over the keys and values in breadth-first order
-    pub fn breadth_first<'a>(&'a self) -> BreadthFirstIter<'a, K, V> {
+    #[allow(clippy::must_use_candidate)]
+    pub fn breadth_first(&self) -> BreadthFirstIter<K, V> {
         match &self.inner {
             None => BreadthFirstIter { inner: None },
             Some(node) => node.breadth_first(),
@@ -24,7 +26,7 @@ impl<K, V> MerkleTree<K, V> {
 
 impl<K, V> TreeNode<K, V> {
     /// Get an iterator over the values in this node in depth-first order
-    fn depth_first<'a>(&'a self) -> DepthFirstIter<'a, K, V> {
+    fn depth_first(&self) -> DepthFirstIter<K, V> {
         let inner = DftPre::new(self, children);
         let inner = Box::new(inner.map(|(_, node)| (&node.key, &node.value)));
 
@@ -40,7 +42,7 @@ impl<K, V> TreeNode<K, V> {
     }
 }
 
-fn children<'a, K, V>(node: &'a TreeNode<K, V>) -> ChildIter<'a, K, V> {
+fn children<K, V>(node: &TreeNode<K, V>) -> ChildIter<K, V> {
     node.left
         .as_deref()
         .into_iter()
@@ -58,7 +60,7 @@ impl<'a, K, V> Iterator for DepthFirstIter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.as_mut().map(|iter| iter.next()).flatten()
+        self.inner.as_mut().and_then(Iterator::next)
     }
 }
 
@@ -70,7 +72,7 @@ impl<'a, K, V> Iterator for BreadthFirstIter<'a, K, V> {
     type Item = (&'a K, &'a V);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.as_mut().map(|iter| iter.next()).flatten()
+        self.inner.as_mut().and_then(Iterator::next)
     }
 }
 
@@ -80,13 +82,13 @@ mod proptest_impls {
 
     use crate::hash::Hashable;
 
-    use super::*;
+    use super::MerkleTree;
 
     use proptest::{arbitrary::StrategyFor, prelude::*, strategy::Map};
 
     impl<K, V> Arbitrary for MerkleTree<K, V>
     where
-        K: Debug + Arbitrary + Ord,
+        K: Debug + Arbitrary + Hashable + Ord,
         V: Debug + Arbitrary + Hashable,
     {
         type Parameters = ();
@@ -100,7 +102,7 @@ mod proptest_impls {
 
 #[cfg(test)]
 mod tests {
-    use crate::{hash::Digest, tree::MerkleTree, TreeNode};
+    use crate::{tree::MerkleTree, TreeNode};
 
     // 1
     // |\
@@ -108,23 +110,17 @@ mod tests {
     // |\
     // 3 4
     fn example_node() -> TreeNode<i32, i32> {
-        let mut node = TreeNode {
-            key: 1,
-            value: 1,
-            hash: Digest::NULL,
-            left: Some(Box::new(TreeNode {
-                key: 2,
-                value: 2,
-                hash: Digest::NULL,
-                left: Some(Box::new(TreeNode::new(3, 3))),
-                right: Some(Box::new(TreeNode::new(4, 4))),
-                height: 0,
-            })),
-            right: Some(Box::new(TreeNode::new(5, 5))),
-            height: 0,
-        };
-        node.update_height();
-        node
+        TreeNode::new(
+            1,
+            1,
+            Some(TreeNode::new(
+                2,
+                2,
+                Some(TreeNode::new(3, 3, None, None)),
+                Some(TreeNode::new(4, 4, None, None)),
+            )),
+            Some(TreeNode::new(5, 5, None, None)),
+        )
     }
 
     #[test]

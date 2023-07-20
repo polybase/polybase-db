@@ -1,11 +1,13 @@
-//! Items relating to hashing data
+//! Items relating to hashing datahashmod
 //!
 //! In particular, the [`Digest`] type and the [`Hashable`] trait
+//!
+//! This module also contains [`MerklePath`], which can be used to verify the existance of a key in
+//! a [`MerkleTree`]
+//!
+//! [`MerkleTree`]: crate::MerkleTree
 
-use std::{
-    fmt::{Debug, Display},
-    hash::Hash,
-};
+use std::fmt::{Debug, Display};
 
 use miden_crypto::{
     hash::rpo::{Rpo256, RpoDigest},
@@ -13,11 +15,17 @@ use miden_crypto::{
     Felt,
 };
 
+mod from_iter;
 mod hashable;
+mod path;
+mod serde_impls;
+
 pub use hashable::Hashable;
+pub use path::MerklePath;
+pub(crate) use path::Stage;
+
 #[cfg(any(test, feature = "proptest"))]
 mod proptest_impls;
-mod serde_impls;
 
 /// A Rescue-Prime Optimized digest
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -35,9 +43,9 @@ impl Display for Digest {
     }
 }
 
-impl Hash for Digest {
+impl std::hash::Hash for Digest {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        <[u8; 32] as Hash>::hash(&self.to_bytes(), state);
+        <[u8; 32] as std::hash::Hash>::hash(&self.to_bytes(), state);
     }
 }
 
@@ -59,6 +67,9 @@ impl Digest {
     const LEN: usize = 32;
 
     /// Get the representation of this hash as a byte array
+    ///
+    /// These bytes can be converted back to a [`Digest`] using [`Digest::from_bytes`] (though this
+    /// function returns an `Option` since it can fail)
     #[inline]
     #[must_use]
     pub fn to_bytes(&self) -> [u8; Self::LEN] {
@@ -69,7 +80,7 @@ impl Digest {
     ///
     /// Note: this returns an `Option` because not all possible byte arrays are valid [`Digest`]s
     ///
-    /// Any byte array returned from [`Digets::to_bytes`] will be valid for this function, and the
+    /// Any byte array returned from [`Digest::to_bytes`] will be valid for this function, and the
     /// resulting hash will be equal to the hash that created the byte array
     #[inline]
     #[must_use]
@@ -85,6 +96,14 @@ impl Digest {
         Self(Rpo256::hash(bytes))
     }
 
+    /// Convert this [`Digest`] to its hex representation (i.e. the hex encoding of
+    /// [`Digets::to_bytes`])
+    #[inline]
+    #[must_use]
+    pub fn to_hex(&self) -> String {
+        hex::encode(self.to_bytes())
+    }
+
     /// Replace `self` with `rpo256(this + other)`
     #[inline]
     pub fn merge(&mut self, other: &Digest) {
@@ -95,37 +114,6 @@ impl Digest {
 impl From<RpoDigest> for Digest {
     fn from(value: RpoDigest) -> Self {
         Self(value)
-    }
-}
-
-/// A Merkle path that can be used to prove the existance of a value in the tree
-pub struct MerklePath {
-    /// The components of the path, with the root at the end
-    components: Vec<Digest>,
-}
-
-impl MerklePath {
-    /// Create a new [`MerklePath`] from the given components
-    ///
-    /// The components should be the hashes that form the path, with the root of the tree at the
-    /// end
-    #[inline]
-    #[must_use]
-    pub fn new(components: Vec<Digest>) -> Self {
-        Self { components }
-    }
-
-    /// Get a slice of hashes representing the components of the path
-    #[inline]
-    #[must_use]
-    pub fn components(&self) -> &[Digest] {
-        &self.components
-    }
-
-    /// Get a mutable slice of hashes representing the components of the path
-    #[inline]
-    pub fn components_mut(&mut self) -> &mut [Digest] {
-        &mut self.components
     }
 }
 

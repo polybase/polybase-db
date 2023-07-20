@@ -19,3 +19,6 @@ proptest = { version = "1", optional = true }
 tempdir = "0.3"
 proptest = "1"
 test-strategy = "0.3"
+pretty_assertions = "1"
+insta = "1"
+criterion = "0.5"

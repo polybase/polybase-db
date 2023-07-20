@@ -13,7 +13,7 @@ where
     Vis: Visitor<K, V>,
 {
     fn visit(&mut self, key: &K, value: &V) {
-        Vis::visit(self, key, value)
+        Vis::visit(self, key, value);
     }
 }
 
