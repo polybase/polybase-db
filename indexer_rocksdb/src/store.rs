@@ -52,6 +52,7 @@ impl<'a> Value<'a> {
     }
 }
 
+/// The RocksDB backend
 pub(crate) struct RocksDB {
     pub(crate) db: Arc<rocksdb::DB>,
     state: Arc<Mutex<RocksDBState>>,
@@ -86,8 +87,8 @@ impl RocksDB {
 #[async_trait::async_trait]
 impl Database for RocksDB {
     type Err = StoreError;
-    type Key = String;
-    type Value = RecordRoot;
+    type Key<'k> = Key<'k>;
+    type Value<'v> = Value<'v>;
 
     #[tracing::instrument(skip(self))]
     async fn commit(&self) -> Result<()> {
