@@ -33,6 +33,5 @@ impl Deref for TestStorage {
 #[test]
 fn root_hash_snapshot() {
     let tree: MerkleTree<_, _> = (0..100).map(|i| (i, format!("the value is {i}"))).collect();
-
     insta::assert_snapshot!(tree.root_hash().to_hex());
 }
