@@ -11,29 +11,34 @@ use async_trait::async_trait;
 /// of the concrete backend in use (rocksdb, postgres, etc.).
 #[async_trait]
 pub trait Database: Send + Sync + 'static {
-    type Err;
-    type Key: From<String>;
-    type Value: From<RecordRoot> + Into<RecordRoot>;
+    type Error: std::error::Error;
+    type Key<'k>;
+    type Value<'v>;
     //type Chunk;
     //type ChunkIterator;
 
-    async fn commit(&self) -> std::result::Result<(), Self::Err>;
-    async fn set(&self, key: &Self::Key, value: &Self::Value)
-        -> std::result::Result<(), Self::Err>;
-    async fn get(&self, key: &Self::Key) -> Result<Option<Self::Value>, Self::Err>;
-    async fn delete(&self, key: &Self::Key) -> std::result::Result<(), Self::Err>;
+    async fn commit(&self) -> std::result::Result<(), Self::Error>;
+    async fn get(&self, key: &Self::Key<'_>) -> Result<Option<RecordRoot>, Self::Error>;
+    async fn delete(&self, key: &Self::Key<'_>) -> std::result::Result<(), Self::Error>;
+
+    async fn set(
+        &self,
+        key: &Self::Key<'_>,
+        value: &Self::Value<'_>,
+    ) -> std::result::Result<(), Self::Error>;
 
     fn list(
         &self,
-        key: Self::Value, // todo
+        lower_bound: &Self::Key<'_>, // todo
+        upper_bound: &Self::Key<'_>, // todo
         reverse: bool,
     ) -> std::result::Result<
-        Box<dyn Iterator<Item = std::result::Result<(Box<[u8]>, Box<[u8]>), Self::Err>> + '_>,
-        Self::Err,
+        Box<dyn Iterator<Item = std::result::Result<(Box<[u8]>, Box<[u8]>), Self::Error>> + '_>,
+        Self::Error,
     >;
 
-    fn destroy(self) -> std::result::Result<(), Self::Err>;
-    fn reset(&self) -> std::result::Result<(), Self::Err>;
+    fn destroy(self) -> std::result::Result<(), Self::Error>;
+    fn reset(&self) -> std::result::Result<(), Self::Error>;
     //fn snapshot(&self, chunk_size: usize) -> Self::ChunkIterator;
     //fn restore(&self, chunk: Self::Chunk) -> Result<()>;
 }

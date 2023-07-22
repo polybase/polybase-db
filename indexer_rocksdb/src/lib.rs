@@ -14,6 +14,10 @@ mod stableast_ext;
 mod store;
 pub mod where_query;
 
+mod db;
+
+use crate::db::Database;
+
 pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
 pub use index::CollectionIndexField;
 pub use keys::Direction;
@@ -26,18 +30,15 @@ use snapshot::SnapshotChunk;
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 
-use indexer_db_adaptor::db;
-
 pub type Result<T> = std::result::Result<T, IndexerError>;
 
-// TODO: errors should be named Error and imported as indexer::Error
 #[derive(Debug, thiserror::Error)]
 pub enum IndexerError {
     #[error("collection error")]
     Collection(#[from] collection::CollectionError),
 
-    #[error("store error")]
-    Store(#[from] store::StoreError),
+    #[error("rocksdb store error")]
+    RocksDBStore(#[from] store::RocksDBStoreError),
 
     #[error("index error")]
     Index(#[from] index::IndexError),
@@ -58,68 +59,65 @@ pub enum IndexerError {
     Migration(#[from] migrate::Error),
 }
 
-/// The new Polybase Indexer
-/// TODO - move this to indexer_db_adaptor
-pub struct Indexer<D>
-where
-    D: db::Database,
-{
-    db: D,
+pub struct Indexer {
+    store: store::RocksDBStore,
 }
 
-impl<D> Indexer<D>
-where
-    D: db::Database,
-{
-    pub fn new(db: D) -> Result<Self> {
-        Ok(Self { db })
+impl Indexer {
+    pub fn new(path: impl AsRef<Path>) -> Result<Self> {
+        let store = store::RocksDBStore::open(path)?;
+        Ok(Self { store })
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
+        let store = &self.store;
+        Ok(migrate::check_for_migration(store, migration_batch_size).await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub fn destroy(self) -> Result<()> {
-        Ok(self.db.destroy()?)
+        Ok(self.store.destroy()?)
     }
 
     #[tracing::instrument(skip(self))]
     pub fn reset(&self) -> Result<()> {
-        Ok(self.db.reset()?)
+        Ok(self.store.reset()?)
     }
 
-    // #[tracing::instrument(skip(self))]
-    // pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
-    //     self.db.snapshot(chunk_size)
-    // }
-
-    // #[tracing::instrument(skip(self))]
-    // pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
-    //     Ok(self.db.restore(data.into())?)
-    // }
+    #[tracing::instrument(skip(self))]
+    pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
+        self.store.snapshot(chunk_size)
+    }
 
     #[tracing::instrument(skip(self))]
-    pub async fn collection(&self, id: String) -> Result<Collection<D>> {
-        Ok(Collection::load(&self.db, id).await?)
+    pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
+        Ok(self.store.restore(data)?)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn collection(&self, id: String) -> Result<Collection> {
+        Ok(Collection::load(&self.store, id).await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn commit(&self) -> Result<()> {
-        Ok(self.db.commit().await?)
+        Ok(self.store.commit().await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
-        todo!();
-        //let system_key = keys::Key::new_system_data(key)?;
+        let system_key = keys::Key::new_system_data(key)?;
 
-        //Ok(self
-        //    .db
-        //    .set(&system_key, &db::Value::DataValue(data))
-        //    .await?)
+        Ok(self
+            .store
+            .set(&system_key, &store::Value::DataValue(data))
+            .await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
-        todo!();
-        //let system_key = keys::Key::new_system_data(key)?;
-        //Ok(self.db.get(&system_key).await?)
+        let system_key = keys::Key::new_system_data(key)?;
+        Ok(self.store.get(&system_key).await?)
     }
 }

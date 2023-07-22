@@ -12,12 +12,12 @@ use crate::{
     record::RecordRoot,
 };
 
-use indexer_db_adaptor::db::Database;
+use crate::db::Database;
 
-pub type Result<T> = std::result::Result<T, StoreError>;
+pub type Result<T> = std::result::Result<T, RocksDBStoreError>;
 
 #[derive(Debug, thiserror::Error)]
-pub enum StoreError {
+pub enum RocksDBStoreError {
     #[error("invalid key/value combination")]
     InvalidKeyValueCombination,
 
@@ -52,23 +52,22 @@ impl<'a> Value<'a> {
     }
 }
 
-/// The RocksDB backend
-pub(crate) struct RocksDB {
+pub(crate) struct RocksDBStore {
     pub(crate) db: Arc<rocksdb::DB>,
-    state: Arc<Mutex<RocksDBState>>,
+    state: Arc<Mutex<RocksDBStoreState>>,
 }
 
-enum RocksDBOp {
+enum RocksDBStoreOp {
     Put(Vec<u8>),
     Delete,
 }
 
-pub(crate) struct RocksDBState {
-    pending: HashMap<Vec<u8>, RocksDBOp>,
+pub(crate) struct RocksDBStoreState {
+    pending: HashMap<Vec<u8>, RocksDBStoreOp>,
 }
 
-impl RocksDB {
-    pub fn new(path: impl AsRef<Path>) -> Result<Self> {
+impl RocksDBStore {
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut options = rocksdb::Options::default();
         options.create_if_missing(true);
         options.set_comparator("polybase", keys::comparator);
@@ -77,101 +76,19 @@ impl RocksDB {
 
         Ok(Self {
             db: Arc::new(db),
-            state: Arc::new(Mutex::new(RocksDBState {
+            state: Arc::new(Mutex::new(RocksDBStoreState {
                 pending: HashMap::new(),
             })),
         })
     }
-}
-
-#[async_trait::async_trait]
-impl Database for RocksDB {
-    type Err = StoreError;
-    type Key<'k> = Key<'k>;
-    type Value<'v> = Value<'v>;
 
     #[tracing::instrument(skip(self))]
-    async fn commit(&self) -> Result<()> {
-        // let batch = Arc::clone(&self.batch);
-        let db = Arc::clone(&self.db);
-
-        let pending = {
-            let mut state = self.state.lock();
-            mem::take(&mut state.pending)
-        };
-
-        let mut db_batch = WriteBatch::default();
-
-        tokio::task::spawn_blocking(move || {
-            for (key, op) in pending {
-                match op {
-                    RocksDBOp::Put(value) => db_batch.put(key, value),
-                    RocksDBOp::Delete => db_batch.delete(key),
-                }
-            }
-            db.write(db_batch)
-        })
-        .await??;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
-        match (key, value) {
-            (Key::Data { .. }, Value::DataValue(_)) => {}
-            (Key::SystemData { .. }, Value::DataValue(_)) => {}
-            (Key::Index { .. }, Value::IndexValue(_)) => {}
-            _ => return Err(StoreError::InvalidKeyValueCombination),
-        }
-
-        let key = key.serialize()?;
-        let value = value.serialize()?;
-        let state = Arc::clone(&self.state);
-        tokio::task::spawn_blocking(move || {
-            state.lock().pending.insert(key, RocksDBOp::Put(value));
-        })
-        .await?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get(&self, key: &Key<'_>) -> Result<Option<RecordRoot>> {
-        let key = key.serialize()?;
-        let db = Arc::clone(&self.db);
-        let state = Arc::clone(&self.state);
-
-        tokio::task::spawn_blocking(move || match state.lock().pending.get(&key) {
-            Some(RocksDBOp::Put(value)) => Ok(Some(bincode::deserialize_from(value.as_slice())?)),
-            Some(RocksDBOp::Delete) => Ok(None),
-            None => match db.get_pinned(key)? {
-                Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
-                None => Ok(None),
-            },
-        })
-        .await?
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn delete(&self, key: &Key<'_>) -> Result<()> {
-        let key = key.serialize()?;
-        let state = Arc::clone(&self.state);
-        tokio::task::spawn_blocking(move || {
-            state.lock().pending.insert(key, RocksDBOp::Delete);
-        })
-        .await?;
-
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    fn list(
+    pub fn list(
         &self,
         lower_bound: &Key,
         upper_bound: &Key,
         reverse: bool,
-    ) -> Result<Box<dyn Iterator<Item = Result<(Box<[u8]>, Box<[u8]>)>> + '_>> {
+    ) -> Result<impl Iterator<Item = Result<(Box<[u8]>, Box<[u8]>)>> + '_> {
         let mut opts = rocksdb::ReadOptions::default();
         opts.set_iterate_lower_bound(lower_bound.serialize()?);
         opts.set_iterate_upper_bound(upper_bound.serialize()?);
@@ -191,6 +108,89 @@ impl Database for RocksDB {
                     Ok((key, value))
                 }),
         ))
+    }
+}
+
+#[async_trait::async_trait]
+impl Database for RocksDBStore {
+    type Error = RocksDBStoreError;
+    type Key<'k> = keys::Key<'k>;
+    type Value<'v> = Value<'v>;
+
+    #[tracing::instrument(skip(self))]
+    async fn commit(&self) -> Result<()> {
+        let db = Arc::clone(&self.db);
+
+        let pending = {
+            let mut state = self.state.lock();
+            mem::take(&mut state.pending)
+        };
+
+        let mut db_batch = WriteBatch::default();
+
+        tokio::task::spawn_blocking(move || {
+            for (key, op) in pending {
+                match op {
+                    RocksDBStoreOp::Put(value) => db_batch.put(key, value),
+                    RocksDBStoreOp::Delete => db_batch.delete(key),
+                }
+            }
+            db.write(db_batch)
+        })
+        .await??;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn set(&self, key: &Key<'_>, value: &Value<'_>) -> Result<()> {
+        match (key, value) {
+            (Key::Data { .. }, Value::DataValue(_)) => {}
+            (Key::SystemData { .. }, Value::DataValue(_)) => {}
+            (Key::Index { .. }, Value::IndexValue(_)) => {}
+            _ => return Err(RocksDBStoreError::InvalidKeyValueCombination),
+        }
+
+        let key = key.serialize()?;
+        let value = value.serialize()?;
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            state.lock().pending.insert(key, RocksDBStoreOp::Put(value));
+        })
+        .await?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get(&self, key: &Key<'_>) -> Result<Option<RecordRoot>> {
+        let key = key.serialize()?;
+        let db = Arc::clone(&self.db);
+        let state = Arc::clone(&self.state);
+
+        tokio::task::spawn_blocking(move || match state.lock().pending.get(&key) {
+            Some(RocksDBStoreOp::Put(value)) => {
+                Ok(Some(bincode::deserialize_from(value.as_slice())?))
+            }
+            Some(RocksDBStoreOp::Delete) => Ok(None),
+            None => match db.get_pinned(key)? {
+                Some(slice) => Ok(Some(bincode::deserialize_from(slice.as_ref())?)),
+                None => Ok(None),
+            },
+        })
+        .await?
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn delete(&self, key: &Key<'_>) -> Result<()> {
+        let key = key.serialize()?;
+        let state = Arc::clone(&self.state);
+        tokio::task::spawn_blocking(move || {
+            state.lock().pending.insert(key, RocksDBStoreOp::Delete);
+        })
+        .await?;
+
+        Ok(())
     }
 
     #[tracing::instrument(skip(self))]
@@ -214,21 +214,21 @@ impl Database for RocksDB {
         Ok(())
     }
 
-    // #[tracing::instrument(skip(self))]
-    // pub fn snapshot(&self, chunk_size: usize) -> SnapshotIterator {
-    //     SnapshotIterator::new(&self.db, chunk_size)
-    // }
+    #[tracing::instrument(skip(self))]
+    fn snapshot(&self, chunk_size: usize) -> SnapshotIterator {
+        SnapshotIterator::new(&self.db, chunk_size)
+    }
 
-    // // TODO:
-    // #[tracing::instrument(skip(self))]
-    // pub fn restore(&self, chunk: SnapshotChunk) -> Result<()> {
-    //     let mut batch = WriteBatch::default();
-    //     for entry in chunk {
-    //         batch.put(entry.key, entry.value);
-    //     }
-    //     self.db.write(batch)?;
-    //     Ok(())
-    // }
+    // TODO:
+    #[tracing::instrument(skip(self))]
+    fn restore(&self, chunk: SnapshotChunk) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        for entry in chunk {
+            batch.put(entry.key, entry.value);
+        }
+        self.db.write(batch)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -238,13 +238,14 @@ pub(crate) mod tests {
         ops::{Deref, DerefMut},
     };
 
+    use crate::db::Database;
     use crate::IndexValue;
 
     use super::*;
 
-    pub(crate) struct TestRocksDB(Option<RocksDB>);
+    pub(crate) struct TestRocksDBStore(Option<RocksDBStore>);
 
-    impl Default for TestRocksDB {
+    impl Default for TestRocksDBStore {
         fn default() -> Self {
             let temp_dir = std::env::temp_dir();
             let path = temp_dir.join(format!(
@@ -252,11 +253,11 @@ pub(crate) mod tests {
                 rand::random::<u32>()
             ));
 
-            Self(Some(RocksDB::open(path).unwrap()))
+            Self(Some(RocksDBStore::open(path).unwrap()))
         }
     }
 
-    impl Drop for TestRocksDB {
+    impl Drop for TestRocksDBStore {
         fn drop(&mut self) {
             if let Some(store) = self.0.take() {
                 store.destroy().unwrap();
@@ -264,15 +265,15 @@ pub(crate) mod tests {
         }
     }
 
-    impl Deref for TestRocksDB {
-        type Target = RocksDB;
+    impl Deref for TestRocksDBStore {
+        type Target = RocksDBStore;
 
         fn deref(&self) -> &Self::Target {
             self.0.as_ref().unwrap()
         }
     }
 
-    impl DerefMut for TestRocksDB {
+    impl DerefMut for TestRocksDBStore {
         fn deref_mut(&mut self) -> &mut Self::Target {
             self.0.as_mut().unwrap()
         }
@@ -280,7 +281,7 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_store_index() {
-        let store = TestRocksDB::default();
+        let store = TestRocksDBStore::default();
 
         let index = Key::new_index(
             "ns".to_string(),
