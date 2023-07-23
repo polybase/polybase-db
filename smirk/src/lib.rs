@@ -16,26 +16,9 @@ pub mod hash;
 pub mod storage;
 
 mod tree;
-use std::time::Instant;
 
 pub use tree::{batch, key_value_hash, visitor::Visitor, MerkleTree, TreeNode};
 
 #[cfg(test)]
 mod testing;
 
-#[test]
-fn foo() {
-    use rand::{Rng, SeedableRng};
-
-    let mut rng = rand_chacha::ChaChaRng::from_seed([0; 32]);
-    let mut nums = vec![0; 1000];
-    rng.fill(nums.as_mut_slice());
-
-    let instant = Instant::now();
-    let mut tree = smirk! {};
-    for i in nums {
-        tree.insert(i, i);
-    }
-
-    println!("{}", instant.elapsed().as_millis());
-}
