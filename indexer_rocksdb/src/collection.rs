@@ -217,9 +217,25 @@ pub(crate) struct Authorization {
 /// The generic collection functionality
 
 #[async_trait::async_trait]
-pub trait Collection {
+pub trait Collection<'a> {
     type Key;
     type Value;
+
+    async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>>;
+    async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>>;
+    async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>>;
+    async fn list(
+        &'a self,
+        ListQuery {
+            limit,
+            where_query,
+            order_by,
+            cursor_before,
+            cursor_after,
+        }: ListQuery<'_>,
+        user: &'a Option<&'a AuthUser>,
+    ) -> Result<Box<dyn futures::Stream<Item = Result<(Cursor, RecordRoot)>> + 'a>>;
+    async fn get_metadata(&self) -> Result<Option<CollectionMetadata>>;
 }
 
 /// The RocksDB concrete implementation
@@ -232,9 +248,178 @@ pub struct RocksDBCollection<'a> {
 }
 
 #[async_trait::async_trait]
-impl<'a> Collection for RocksDBCollection<'a> {
+impl<'a> Collection<'a> for RocksDBCollection<'a> {
     type Key = keys::Key<'a>;
     type Value = store::Value<'a>;
+
+    #[tracing::instrument(skip(self))]
+    async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
+        if self.collection_id == "Collection" && id == "Collection" {
+            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
+        }
+
+        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
+        let Some(value) = self.store.get(&key).await? else {
+            return Ok(None);
+        };
+
+        Ok(Some(value))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>> {
+        if self.collection_id == "Collection" && id == "Collection" {
+            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
+        }
+
+        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
+        let Some(value) = self.store.get(&key).await? else {
+            return Ok(None);
+        };
+
+        if !self.user_can_read(&value, &user).await? {
+            return Err(CollectionUserError::UnauthorizedRead)?;
+        }
+
+        Ok(Some(value))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
+        let record_metadata_key = keys::Key::new_system_data(format!(
+            "{}/records/{}/metadata",
+            &self.collection_id, record_id
+        ))?;
+
+        let Some(record) = self.store.get(&record_metadata_key).await? else {
+            return Ok(None);
+        };
+
+        let updated_at = match record.find_path(&["updatedAt"]) {
+            Some(RecordValue::String(s)) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+            }
+            _ => return Err(CollectionError::MetadataMissingUpdatedAt),
+        };
+
+        Ok(Some(RecordMetadata { updated_at }))
+    }
+
+    async fn list(
+        &'a self,
+        ListQuery {
+            limit,
+            where_query,
+            order_by,
+            cursor_before,
+            cursor_after,
+        }: ListQuery<'_>,
+        user: &'a Option<&'a AuthUser>,
+    ) -> Result<Box<dyn futures::Stream<Item = Result<(Cursor, RecordRoot)>> + 'a>> {
+        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
+            return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
+        };
+
+        let mut ast_holder = None;
+        let ast = self.ast(&mut ast_holder).await?;
+
+        let key_range = where_query.key_range(
+            &ast,
+            self.collection_id.clone(),
+            &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+            &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+        )?;
+
+        let key_range = where_query::KeyRange {
+            lower: key_range.lower.with_static(),
+            upper: key_range.upper.with_static(),
+        };
+
+        let mut reverse = index.should_list_in_reverse(order_by);
+        let key_range = match (cursor_after, cursor_before) {
+            (Some(mut after), _) => {
+                after.0.immediate_successor_value_mut()?;
+                where_query::KeyRange {
+                    lower: after.0,
+                    upper: key_range.upper,
+                }
+            }
+            (_, Some(before)) => {
+                reverse = !reverse;
+                where_query::KeyRange {
+                    lower: key_range.lower,
+                    upper: before.0,
+                }
+            }
+            (None, None) => key_range,
+        };
+
+        Ok(Box::new(
+            futures::stream::iter(
+                self.store
+                    .list(&key_range.lower, &key_range.upper, reverse)?,
+            )
+            .map(|res| async {
+                let (k, v) = res?;
+
+                let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
+                let index_record = proto::IndexRecord::decode(&v[..])?;
+                let data_key = keys::Key::deserialize(&index_record.id)?;
+                let data = match self.store.get(&data_key).await? {
+                    Some(d) => d,
+                    None => return Ok(None),
+                };
+
+                Ok(Some((index_key, data)))
+            })
+            .filter_map(|r| async {
+                match r.await {
+                    // Skip records that we couldn't find by the data key
+                    Ok(None) => None,
+                    Ok(Some(x)) => Some(Ok(x)),
+                    Err(e) => Some(Err(e)),
+                }
+            })
+            .filter_map(|r| async {
+                match r {
+                    Ok((cursor, record)) => {
+                        match self.user_can_read(&record, user).await {
+                            Ok(false) => None,
+                            Ok(true) => Some(Ok((cursor, record))),
+                            Err(e) => {
+                                // TODO: should we propagate this error?
+                                warn!("failed to check if user can read record: {e:#?}",);
+                                None
+                            }
+                        }
+                    }
+                    Err(e) => Some(Err(e)),
+                }
+            })
+            .take(limit.unwrap_or(usize::MAX)),
+        ))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
+        let collection_metadata_key =
+            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
+
+        let Some(record) = self.store.get(&collection_metadata_key).await? else {
+            return Ok(None);
+        };
+
+        let last_record_updated_at = match record.find_path(&["lastRecordUpdatedAt"]) {
+            Some(RecordValue::String(s)) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+            }
+            _ => return Err(CollectionError::MetadataMissingLastRecordUpdatedAt),
+        };
+
+        Ok(Some(CollectionMetadata {
+            last_record_updated_at,
+        }))
+    }
 }
 
 pub struct CollectionMetadata {
@@ -245,6 +430,7 @@ pub struct RecordMetadata {
     pub updated_at: SystemTime,
 }
 
+#[derive(Debug)]
 pub struct ListQuery<'a> {
     pub limit: Option<usize>,
     pub where_query: where_query::WhereQuery,
@@ -939,27 +1125,6 @@ impl<'a> RocksDBCollection<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
-        let collection_metadata_key =
-            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
-
-        let Some(record) = self.store.get(&collection_metadata_key).await? else {
-            return Ok(None);
-        };
-
-        let last_record_updated_at = match record.find_path(&["lastRecordUpdatedAt"]) {
-            Some(RecordValue::String(s)) => {
-                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
-            }
-            _ => return Err(CollectionError::MetadataMissingLastRecordUpdatedAt),
-        };
-
-        Ok(Some(CollectionMetadata {
-            last_record_updated_at,
-        }))
-    }
-
-    #[tracing::instrument(skip(self))]
     async fn update_record_metadata(
         &self,
         record_id: String,
@@ -988,27 +1153,6 @@ impl<'a> RocksDBCollection<'a> {
             )
             .await?;
         Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
-        let record_metadata_key = keys::Key::new_system_data(format!(
-            "{}/records/{}/metadata",
-            &self.collection_id, record_id
-        ))?;
-
-        let Some(record) = self.store.get(&record_metadata_key).await? else {
-            return Ok(None);
-        };
-
-        let updated_at = match record.find_path(&["updatedAt"]) {
-            Some(RecordValue::String(s)) => {
-                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
-            }
-            _ => return Err(CollectionError::MetadataMissingUpdatedAt),
-        };
-
-        Ok(Some(RecordMetadata { updated_at }))
     }
 
     #[tracing::instrument(skip(self))]
@@ -1069,37 +1213,6 @@ impl<'a> RocksDBCollection<'a> {
         }
 
         Ok(())
-    }
-
-    pub async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>> {
-        if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
-        }
-
-        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
-            return Ok(None);
-        };
-
-        if !self.user_can_read(&value, &user).await? {
-            return Err(CollectionUserError::UnauthorizedRead)?;
-        }
-
-        Ok(Some(value))
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
-        if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
-        }
-
-        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
-            return Ok(None);
-        };
-
-        Ok(Some(value))
     }
 
     async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
@@ -1189,100 +1302,6 @@ impl<'a> RocksDBCollection<'a> {
         self.delete_indexes(&id, &record).await;
 
         Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn list(
-        &'a self,
-        ListQuery {
-            limit,
-            where_query,
-            order_by,
-            cursor_before,
-            cursor_after,
-        }: ListQuery<'_>,
-        user: &'a Option<&'a AuthUser>,
-    ) -> Result<impl futures::Stream<Item = Result<(Cursor, RecordRoot)>> + '_> {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
-            return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
-        };
-
-        let mut ast_holder = None;
-        let ast = self.ast(&mut ast_holder).await?;
-
-        let key_range = where_query.key_range(
-            &ast,
-            self.collection_id.clone(),
-            &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-            &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-        )?;
-
-        let key_range = where_query::KeyRange {
-            lower: key_range.lower.with_static(),
-            upper: key_range.upper.with_static(),
-        };
-
-        let mut reverse = index.should_list_in_reverse(order_by);
-        let key_range = match (cursor_after, cursor_before) {
-            (Some(mut after), _) => {
-                after.0.immediate_successor_value_mut()?;
-                where_query::KeyRange {
-                    lower: after.0,
-                    upper: key_range.upper,
-                }
-            }
-            (_, Some(before)) => {
-                reverse = !reverse;
-                where_query::KeyRange {
-                    lower: key_range.lower,
-                    upper: before.0,
-                }
-            }
-            (None, None) => key_range,
-        };
-
-        Ok(futures::stream::iter(
-            self.store
-                .list(&key_range.lower, &key_range.upper, reverse)?,
-        )
-        .map(|res| async {
-            let (k, v) = res?;
-
-            let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
-            let index_record = proto::IndexRecord::decode(&v[..])?;
-            let data_key = keys::Key::deserialize(&index_record.id)?;
-            let data = match self.store.get(&data_key).await? {
-                Some(d) => d,
-                None => return Ok(None),
-            };
-
-            Ok(Some((index_key, data)))
-        })
-        .filter_map(|r| async {
-            match r.await {
-                // Skip records that we couldn't find by the data key
-                Ok(None) => None,
-                Ok(Some(x)) => Some(Ok(x)),
-                Err(e) => Some(Err(e)),
-            }
-        })
-        .filter_map(|r| async {
-            match r {
-                Ok((cursor, record)) => {
-                    match self.user_can_read(&record, user).await {
-                        Ok(false) => None,
-                        Ok(true) => Some(Ok((cursor, record))),
-                        Err(e) => {
-                            // TODO: should we propagate this error?
-                            warn!("failed to check if user can read record: {e:#?}",);
-                            None
-                        }
-                    }
-                }
-                Err(e) => Some(Err(e)),
-            }
-        })
-        .take(limit.unwrap_or(usize::MAX)))
     }
 
     #[async_recursion]

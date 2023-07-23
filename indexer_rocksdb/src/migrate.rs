@@ -1,7 +1,7 @@
 use tracing::info;
 
 use crate::collection::{
-    collection_ast_from_json, CollectionError, CollectionUserError, RocksDBCollection,
+    collection_ast_from_json, Collection, CollectionError, CollectionUserError, RocksDBCollection,
 };
 use crate::record::{IndexValue, RecordError, RecordRoot, RecordValue};
 use crate::{db::Database, store};

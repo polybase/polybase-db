@@ -18,7 +18,9 @@ mod db;
 
 use crate::db::Database;
 
-pub use collection::{AuthUser, Collection, Cursor, ListQuery, RocksDBCollection};
+pub use collection::{
+    validate_schema_change, AuthUser, Collection, Cursor, ListQuery, RocksDBCollection,
+};
 pub use index::CollectionIndexField;
 pub use keys::Direction;
 pub use publickey::PublicKey;
