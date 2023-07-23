@@ -1,4 +1,4 @@
-//! Items relating to hashing datahashmod
+//! Items relating to hashing
 //!
 //! In particular, the [`Digest`] type and the [`Hashable`] trait
 //!
@@ -97,7 +97,7 @@ impl Digest {
     }
 
     /// Convert this [`Digest`] to its hex representation (i.e. the hex encoding of
-    /// [`Digets::to_bytes`])
+    /// [`Digest::to_bytes`])
     #[inline]
     #[must_use]
     pub fn to_hex(&self) -> String {

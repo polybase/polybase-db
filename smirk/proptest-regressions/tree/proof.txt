@@ -1,7 +1,0 @@
-# Seeds for failure cases proptest has generated in the past. It is
-# automatically read and these particular cases re-run before any
-# novel cases are generated.
-#
-# It is recommended to check this file in to source control so that
-# everyone who runs the test benefits from these saved cases.
-cc 11f3355419ebef051267901902f25574e0b80b19569d95c61c31896e0784316a # shrinks to input = _ProofIsValidArgs { tree: MerkleTree { inner: Some(TreeNode { key: 64, value: "", hash: Hash(0dedccd3ac132ee8b462a08bd5e2dc9abfa3334956bcb9e93c2f418f54145da6), left: Some(TreeNode { key: 0, value: "", hash: Hash(58e925583acf136b13a5fefc2f7dd2267a1d70305ceadc7dedf6302bbedcb78e), left: None, right: None, height: 1 }), right: Some(TreeNode { key: 65, value: "", hash: Hash(00743760e488b30cd9cd9a9ba0714899cc5273b79d3f9a4e19709c5e025b1b0b), left: None, right: None, height: 1 }), height: 2 }) }, key: 64 }

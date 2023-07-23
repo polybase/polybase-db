@@ -29,10 +29,12 @@ impl<K, V> Batch<K, V> {
     ///
     /// Note, if two operations reference the same key, they will be applied in the order they
     /// exist in `operations`. No other guarantees about the order of execution are made
+    #[must_use]
     pub fn from_operations(mut operations: Vec<Operation<K, V>>) -> Self
     where
         K: Ord,
     {
+        // preserve order of operations, so don't use sort_unstable
         operations.sort_by(|a, b| a.key().cmp(b.key()));
         Self { operations }
     }

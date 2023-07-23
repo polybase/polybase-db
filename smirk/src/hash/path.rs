@@ -14,9 +14,9 @@ use super::Digest;
 ///
 /// Luckily, [`MerkleTree`] *does* implement [`Arbitrary`]
 ///
-/// [`Aritrary`]: proptest::prelude::Arbitrary
+/// [`Arbitrary`]: proptest::prelude::Arbitrary
 /// [`MerkleTree`]: crate::MerkleTree
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MerklePath {
     /// The intermediate stages between the root hash and the target node
     pub(crate) stages: Vec<Stage>,
@@ -62,9 +62,28 @@ impl MerklePath {
 ///
 ///  - `this` is the hash of the key-value pair of the visited node in this stage
 ///  - `left`/`right` is the root hash of the "other side" of the tree
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Stage {
     Left { this: Digest, right: Option<Digest> },
     Right { this: Digest, left: Option<Digest> },
 }
 
+#[cfg(test)]
+mod tests {
+    use test_strategy::proptest;
+
+    use crate::MerkleTree;
+
+    use super::*;
+
+    #[proptest]
+    fn proof_serialization_round_trip(tree: MerkleTree<i32, String>) {
+        for node in tree.iter() {
+            let proof = tree.prove(node.key()).unwrap();
+            let bytes = proof.to_bytes();
+            let proof_again = MerklePath::from_bytes(&bytes).unwrap();
+
+            assert_eq!(proof, proof_again);
+        }
+    }
+}

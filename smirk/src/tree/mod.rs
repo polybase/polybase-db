@@ -21,7 +21,7 @@ pub use hash::key_value_hash;
 #[cfg(test)]
 mod tests;
 
-/// A Merkle tree, with a customizable storage backend and hash function
+/// A Merkle tree with a map-like API
 ///
 /// ```rust
 /// # use smirk::{MerkleTree, smirk};
@@ -35,7 +35,9 @@ mod tests;
 ///
 /// assert_eq!(tree.size(), 1);
 /// ```
-/// You can walk the tree in depth-first or breadth-first ordering:
+/// You can use [`MerkleTree::iter`] to get an iterator over tuples of key-value pairs
+///
+/// The order will be the order specified by the [`Ord`] implementation for the key type
 /// ```rust
 /// # use smirk::smirk;
 /// let tree = smirk! {
@@ -44,14 +46,30 @@ mod tests;
 ///   3 => 345,
 /// };
 ///
-/// for (k, v) in tree.depth_first() {
-///     println!("key: {k} - value: {v}");
-/// }
+/// let pairs: Vec<(i32, i32)> = tree
+///     .iter()
+///     .map(|node| (*node.key(), *node.value()))
+///     .collect();
 ///
-/// for (k, v) in tree.breadth_first() {
-///     println!("key: {k} - value: {v}");
-/// }
+/// assert_eq!(pairs, vec![
+///   (1, 123),
+///   (2, 234),
+///   (3, 345),
+/// ]);
 /// ```
+/// You can also go the other way via [`FromIterator`], just like you would for a [`HashMap`]:
+/// ```rust
+/// # use smirk::MerkleTree;
+/// let pairs = vec![
+///   (1, 123),
+///   (2, 234),
+///   (3, 345),
+/// ];
+/// let tree: MerkleTree<_, _> = pairs.into_iter().collect();
+///
+/// assert_eq!(tree.size(), 3);
+/// ```
+///
 /// Broadly speaking, to do anything useful with a Merkle tree, the key type must implement
 /// [`Ord`] and [`Hashable`], and the value type must implement [`Hashable`]
 ///
@@ -62,6 +80,9 @@ mod tests;
 /// If this happens, behaviour of the tree is unspecified, but not
 /// undefined. In other words, the usual soundness rules will be upheld, but any function performed
 /// on the tree itself may give incorrect results
+///
+/// [`HashMap`]: std::collections::HashMap
+///
 #[derive(Debug, Clone)]
 pub struct MerkleTree<K, V> {
     pub(crate) inner: Option<Box<TreeNode<K, V>>>,
@@ -105,7 +126,7 @@ impl<K, V> MerkleTree<K, V> {
     ///
     /// Note: inserting a single value will potentially rebalance the tree, and also recompute hash
     /// values, which can be expensive. If you are inserting many items, consider using
-    /// [`MerkleTree::apply_batch`]
+    /// [`MerkleTree::apply`]
     pub fn insert(&mut self, key: K, value: V)
     where
         K: Hashable + Ord,

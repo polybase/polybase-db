@@ -91,7 +91,7 @@ impl Storage {
         K: Serialize + 'static + Ord,
         V: Serialize + 'static + Hashable,
     {
-        codec::write_tree_to_tx(&tx, tree)
+        codec::write_tree_to_tx(tx, tree)
     }
 
     /// Load a tree from storage, if it is present
@@ -124,7 +124,7 @@ impl Storage {
             return Ok(Some(MerkleTree::new()));
         }
 
-        let node = codec::load_node(&tx, &key)?;
+        let node = codec::load_node(tx, &key)?;
         let tree = MerkleTree {
             inner: Some(Box::new(node)),
         };

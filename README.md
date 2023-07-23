@@ -58,6 +58,9 @@ cd polybase && cargo run -- generate_key
 cargo test
 ```
 
+Note, `smirk` contains some property tests which are relatively slow.
+You may find that you have a faster dev cycle running tests with `--release`, since the test suite is relatively fast to compile but slow to run.
+
 ## API
 
 API server runs on port 8080 by default:
