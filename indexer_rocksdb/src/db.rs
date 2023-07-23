@@ -28,10 +28,10 @@ pub(crate) trait Database: Send + Sync {
     //>;
 
     fn destroy(self) -> Result<(), Self::Error>;
-
     fn reset(&self) -> Result<(), Self::Error>;
-
     fn snapshot(&self, chunk_size: usize) -> SnapshotIterator;
-
     fn restore(&self, chunk: SnapshotChunk) -> Result<(), Self::Error>;
+
+    async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<(), Self::Error>;
+    async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>, Self::Error>;
 }

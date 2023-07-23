@@ -229,6 +229,17 @@ impl Database for RocksDBStore {
         self.db.write(batch)?;
         Ok(())
     }
+
+    async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
+        let system_key = keys::Key::new_system_data(key)?;
+
+        Ok(self.set(&system_key, &Value::DataValue(data)).await?)
+    }
+
+    async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
+        let system_key = keys::Key::new_system_data(key)?;
+        Ok(self.get(&system_key).await?)
+    }
 }
 
 #[cfg(test)]
