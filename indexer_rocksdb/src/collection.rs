@@ -1362,7 +1362,7 @@ mod tests {
     #[tokio::test]
     async fn test_collection_collection_load() {
         let store = TestRocksDBStore::default();
-        let collection = Collection::load(&store, "Collection".to_string())
+        let collection = RocksDBCollection::load(&store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1389,8 +1389,8 @@ mod tests {
     async fn create_collection<'a>(
         store: &'a TestRocksDBStore,
         ast: stableast::Root<'_>,
-    ) -> Vec<Collection<'a>> {
-        let collection_collection = Collection::load(store, "Collection".to_string())
+    ) -> Vec<RocksDBCollection<'a>> {
+        let collection_collection = RocksDBCollection::load(store, "Collection".to_string())
             .await
             .unwrap();
 
@@ -1422,7 +1422,7 @@ mod tests {
 
             store.commit().await.unwrap();
 
-            collections.push(Collection::load(store, id).await.unwrap());
+            collections.push(RocksDBCollection::load(store, id).await.unwrap());
         }
 
         collections
@@ -1517,7 +1517,7 @@ mod tests {
     #[tokio::test]
     async fn test_collection_set_get() {
         let store = TestRocksDBStore::default();
-        let collection = Collection::new(
+        let collection = RocksDBCollection::new(
             &store,
             "test".to_string(),
             vec![],
@@ -1550,7 +1550,7 @@ mod tests {
         let store = TestRocksDBStore::default();
 
         {
-            let collection = Collection::load(&store, "Collection".to_owned())
+            let collection = RocksDBCollection::load(&store, "Collection".to_owned())
                 .await
                 .unwrap();
             collection
@@ -1612,7 +1612,7 @@ mod tests {
 
         store.commit().await.unwrap();
 
-        let collection = Collection::load(&store, "test/test".to_owned())
+        let collection = RocksDBCollection::load(&store, "test/test".to_owned())
             .await
             .unwrap();
 
