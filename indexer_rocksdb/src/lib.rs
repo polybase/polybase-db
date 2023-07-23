@@ -59,44 +59,79 @@ pub enum IndexerError {
     Migration(#[from] migrate::Error),
 }
 
-pub struct Indexer {
+/// The generic Indexer trait
+#[async_trait::async_trait]
+pub trait Indexer {
+    type Key<'k>;
+    type Value<'v>;
+
+    async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()>;
+
+    fn destroy(self) -> Result<()>;
+
+    fn reset(&self) -> Result<()>;
+
+    fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator;
+
+    fn restore(&self, data: SnapshotChunk) -> Result<()>;
+
+    async fn collection<'k, 'v>(
+        &self,
+        id: String,
+    ) -> Result<Box<dyn Collection<Key = crate::keys::Key, Value = store::Value> + '_>>;
+
+    async fn commit(&self) -> Result<()>;
+
+    async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()>;
+
+    async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>>;
+}
+
+/// The concrete RocksDBIndexer
+pub struct RocksDBIndexer {
     store: store::RocksDBStore,
 }
 
-impl Indexer {
+impl RocksDBIndexer {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let store = store::RocksDBStore::open(path)?;
         Ok(Self { store })
     }
+}
+
+#[async_trait::async_trait]
+impl Indexer for RocksDBIndexer {
+    type Key<'k> = keys::Key<'k>;
+    type Value<'v> = store::Value<'v>;
 
     #[tracing::instrument(skip(self))]
-    pub async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
+    async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
         let store = &self.store;
         Ok(migrate::check_for_migration(store, migration_batch_size).await?)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn destroy(self) -> Result<()> {
+    fn destroy(self) -> Result<()> {
         Ok(self.store.destroy()?)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn reset(&self) -> Result<()> {
+    fn reset(&self) -> Result<()> {
         Ok(self.store.reset()?)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
+    fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
         self.store.snapshot(chunk_size)
     }
 
     #[tracing::instrument(skip(self))]
-    pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
+    fn restore(&self, data: SnapshotChunk) -> Result<()> {
         Ok(self.store.restore(data)?)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn collection<'k, 'v>(
+    async fn collection<'k, 'v>(
         &self,
         id: String,
     ) -> Result<Box<dyn Collection<Key = crate::keys::Key, Value = store::Value> + '_>> {
@@ -104,12 +139,12 @@ impl Indexer {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn commit(&self) -> Result<()> {
+    async fn commit(&self) -> Result<()> {
         Ok(self.store.commit().await?)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
+    async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()> {
         let system_key = keys::Key::new_system_data(key)?;
 
         Ok(self
@@ -119,7 +154,7 @@ impl Indexer {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
+    async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>> {
         let system_key = keys::Key::new_system_data(key)?;
         Ok(self.store.get(&system_key).await?)
     }
