@@ -5193,6 +5193,8 @@ dependencies = [
  "miden-crypto 0.6.0",
  "pretty_assertions",
  "proptest",
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "rmp-serde",
  "rocksdb",
  "serde",

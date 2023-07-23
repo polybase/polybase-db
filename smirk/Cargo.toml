@@ -22,3 +22,9 @@ test-strategy = "0.3"
 pretty_assertions = "1"
 insta = "1"
 criterion = "0.5"
+rand = "0.8"
+rand_chacha = "0.3"
+
+[[bench]]
+name = "insert"
+harness = false
