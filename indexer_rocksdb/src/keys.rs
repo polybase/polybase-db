@@ -152,7 +152,7 @@ fn generate_cid(data: &[u8], out: &mut Vec<u8>) -> std::result::Result<(), cid::
 }
 
 #[derive(PartialEq, Clone)]
-pub(crate) enum Key<'a> {
+pub enum Key<'a> {
     /// A wildcard key is always greater than a key whose prefix matches the inner key.
     Wildcard(Box<Key<'a>>),
     /// A data key is a key that points to a record.

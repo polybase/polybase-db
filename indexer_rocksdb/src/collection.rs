@@ -25,6 +25,8 @@ use tracing::{error, warn};
 
 pub type Result<T> = std::result::Result<T, CollectionError>;
 
+/// The RocksDB specific functionality
+
 #[derive(Debug, thiserror::Error)]
 pub enum CollectionError {
     #[error(transparent)]
@@ -212,12 +214,27 @@ pub(crate) struct Authorization {
     pub(crate) delegate_fields: Vec<where_query::FieldPath>,
 }
 
+/// The generic collection functionality
+
+#[async_trait::async_trait]
+pub trait Collection {
+    type Key;
+    type Value;
+}
+
+/// The RocksDB concrete implementation
 #[derive(Clone)]
-pub struct Collection<'a> {
+pub struct RocksDBCollection<'a> {
     store: &'a store::RocksDBStore,
     collection_id: String,
     indexes: Vec<index::CollectionIndex<'a>>,
     authorization: Authorization,
+}
+
+#[async_trait::async_trait]
+impl<'a> Collection for RocksDBCollection<'a> {
+    type Key = keys::Key<'a>;
+    type Value = store::Value<'a>;
 }
 
 pub struct CollectionMetadata {
@@ -368,7 +385,7 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
 
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast)?;
 
-    let Some(collection) = collection_ast_from_root(ast, &Collection::normalize_name( name)) else {
+    let Some(collection) = collection_ast_from_root(ast, &RocksDBCollection::normalize_name( name)) else {
         return Err(CollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
     };
 
@@ -498,7 +515,7 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
     Ok(())
 }
 
-impl<'a> Collection<'a> {
+impl<'a> RocksDBCollection<'a> {
     fn new(
         store: &'a store::RocksDBStore,
         collection_id: String,
@@ -514,7 +531,7 @@ impl<'a> Collection<'a> {
     }
 
     #[tracing::instrument(skip(store))]
-    pub(crate) async fn load(store: &'a store::RocksDBStore, id: String) -> Result<Collection<'_>> {
+    pub async fn load(store: &'a store::RocksDBStore, id: String) -> Result<RocksDBCollection<'_>> {
         let collection_collection = Self::new(
             store,
             "Collection".to_string(),
@@ -558,7 +575,7 @@ impl<'a> Collection<'a> {
             None => return Err(CollectionError::CollectionRecordMissingID),
         };
 
-        let short_collection_name = Collection::normalize_name(id.as_str());
+        let short_collection_name = RocksDBCollection::normalize_name(id.as_str());
 
         let collection_ast: stableast::Collection = match record.get("ast") {
             Some(RecordValue::String(ast)) => {
@@ -699,14 +716,14 @@ impl<'a> Collection<'a> {
         Self::normalize_name(self.collection_id.as_str())
     }
 
-    pub fn normalize_name(collection_id: &str) -> String {
+    fn normalize_name(collection_id: &str) -> String {
         #[allow(clippy::unwrap_used)] // split always returns at least one element
         let last_part = collection_id.split('/').last().unwrap();
 
         last_part.replace('-', "_")
     }
 
-    pub fn namespace(&self) -> &str {
+    fn namespace(&self) -> &str {
         let Some(slash_index) = self.collection_id.rfind('/') else {
             return "";
         };
@@ -716,11 +733,7 @@ impl<'a> Collection<'a> {
 
     #[tracing::instrument(skip(self))]
     #[async_recursion]
-    pub(crate) async fn user_can_read(
-        &self,
-        record: &RecordRoot,
-        user: &Option<&AuthUser>,
-    ) -> Result<bool> {
+    async fn user_can_read(&self, record: &RecordRoot, user: &Option<&AuthUser>) -> Result<bool> {
         if self.authorization.read_all {
             return Ok(true);
         }
@@ -797,7 +810,8 @@ impl<'a> Collection<'a> {
 
             for foreign_record_reference in foreign_record_references {
                 let collection =
-                    Collection::load(self.store, foreign_record_reference.collection_id).await?;
+                    RocksDBCollection::load(self.store, foreign_record_reference.collection_id)
+                        .await?;
 
                 let Some(record) = collection
                     .get(foreign_record_reference.id, Some(user))
@@ -826,7 +840,7 @@ impl<'a> Collection<'a> {
     /// Returns true if the user is one of the delegates for the record
     #[tracing::instrument(skip(self, record))]
     #[async_recursion]
-    pub async fn has_delegate_access(
+    async fn has_delegate_access(
         &self,
         record: &(impl PathFinder + Sync),
         user: &Option<&AuthUser>,
@@ -842,7 +856,7 @@ impl<'a> Collection<'a> {
 
             #[async_recursion]
             async fn check_delegate_value(
-                self_col: &Collection<'_>,
+                self_col: &RocksDBCollection<'_>,
                 delegate_value: &RecordValue,
                 user: &AuthUser,
             ) -> Result<bool> {
@@ -865,7 +879,8 @@ impl<'a> Collection<'a> {
                     }
                     RecordValue::ForeignRecordReference(fr) => {
                         let collection =
-                            Collection::load(self_col.store, fr.collection_id.clone()).await?;
+                            RocksDBCollection::load(self_col.store, fr.collection_id.clone())
+                                .await?;
 
                         let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
                             return Ok(false);
@@ -924,7 +939,7 @@ impl<'a> Collection<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
+    async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
         let collection_metadata_key =
             keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
 
@@ -945,7 +960,7 @@ impl<'a> Collection<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn update_record_metadata(
+    async fn update_record_metadata(
         &self,
         record_id: String,
         updated_at: &SystemTime,
@@ -976,7 +991,7 @@ impl<'a> Collection<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
+    async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
         let record_metadata_key = keys::Key::new_system_data(format!(
             "{}/records/{}/metadata",
             &self.collection_id, record_id
@@ -1011,7 +1026,7 @@ impl<'a> Collection<'a> {
         }
 
         let collection_before = if self.collection_id == "Collection" {
-            match Collection::load(self.store, id.clone()).await {
+            match RocksDBCollection::load(self.store, id.clone()).await {
                 Ok(c) => Some(c),
                 Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
                     ..
@@ -1047,7 +1062,7 @@ impl<'a> Collection<'a> {
                 #[allow(clippy::unwrap_used)]
                 let old_value = old_value.unwrap();
 
-                let target_col = Collection::load(self.store, id).await?;
+                let target_col = RocksDBCollection::load(self.store, id).await?;
 
                 target_col.rebuild(collection_before, &old_value).await?;
             }
@@ -1074,7 +1089,7 @@ impl<'a> Collection<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
+    async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
         if self.collection_id == "Collection" && id == "Collection" {
             return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
         }
@@ -1087,12 +1102,7 @@ impl<'a> Collection<'a> {
         Ok(Some(value))
     }
 
-    pub(crate) async fn add_indexes(
-        &self,
-        record_id: &str,
-        data_key: &keys::Key<'_>,
-        record: &RecordRoot,
-    ) {
+    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
         let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: match data_key.serialize() {
                 Ok(data) => data,
@@ -1163,7 +1173,7 @@ impl<'a> Collection<'a> {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn delete(&self, id: String) -> Result<()> {
+    async fn delete(&self, id: String) -> Result<()> {
         let Some(record) = self.get_without_auth_check(id.clone()).await? else {
             return Ok(());
         };
@@ -1279,10 +1289,11 @@ impl<'a> Collection<'a> {
     async fn rebuild(
         &self,
         // The old collection record, loaded before the AST was changed
-        old_collection: Collection<'async_recursion>,
+        old_collection: RocksDBCollection<'async_recursion>,
         old_collection_record: &RecordRoot,
     ) -> Result<()> {
-        let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
+        let collection_collection =
+            RocksDBCollection::load(self.store, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
             .await?;

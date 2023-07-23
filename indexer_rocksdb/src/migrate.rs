@@ -1,7 +1,7 @@
 use tracing::info;
 
 use crate::collection::{
-    collection_ast_from_json, Collection, CollectionError, CollectionUserError,
+    collection_ast_from_json, CollectionError, CollectionUserError, RocksDBCollection,
 };
 use crate::record::{IndexValue, RecordError, RecordRoot, RecordValue};
 use crate::{db::Database, store};
@@ -110,8 +110,8 @@ async fn set_migration_version(store: &store::RocksDBStore, version: u64) -> Res
 }
 
 /// Get a Collection instance for given collection_id
-async fn get_collection(store: &store::RocksDBStore, id: String) -> Result<Collection<'_>> {
-    Ok(Collection::load(store, id).await?)
+async fn get_collection(store: &store::RocksDBStore, id: String) -> Result<RocksDBCollection<'_>> {
+    Ok(RocksDBCollection::load(store, id).await?)
 }
 
 /// Delete all index records (except for `id` index)

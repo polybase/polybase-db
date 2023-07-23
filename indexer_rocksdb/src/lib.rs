@@ -18,7 +18,7 @@ mod db;
 
 use crate::db::Database;
 
-pub use collection::{validate_schema_change, AuthUser, Collection, Cursor, ListQuery};
+pub use collection::{AuthUser, Collection, Cursor, ListQuery, RocksDBCollection};
 pub use index::CollectionIndexField;
 pub use keys::Direction;
 pub use publickey::PublicKey;
@@ -96,8 +96,11 @@ impl Indexer {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn collection(&self, id: String) -> Result<Collection> {
-        Ok(Collection::load(&self.store, id).await?)
+    pub async fn collection<'k, 'v>(
+        &self,
+        id: String,
+    ) -> Result<Box<dyn Collection<Key = crate::keys::Key, Value = store::Value> + '_>> {
+        Ok(Box::new(RocksDBCollection::load(&self.store, id).await?))
     }
 
     #[tracing::instrument(skip(self))]

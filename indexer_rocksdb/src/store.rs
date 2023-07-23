@@ -38,7 +38,7 @@ pub enum RocksDBStoreError {
 }
 
 #[derive(Debug)]
-pub(crate) enum Value<'a> {
+pub enum Value<'a> {
     DataValue(&'a RecordRoot),
     IndexValue(proto::IndexRecord),
 }
@@ -52,7 +52,7 @@ impl<'a> Value<'a> {
     }
 }
 
-pub(crate) struct RocksDBStore {
+pub struct RocksDBStore {
     pub(crate) db: Arc<rocksdb::DB>,
     state: Arc<Mutex<RocksDBStoreState>>,
 }
