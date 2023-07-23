@@ -64,7 +64,6 @@ tracing-subscriber = {version = "0.3.17", features = ["env-filter", "fmt", "std"
 tracing-stackdriver = { version = "0.7.2", features = [ "valuable" ] }
 valuable = { version = "0.1.0", features = ["derive"] }
 base64 = "0.21"
-indexer_rocksdb = { path = "../indexer_rocksdb" }
 
 [dev-dependencies]
 tokio-test = "0.4.2"
