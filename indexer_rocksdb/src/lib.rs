@@ -14,30 +14,26 @@ mod stableast_ext;
 mod store;
 pub mod where_query;
 
-mod db;
-
-use crate::db::Database;
-
-pub use collection::{
-    validate_schema_change, AuthUser, Collection, Cursor, ListQuery, RocksDBCollection,
-};
 pub use index::CollectionIndexField;
 pub use keys::Direction;
 pub use publickey::PublicKey;
-pub use record::{
-    json_to_record, record_to_json, Converter, ForeignRecordReference, IndexValue, PathFinder,
-    RecordError, RecordRoot, RecordUserError, RecordValue,
-};
+
 use snapshot::SnapshotChunk;
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 
-pub type Result<T> = std::result::Result<T, IndexerError>;
+use collection::RocksDBCollection;
+use indexer_db_adaptor::{
+    collection::{Collection, CollectionError},
+    db::Database,
+    indexer::Indexer,
+    record::RecordRoot,
+};
 
 #[derive(Debug, thiserror::Error)]
-pub enum IndexerError {
+pub enum RocksDBIndexerError {
     #[error("collection error")]
-    Collection(#[from] collection::CollectionError),
+    Collection(#[from] CollectionError),
 
     #[error("rocksdb store error")]
     RocksDBStore(#[from] store::RocksDBStoreError),
@@ -61,33 +57,7 @@ pub enum IndexerError {
     Migration(#[from] migrate::Error),
 }
 
-/// The generic Indexer trait
-#[async_trait::async_trait]
-pub trait Indexer {
-    type Key<'k>;
-    type Value<'v>;
-
-    async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()>;
-
-    fn destroy(self) -> Result<()>;
-
-    fn reset(&self) -> Result<()>;
-
-    fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator;
-
-    fn restore(&self, data: SnapshotChunk) -> Result<()>;
-
-    async fn collection<'k, 'v>(
-        &self,
-        id: String,
-    ) -> Result<Box<dyn Collection<Key = crate::keys::Key, Value = store::Value> + '_>>;
-
-    async fn commit(&self) -> Result<()>;
-
-    async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<()>;
-
-    async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>>;
-}
+pub type Result<T> = std::result::Result<T, RocksDBIndexerError>;
 
 /// The concrete RocksDBIndexer
 pub struct RocksDBIndexer {
@@ -99,12 +69,25 @@ impl RocksDBIndexer {
         let store = store::RocksDBStore::open(path)?;
         Ok(Self { store })
     }
+
+    #[tracing::instrument(skip(self))]
+    pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
+        self.store.snapshot(chunk_size)
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn restore(&self, data: SnapshotChunk) -> Result<()> {
+        Ok(self.store.restore(data)?)
+    }
 }
 
 #[async_trait::async_trait]
 impl Indexer for RocksDBIndexer {
+    type Error = RocksDBIndexerError;
     type Key<'k> = keys::Key<'k>;
     type Value<'v> = store::Value<'v>;
+    type ListQuery<'l> = collection::ListQuery<'l>;
+    type Cursor = collection::Cursor;
 
     #[tracing::instrument(skip(self))]
     async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
@@ -123,20 +106,19 @@ impl Indexer for RocksDBIndexer {
     }
 
     #[tracing::instrument(skip(self))]
-    fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
-        self.store.snapshot(chunk_size)
-    }
-
-    #[tracing::instrument(skip(self))]
-    fn restore(&self, data: SnapshotChunk) -> Result<()> {
-        Ok(self.store.restore(data)?)
-    }
-
-    #[tracing::instrument(skip(self))]
     async fn collection<'k, 'v>(
         &self,
         id: String,
-    ) -> Result<Box<dyn Collection<Key = crate::keys::Key, Value = store::Value> + '_>> {
+    ) -> Result<
+        Box<
+            dyn Collection<
+                    Key = crate::keys::Key,
+                    Value = store::Value,
+                    ListQuery = Self::ListQuery<'_>,
+                    Cursor = Self::Cursor,
+                > + '_,
+        >,
+    > {
         Ok(Box::new(RocksDBCollection::load(&self.store, id).await?))
     }
 

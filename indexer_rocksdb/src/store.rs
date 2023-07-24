@@ -12,7 +12,7 @@ use crate::{
     record::RecordRoot,
 };
 
-use crate::db::Database;
+use indexer_db_adaptor::db::Database;
 
 pub type Result<T> = std::result::Result<T, RocksDBStoreError>;
 
@@ -108,6 +108,22 @@ impl RocksDBStore {
                     Ok((key, value))
                 }),
         ))
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn snapshot(&self, chunk_size: usize) -> SnapshotIterator {
+        SnapshotIterator::new(&self.db, chunk_size)
+    }
+
+    // TODO:
+    #[tracing::instrument(skip(self))]
+    pub fn restore(&self, chunk: SnapshotChunk) -> Result<()> {
+        let mut batch = WriteBatch::default();
+        for entry in chunk {
+            batch.put(entry.key, entry.value);
+        }
+        self.db.write(batch)?;
+        Ok(())
     }
 }
 
@@ -211,22 +227,6 @@ impl Database for RocksDBStore {
             self.db.write(batch)?;
         }
 
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    fn snapshot(&self, chunk_size: usize) -> SnapshotIterator {
-        SnapshotIterator::new(&self.db, chunk_size)
-    }
-
-    // TODO:
-    #[tracing::instrument(skip(self))]
-    fn restore(&self, chunk: SnapshotChunk) -> Result<()> {
-        let mut batch = WriteBatch::default();
-        for entry in chunk {
-            batch.put(entry.key, entry.value);
-        }
-        self.db.write(batch)?;
         Ok(())
     }
 

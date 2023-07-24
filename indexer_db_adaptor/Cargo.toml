@@ -1,12 +1,10 @@
 [package]
-name = "indexer_rocksdb"
+name = "indexer_db_adaptor"
 version = "0.6.5"
 edition = "2021"
 
 [lib]
-name = "indexer_rocksdb"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+name = "indexer_db_adaptor"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
@@ -16,7 +14,6 @@ once_cell = "1.17.0"
 polylang = { git = "https://github.com/polybase/polylang", branch = "main", version = "0.1.0" }
 prost = "0.11"
 prost-types = "0.11"
-rocksdb = "0.19"
 secp256k1 = { version = "0.26", features = ["rand-std"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -29,7 +26,6 @@ hex = "0.4"
 parking_lot = "0.12.1"
 tracing = "0.1.37"
 async-trait = "0.1.72"
-indexer_db_adaptor = { path = "../indexer_db_adaptor" }
 
 [build-dependencies]
 prost-build = "0.11"

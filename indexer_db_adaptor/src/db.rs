@@ -1,10 +1,8 @@
-use crate::{
-    record::RecordRoot,
-    snapshot::{SnapshotChunk, SnapshotIterator},
-};
+use crate::record::RecordRoot;
 
+/// The Database trait
 #[async_trait::async_trait]
-pub(crate) trait Database: Send + Sync {
+pub trait Database: Send + Sync {
     type Error;
     type Key<'k>;
     type Value<'v>;
@@ -17,21 +15,11 @@ pub(crate) trait Database: Send + Sync {
 
     async fn delete(&self, key: &Self::Key<'_>) -> Result<(), Self::Error>;
 
-    //fn list(
-    //    &self,
-    //    lower_bound: &Self::Key<'_>, // todo
-    //    upper_bound: &Self::Key<'_>, // todo
-    //    reverse: bool,
-    //) -> std::result::Result<
-    //    Box<dyn Iterator<Item = std::result::Result<(Box<[u8]>, Box<[u8]>), Self::Error>> + '_>,
-    //    Self::Error,
-    //>;
-
     fn destroy(self) -> Result<(), Self::Error>;
+
     fn reset(&self) -> Result<(), Self::Error>;
-    fn snapshot(&self, chunk_size: usize) -> SnapshotIterator;
-    fn restore(&self, chunk: SnapshotChunk) -> Result<(), Self::Error>;
 
     async fn set_system_key(&self, key: String, data: &RecordRoot) -> Result<(), Self::Error>;
+
     async fn get_system_key(&self, key: String) -> Result<Option<RecordRoot>, Self::Error>;
 }

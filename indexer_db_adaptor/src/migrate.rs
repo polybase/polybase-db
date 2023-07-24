@@ -1,16 +1,13 @@
 use tracing::info;
 
-use crate::collection::{collection_ast_from_json, RocksDBCollection};
-use crate::store;
-use crate::{index, keys, proto};
+use crate::collection::{
+    collection_ast_from_json, Collection, CollectionError, CollectionUserError, RocksDBCollection,
+};
+use crate::record::{IndexValue, RecordError, RecordRoot, RecordValue};
+use crate::{db::Database, store};
+use crate::{index, json_to_record, keys, proto, record_to_json};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
-
-use indexer_db_adaptor::{
-    collection::{Collection, CollectionError, CollectionUserError},
-    db::Database,
-    record::{json_to_record, record_to_json, IndexValue, RecordError, RecordRoot, RecordValue},
-};
 
 const VERSION_SYSTEM_KEY: &str = "database_version";
 
