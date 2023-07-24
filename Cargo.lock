@@ -2318,6 +2318,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "indexer_db_adaptor"
+version = "0.6.5"
+dependencies = [
+ "async-recursion",
+ "async-trait",
+ "base64 0.21.0",
+ "bincode",
+ "cid",
+ "futures",
+ "hex",
+ "once_cell",
+ "parking_lot",
+ "polylang 0.1.0 (git+https://github.com/polybase/polylang?branch=main)",
+ "prost",
+ "prost-build",
+ "prost-types",
+ "rand 0.8.5",
+ "secp256k1",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "indexer_rocksdb"
 version = "0.6.5"
 dependencies = [
@@ -2328,6 +2355,7 @@ dependencies = [
  "cid",
  "futures",
  "hex",
+ "indexer_db_adaptor",
  "once_cell",
  "parking_lot",
  "polylang 0.1.0 (git+https://github.com/polybase/polylang?branch=main)",

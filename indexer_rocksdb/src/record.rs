@@ -10,6 +10,7 @@ pub type Result<T> = std::result::Result<T, RecordError>;
 
 pub trait RocksDBIndexValue {
     fn byte_prefix(&self) -> u8;
+    fn serialize(&self, w: impl std::io::Write) -> Result<()>;
     fn deserialize(bytes: &[u8]) -> Result<Self>
     where
         Self: Sized;
@@ -25,6 +26,31 @@ impl RocksDBIndexValue for IndexValue<'_> {
             IndexValue::PublicKey(_) => keys::BYTE_PUBLIC_KEY,
             IndexValue::ForeignRecordReference(_) => keys::BYTE_FOREIGN_RECORD_REFERENCE,
         }
+    }
+
+    fn serialize(&self, mut w: impl std::io::Write) -> Result<()> {
+        let number_bytes;
+        let value: Cow<[u8]> = match self {
+            IndexValue::String(s) => Cow::Borrowed(s.as_bytes()),
+            IndexValue::Number(n) => {
+                number_bytes = n.to_be_bytes();
+                Cow::Borrowed(&number_bytes[..])
+            }
+            IndexValue::Boolean(b) => match b {
+                false => Cow::Borrowed(&[0x00]),
+                true => Cow::Borrowed(&[0x01]),
+            },
+            IndexValue::Null => Cow::Borrowed(&[0x00]),
+            IndexValue::PublicKey(jwk) => Cow::Owned(jwk.to_indexable()),
+            IndexValue::ForeignRecordReference(frr) => Cow::Owned(frr.to_indexable()),
+        };
+
+        let len = 1 + u16::try_from(value.len())?;
+        w.write_all(&len.to_le_bytes())?;
+        w.write_all(&[self.byte_prefix()])?;
+        w.write_all(&value[..])?;
+
+        Ok(())
     }
 
     fn deserialize(bytes: &[u8]) -> Result<Self>

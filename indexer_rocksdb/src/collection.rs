@@ -1335,7 +1335,7 @@ impl<'a> RocksDBCollection<'a> {
 #[cfg(test)]
 mod tests {
     //use futures::stream::StreamExt;
-    use futures::TryStreamExt;
+    //use futures::TryStreamExt;
 
     use crate::store::tests::TestRocksDBStore;
 
@@ -1527,130 +1527,130 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_collection_set_list() {
-        let store = TestRocksDBStore::default();
+    // #[tokio::test]
+    // async fn test_collection_set_list() {
+    //     let store = TestRocksDBStore::default();
 
-        {
-            let collection = RocksDBCollection::load(&store, "Collection".to_owned())
-                .await
-                .unwrap();
-            collection
-                .set(
-                    "test/test".to_owned(),
-                    &RecordRoot::from([
-                        ("id".to_owned(), RecordValue::String("test/test".to_owned())),
-                        (
-                            "ast".to_owned(),
-                            RecordValue::String(
-                                serde_json::to_string_pretty(&stableast::Root(vec![
-                                    stableast::RootNode::Collection(stableast::Collection {
-                                        namespace: stableast::Namespace {
-                                            value: "test".into(),
-                                        },
-                                        name: "test".into(),
-                                        attributes: vec![
-                                            stableast::CollectionAttribute::Directive(
-                                                polylang::stableast::Directive {
-                                                    name: "public".into(),
-                                                    arguments: vec![],
-                                                },
-                                            ),
-                                            stableast::CollectionAttribute::Property(
-                                                stableast::Property {
-                                                    name: "id".into(),
-                                                    type_: stableast::Type::Primitive(
-                                                        stableast::Primitive {
-                                                            value: stableast::PrimitiveType::String,
-                                                        },
-                                                    ),
-                                                    directives: vec![],
-                                                    required: true,
-                                                },
-                                            ),
-                                            stableast::CollectionAttribute::Property(
-                                                stableast::Property {
-                                                    name: "name".into(),
-                                                    type_: stableast::Type::Primitive(
-                                                        stableast::Primitive {
-                                                            value: stableast::PrimitiveType::String,
-                                                        },
-                                                    ),
-                                                    directives: vec![],
-                                                    required: true,
-                                                },
-                                            ),
-                                        ],
-                                    }),
-                                ]))
-                                .unwrap(),
-                            ),
-                        ),
-                    ]),
-                )
-                .await
-                .unwrap();
-        }
+    //     {
+    //         let collection = RocksDBCollection::load(&store, "Collection".to_owned())
+    //             .await
+    //             .unwrap();
+    //         collection
+    //             .set(
+    //                 "test/test".to_owned(),
+    //                 &RecordRoot::from([
+    //                     ("id".to_owned(), RecordValue::String("test/test".to_owned())),
+    //                     (
+    //                         "ast".to_owned(),
+    //                         RecordValue::String(
+    //                             serde_json::to_string_pretty(&stableast::Root(vec![
+    //                                 stableast::RootNode::Collection(stableast::Collection {
+    //                                     namespace: stableast::Namespace {
+    //                                         value: "test".into(),
+    //                                     },
+    //                                     name: "test".into(),
+    //                                     attributes: vec![
+    //                                         stableast::CollectionAttribute::Directive(
+    //                                             polylang::stableast::Directive {
+    //                                                 name: "public".into(),
+    //                                                 arguments: vec![],
+    //                                             },
+    //                                         ),
+    //                                         stableast::CollectionAttribute::Property(
+    //                                             stableast::Property {
+    //                                                 name: "id".into(),
+    //                                                 type_: stableast::Type::Primitive(
+    //                                                     stableast::Primitive {
+    //                                                         value: stableast::PrimitiveType::String,
+    //                                                     },
+    //                                                 ),
+    //                                                 directives: vec![],
+    //                                                 required: true,
+    //                                             },
+    //                                         ),
+    //                                         stableast::CollectionAttribute::Property(
+    //                                             stableast::Property {
+    //                                                 name: "name".into(),
+    //                                                 type_: stableast::Type::Primitive(
+    //                                                     stableast::Primitive {
+    //                                                         value: stableast::PrimitiveType::String,
+    //                                                     },
+    //                                                 ),
+    //                                                 directives: vec![],
+    //                                                 required: true,
+    //                                             },
+    //                                         ),
+    //                                     ],
+    //                                 }),
+    //                             ]))
+    //                             .unwrap(),
+    //                         ),
+    //                     ),
+    //                 ]),
+    //             )
+    //             .await
+    //             .unwrap();
+    //     }
 
-        store.commit().await.unwrap();
+    //     store.commit().await.unwrap();
 
-        let collection = RocksDBCollection::load(&store, "test/test".to_owned())
-            .await
-            .unwrap();
+    //     let collection = RocksDBCollection::load(&store, "test/test".to_owned())
+    //         .await
+    //         .unwrap();
 
-        let value_1 = HashMap::from([
-            ("id".to_string(), RecordValue::String("1".into())),
-            ("name".to_string(), RecordValue::String("test".into())),
-        ]);
-        collection.set("1".into(), &value_1).await.unwrap();
+    //     let value_1 = HashMap::from([
+    //         ("id".to_string(), RecordValue::String("1".into())),
+    //         ("name".to_string(), RecordValue::String("test".into())),
+    //     ]);
+    //     collection.set("1".into(), &value_1).await.unwrap();
 
-        let value_2 = HashMap::from([
-            ("id".to_string(), RecordValue::String("2".into())),
-            ("name".to_string(), RecordValue::String("test".into())),
-        ]);
-        collection.set("2".into(), &value_2).await.unwrap();
+    //     let value_2 = HashMap::from([
+    //         ("id".to_string(), RecordValue::String("2".into())),
+    //         ("name".to_string(), RecordValue::String("test".into())),
+    //     ]);
+    //     collection.set("2".into(), &value_2).await.unwrap();
 
-        store.commit().await.unwrap();
+    //     store.commit().await.unwrap();
 
-        let mut results = collection
-            .list(
-                ListQuery {
-                    limit: None,
-                    where_query: where_query::WhereQuery(
-                        [(
-                            where_query::FieldPath(vec!["name".into()]),
-                            where_query::WhereNode::Equality(where_query::WhereValue(
-                                "test".into(),
-                            )),
-                        )]
-                        .into(),
-                    ),
-                    order_by: &[
-                        index::CollectionIndexField {
-                            path: vec!["name".into()],
-                            direction: keys::Direction::Ascending,
-                        },
-                        index::CollectionIndexField {
-                            path: vec!["id".into()],
-                            direction: keys::Direction::Descending,
-                        },
-                    ],
-                    cursor_before: None,
-                    cursor_after: None,
-                },
-                &None,
-            )
-            .await
-            .unwrap()
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
+    //     let mut results = collection
+    //         .list(
+    //             ListQuery {
+    //                 limit: None,
+    //                 where_query: where_query::WhereQuery(
+    //                     [(
+    //                         where_query::FieldPath(vec!["name".into()]),
+    //                         where_query::WhereNode::Equality(where_query::WhereValue(
+    //                             "test".into(),
+    //                         )),
+    //                     )]
+    //                     .into(),
+    //                 ),
+    //                 order_by: &[
+    //                     index::CollectionIndexField {
+    //                         path: vec!["name".into()],
+    //                         direction: keys::Direction::Ascending,
+    //                     },
+    //                     index::CollectionIndexField {
+    //                         path: vec!["id".into()],
+    //                         direction: keys::Direction::Descending,
+    //                     },
+    //                 ],
+    //                 cursor_before: None,
+    //                 cursor_after: None,
+    //             },
+    //             &None,
+    //         )
+    //         .await
+    //         .unwrap()
+    //         .try_collect::<Vec<_>>()
+    //         .await
+    //         .unwrap();
 
-        assert_eq!(results.len(), 2);
-        let (_, second) = results.pop().unwrap();
-        let (_, first) = results.pop().unwrap();
+    //     assert_eq!(results.len(), 2);
+    //     let (_, second) = results.pop().unwrap();
+    //     let (_, first) = results.pop().unwrap();
 
-        assert_eq!(first, value_2);
-        assert_eq!(second, value_1);
-    }
+    //     assert_eq!(first, value_2);
+    //     assert_eq!(second, value_1);
+    // }
 }

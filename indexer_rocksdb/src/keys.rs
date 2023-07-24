@@ -3,8 +3,9 @@ use std::{borrow::Cow, cmp::Ordering, fmt};
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
 
-use crate::{proto, record::RocksDBIndexValue};
+use crate::proto;
 
+use crate::record::RocksDBIndexValue;
 use indexer_db_adaptor::record::{IndexValue, RecordError, RecordRoot};
 
 pub type Result<T> = std::result::Result<T, KeysError>;
@@ -442,6 +443,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::record::RocksDBIndexValue;
 
     impl Key<'_> {
         pub(crate) fn immediate_successor_value(mut self) -> Result<Self> {

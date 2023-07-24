@@ -819,7 +819,7 @@ pub struct ForeignRecordReference {
 }
 
 impl ForeignRecordReference {
-    fn to_indexable(&self) -> Vec<u8> {
+    pub fn to_indexable(&self) -> Vec<u8> {
         let mut v = Vec::new();
         v.extend_from_slice(&u32::to_be_bytes(self.collection_id.as_bytes().len() as u32));
         v.extend_from_slice(self.collection_id.as_bytes());
@@ -985,31 +985,6 @@ pub enum IndexValue<'a> {
 }
 
 impl IndexValue<'_> {
-    pub fn serialize(&self, mut w: impl std::io::Write) -> Result<()> {
-        let number_bytes;
-        let value: Cow<[u8]> = match self {
-            IndexValue::String(s) => Cow::Borrowed(s.as_bytes()),
-            IndexValue::Number(n) => {
-                number_bytes = n.to_be_bytes();
-                Cow::Borrowed(&number_bytes[..])
-            }
-            IndexValue::Boolean(b) => match b {
-                false => Cow::Borrowed(&[0x00]),
-                true => Cow::Borrowed(&[0x01]),
-            },
-            IndexValue::Null => Cow::Borrowed(&[0x00]),
-            IndexValue::PublicKey(jwk) => Cow::Owned(jwk.to_indexable()),
-            IndexValue::ForeignRecordReference(frr) => Cow::Owned(frr.to_indexable()),
-        };
-
-        let len = 1 + u16::try_from(value.len())?;
-        w.write_all(&len.to_le_bytes())?;
-        //w.write_all(&[self.byte_prefix()])?;
-        w.write_all(&value[..])?;
-
-        Ok(())
-    }
-
     pub fn with_static(self) -> IndexValue<'static> {
         match self {
             IndexValue::String(s) => IndexValue::String(Cow::Owned(s.into_owned())),

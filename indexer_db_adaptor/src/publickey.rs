@@ -124,7 +124,7 @@ impl PublicKey {
         secp256k1::PublicKey::from_slice(&pk)
     }
 
-    pub(crate) fn to_indexable(&self) -> Vec<u8> {
+    pub fn to_indexable(&self) -> Vec<u8> {
         let mut v = Vec::new();
 
         v.extend_from_slice(self.kty.as_bytes());
