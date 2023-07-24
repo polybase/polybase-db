@@ -20,7 +20,7 @@ use once_cell::sync::Lazy;
 use polylang::stableast;
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use tracing::{error, warn};
+use tracing::{error, info, warn};
 
 pub type Result<T> = std::result::Result<T, CollectionError>;
 
@@ -1281,6 +1281,8 @@ impl<'a> Collection<'a> {
         old_collection: Collection<'async_recursion>,
         old_collection_record: &RecordRoot,
     ) -> Result<()> {
+        info!(id = self.id(), "Rebuilding index");
+
         let collection_collection = Collection::load(self.store, "Collection".to_string()).await?;
         let meta = collection_collection
             .get(self.id().to_string(), None)
