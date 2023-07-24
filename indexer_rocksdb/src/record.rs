@@ -1,12 +1,10 @@
-use std::{borrow::Cow, collections::HashMap, error::Error};
+use std::borrow::Cow;
 
 use crate::keys;
-use base64::Engine;
 use indexer_db_adaptor::{
     publickey,
     record::{ForeignRecordReference, IndexValue, RecordError},
 };
-use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, RecordError>;
 

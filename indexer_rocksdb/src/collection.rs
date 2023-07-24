@@ -7,14 +7,11 @@ use std::{
 use indexer_db_adaptor::{
     collection::{AuthUser, Collection, CollectionMetadata, RecordMetadata},
     db::Database,
-    record::{
-        self, json_to_record, record_to_json, PathFinder, RecordError, RecordRoot, RecordValue,
-    },
+    record::{json_to_record, record_to_json, PathFinder, RecordError, RecordRoot, RecordValue},
 };
 
 use crate::{
     index, keys, proto,
-    publickey::PublicKey,
     stableast_ext::FieldWalker,
     store::{self},
     where_query,
@@ -874,7 +871,7 @@ impl<'a> RocksDBCollection<'a> {
         last_part.replace('-', "_")
     }
 
-    fn namespace(&self) -> &str {
+    pub fn namespace(&self) -> &str {
         let Some(slash_index) = self.collection_id.rfind('/') else {
             return "";
         };

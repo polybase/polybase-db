@@ -7,7 +7,6 @@ mod index;
 pub mod keys;
 mod migrate;
 mod proto;
-pub mod publickey;
 mod record;
 pub mod snapshot;
 mod stableast_ext;
@@ -16,7 +15,6 @@ pub mod where_query;
 
 pub use index::CollectionIndexField;
 pub use keys::Direction;
-pub use publickey::PublicKey;
 
 use snapshot::SnapshotChunk;
 pub use stableast_ext::FieldWalker;
@@ -24,10 +22,7 @@ pub use where_query::WhereQuery;
 
 use collection::{RocksDBCollection, RocksDBCollectionError};
 use indexer_db_adaptor::{
-    collection::Collection,
-    db::Database,
-    indexer::Indexer,
-    record::{RecordRoot, RecordValue},
+    collection::Collection, db::Database, indexer::Indexer, record::RecordRoot,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -45,7 +40,7 @@ pub enum RocksDBIndexerError {
     Keys(#[from] keys::KeysError),
 
     #[error(transparent)]
-    PublicKey(#[from] publickey::PublicKeyError),
+    PublicKey(#[from] indexer_db_adaptor::publickey::PublicKeyError),
 
     #[error("record error")]
     Record(#[from] indexer_db_adaptor::record::RecordError),
