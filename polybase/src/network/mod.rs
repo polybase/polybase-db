@@ -54,7 +54,7 @@ impl Network {
         let mut swarm = {
             let behaviour = Behaviour {
                 rr: request_response::Behaviour::new(PolyProtocol(), protocols, config),
-                keep_alive: keep_alive::Behaviour::default(),
+                keep_alive: keep_alive::Behaviour,
             };
             SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id).build()
         };
