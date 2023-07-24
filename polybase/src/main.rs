@@ -447,11 +447,19 @@ async fn main() -> Result<()> {
                         }
 
                         NetworkEvent::Accept { accept } => {
+                            if snapshot_from.is_some() {
+                                continue;
+                            }
+
                             info!(height = &accept.height, skips = &accept.skips, from = &from_peer_id.prefix(), leader = &accept.leader_id.prefix(), hash = accept.proposal_hash.to_string(), local_height = solid.height(), "Received accept");
                             solid.receive_accept(&accept, &from_peer_id);
                         }
 
                         NetworkEvent::Proposal { manifest } => {
+                            if snapshot_from.is_some() {
+                                continue;
+                            }
+
                             info!(height = &manifest.height, skips = &manifest.skips, from = &from_peer_id.prefix(), leader = &manifest.leader_id.prefix(), hash = &manifest.hash().to_string(), "Received proposal");
 
                             // Lease the proposal changes
@@ -463,6 +471,10 @@ async fn main() -> Result<()> {
                         }
 
                         NetworkEvent::Txn { txn } => {
+                            if snapshot_from.is_some() {
+                                continue;
+                            }
+
                             info!(collection = &txn.collection_id, "Received txn");
                             match db.add_txn(txn).await {
                                 Ok(_) => (),
