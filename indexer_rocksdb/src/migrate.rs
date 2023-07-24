@@ -1,13 +1,15 @@
 use tracing::info;
 
-use crate::collection::{collection_ast_from_json, RocksDBCollection};
+use crate::collection::{
+    collection_ast_from_json, RocksDBCollection, RocksDBCollectionError, RocksDBCollectionUserError,
+};
 use crate::store;
 use crate::{index, keys, proto};
 use prost::Message;
 use std::collections::{HashMap, HashSet};
 
 use indexer_db_adaptor::{
-    collection::{Collection, CollectionError, CollectionUserError},
+    collection::Collection,
     db::Database,
     record::{json_to_record, record_to_json, IndexValue, RecordError, RecordRoot, RecordValue},
 };
@@ -19,10 +21,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("collection error")]
-    Collection(#[from] CollectionError),
+    Collection(#[from] RocksDBCollectionError),
 
     #[error("collection error")]
-    CollectionUser(#[from] CollectionUserError),
+    CollectionUser(#[from] RocksDBCollectionUserError),
 
     #[error("store error")]
     RocksDBStore(#[from] store::RocksDBStoreError),
@@ -253,14 +255,14 @@ async fn build_collection_indexes(
         .get(collection.id().to_string(), None)
         .await?;
     let Some(meta) = meta else {
-            return Err(CollectionUserError::CollectionNotFound { name: collection.id().to_string() })?;
+            return Err(RocksDBCollectionUserError::CollectionNotFound { name: collection.id().to_string() })?;
         };
 
     let collection_ast = match meta.get("ast") {
         Some(RecordValue::String(ast)) => {
             collection_ast_from_json(ast, collection.name().as_str())?
         }
-        _ => return Err(CollectionError::CollectionRecordMissingAST)?,
+        _ => return Err(RocksDBCollectionError::CollectionRecordMissingAST)?,
     };
 
     let mut i = 0;
@@ -274,7 +276,7 @@ async fn build_collection_indexes(
             continue;
         };
         let Some(RecordValue::String(id)) = data.get("id") else {
-            return Err(CollectionError::RecordMissingID)?;
+            return Err(RocksDBCollectionError::RecordMissingID)?;
         };
         let id = id.clone();
 

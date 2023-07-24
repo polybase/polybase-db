@@ -4,6 +4,7 @@ use crate::{collection::Collection, record::RecordRoot};
 #[async_trait::async_trait]
 pub trait Indexer {
     type Error;
+    type CollError;
     type Key<'k>
     where
         Self: 'k;
@@ -27,6 +28,7 @@ pub trait Indexer {
     ) -> Result<
         Box<
             dyn Collection<
+                    Error = Self::CollError,
                     Key = Self::Key<'_>,
                     Value = Self::Value<'_>,
                     ListQuery = Self::ListQuery<'_>,

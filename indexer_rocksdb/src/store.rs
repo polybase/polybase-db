@@ -9,10 +9,9 @@ use std::{convert::AsRef, path::Path, sync::Arc};
 use crate::{
     keys::{self, Key},
     proto,
-    record::RecordRoot,
 };
 
-use indexer_db_adaptor::db::Database;
+use indexer_db_adaptor::{db::Database, record::RecordRoot};
 
 pub type Result<T> = std::result::Result<T, RocksDBStoreError>;
 

@@ -22,18 +22,18 @@ use snapshot::SnapshotChunk;
 pub use stableast_ext::FieldWalker;
 pub use where_query::WhereQuery;
 
-use collection::RocksDBCollection;
+use collection::{RocksDBCollection, RocksDBCollectionError};
 use indexer_db_adaptor::{
-    collection::{Collection, CollectionError},
+    collection::Collection,
     db::Database,
     indexer::Indexer,
-    record::RecordRoot,
+    record::{RecordRoot, RecordValue},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum RocksDBIndexerError {
     #[error("collection error")]
-    Collection(#[from] CollectionError),
+    Collection(#[from] RocksDBCollectionError),
 
     #[error("rocksdb store error")]
     RocksDBStore(#[from] store::RocksDBStoreError),
@@ -88,6 +88,7 @@ impl Indexer for RocksDBIndexer {
     type Value<'v> = store::Value<'v>;
     type ListQuery<'l> = collection::ListQuery<'l>;
     type Cursor = collection::Cursor;
+    type CollError = RocksDBCollectionError;
 
     #[tracing::instrument(skip(self))]
     async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
@@ -112,6 +113,7 @@ impl Indexer for RocksDBIndexer {
     ) -> Result<
         Box<
             dyn Collection<
+                    Error = Self::CollError,
                     Key = crate::keys::Key,
                     Value = store::Value,
                     ListQuery = Self::ListQuery<'_>,
