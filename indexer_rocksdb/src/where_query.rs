@@ -3,8 +3,9 @@ use std::{borrow::Cow, collections::HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::{self, Direction};
-use crate::record::IndexValue;
-use crate::{record, FieldWalker};
+use crate::FieldWalker;
+
+use indexer_db_adaptor::record::{self, IndexValue};
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 

@@ -142,7 +142,7 @@ impl PublicKey {
         v
     }
 
-    pub(crate) fn from_indexable(v: &[u8]) -> Result<Self> {
+    pub fn from_indexable(v: &[u8]) -> Result<Self> {
         let mut parts = v.split(|b| *b == b'|');
 
         let kty = parts

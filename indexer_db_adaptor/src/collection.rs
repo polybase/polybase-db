@@ -118,7 +118,7 @@ pub struct RecordMetadata {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthUser {
-    public_key: PublicKey,
+    pub public_key: PublicKey,
 }
 
 impl AuthUser {

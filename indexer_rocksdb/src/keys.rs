@@ -3,10 +3,9 @@ use std::{borrow::Cow, cmp::Ordering, fmt};
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
 
-use crate::{
-    proto,
-    record::{IndexValue, RecordRoot},
-};
+use crate::proto;
+
+use indexer_db_adaptor::record::{IndexValue, RecordError, RecordRoot};
 
 pub type Result<T> = std::result::Result<T, KeysError>;
 
@@ -25,7 +24,7 @@ pub enum KeysError {
     KeyDoesNotHaveImmediateSuccessor,
 
     #[error("record error")]
-    RecordError(#[from] crate::record::RecordError),
+    RecordError(#[from] RecordError),
 
     #[error("try from int error")]
     TryFromIntError(#[from] std::num::TryFromIntError),
@@ -303,7 +302,7 @@ impl<'a> Key<'a> {
                         let mut i = 39 + directions_len;
                         while i < key.len() {
                             let (field, _) = eat_field(&key[i..]);
-                            let value = IndexValue::deserialize(field)?;
+                            let value = crate::record::RocksDBIndexValue::deserialize(field)?;
                             values.push(Cow::Owned(value));
                             i += 2 + field.len();
                         }

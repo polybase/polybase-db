@@ -48,7 +48,7 @@ pub enum RocksDBIndexerError {
     PublicKey(#[from] publickey::PublicKeyError),
 
     #[error("record error")]
-    Record(#[from] record::RecordError),
+    Record(#[from] indexer_db_adaptor::record::RecordError),
 
     #[error("where query error")]
     WhereQuery(#[from] where_query::WhereQueryError),

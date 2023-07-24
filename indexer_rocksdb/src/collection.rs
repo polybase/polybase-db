@@ -7,13 +7,14 @@ use std::{
 use indexer_db_adaptor::{
     collection::{AuthUser, Collection, CollectionMetadata, RecordMetadata},
     db::Database,
-    record::{json_to_record, record_to_json, RecordError, RecordRoot, RecordValue},
+    record::{
+        self, json_to_record, record_to_json, PathFinder, RecordError, RecordRoot, RecordValue,
+    },
 };
 
 use crate::{
     index, keys, proto,
     publickey::PublicKey,
-    record::{self, PathFinder},
     stableast_ext::FieldWalker,
     store::{self},
     where_query,
@@ -74,6 +75,9 @@ pub enum RocksDBCollectionError {
 
     #[error("store error")]
     RocksDBStoreError(#[from] store::RocksDBStoreError),
+
+    #[error("where query error")]
+    WhereQueryError(#[from] where_query::WhereQueryError),
 
     #[error("record error")]
     RecordError(#[from] RecordError),
@@ -293,7 +297,7 @@ impl<'a> Collection<'a> for RocksDBCollection<'a> {
             order_by,
             cursor_before,
             cursor_after,
-        }: ListQuery<'_>,
+        }: ListQuery<'a>,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<Box<dyn futures::Stream<Item = Result<(Cursor, RecordRoot)>> + 'a>> {
         let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {

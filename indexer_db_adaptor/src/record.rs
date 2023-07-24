@@ -828,7 +828,7 @@ impl ForeignRecordReference {
         v
     }
 
-    fn from_indexable(v: &[u8]) -> Result<Self> {
+    pub fn from_indexable(v: &[u8]) -> Result<Self> {
         let mut v = v;
         let collection_id_len = u32::from_be_bytes(v[..4].try_into()?) as usize;
         v = &v[4..];
@@ -985,7 +985,7 @@ pub enum IndexValue<'a> {
 }
 
 impl IndexValue<'_> {
-    pub(crate) fn serialize(&self, mut w: impl std::io::Write) -> Result<()> {
+    pub fn serialize(&self, mut w: impl std::io::Write) -> Result<()> {
         let number_bytes;
         let value: Cow<[u8]> = match self {
             IndexValue::String(s) => Cow::Borrowed(s.as_bytes()),
@@ -1010,7 +1010,7 @@ impl IndexValue<'_> {
         Ok(())
     }
 
-    pub(crate) fn with_static(self) -> IndexValue<'static> {
+    pub fn with_static(self) -> IndexValue<'static> {
         match self {
             IndexValue::String(s) => IndexValue::String(Cow::Owned(s.into_owned())),
             IndexValue::PublicKey(p) => IndexValue::PublicKey(Cow::Owned(p.into_owned())),
