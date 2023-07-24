@@ -21,7 +21,6 @@ pub trait Hashable {
     fn hash(&self) -> Digest;
 }
 
-
 impl<T: ?Sized> Hashable for &T
 where
     T: Hashable,

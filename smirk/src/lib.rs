@@ -21,4 +21,3 @@ pub use tree::{batch, key_value_hash, visitor::Visitor, MerkleTree, TreeNode};
 
 #[cfg(test)]
 mod testing;
-

@@ -154,7 +154,9 @@ impl<K, V> MerkleTree<K, V> {
         let Some(mut node) = node else { return Box::new(TreeNode::new(key, value, None, None)) };
 
         match key.cmp(&node.key) {
-            Ordering::Equal => return node,
+            Ordering::Equal => {
+                node.value = value;
+            }
             Ordering::Less => {
                 node.left = Some(Self::insert_node(node.left.take(), key, value));
             }

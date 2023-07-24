@@ -305,10 +305,10 @@ fn reference_records(
                                 .ok_or(GatewayUserError::CollectionRecordIdNotFound)?
                                 .as_str()
                                 .ok_or(GatewayUserError::RecordIdNotString)?;
-    
+
                             let foreign_collection_id =
                                 collection_namespace.to_string() + "/" + &fr.collection;
-    
+
                             Ok(
                                 serde_json::json!({ "id": id, "collectionId": foreign_collection_id }),
                             )
@@ -695,7 +695,8 @@ impl Gateway {
                 instance = serde_json::to_string(&instance_json).unwrap_or_default(),
                 args = serde_json::to_string(&args).unwrap_or_default(),
                 auth = serde_json::to_string(&auth).unwrap_or_default(),
-                output = serde_json::to_string(&output.as_ref().map_err(|e| e.to_string())).unwrap_or_default(),
+                output = serde_json::to_string(&output.as_ref().map_err(|e| e.to_string()))
+                    .unwrap_or_default(),
                 "function output"
             );
 

@@ -1,6 +1,9 @@
 use test_strategy::proptest;
 
-use crate::{hash::{Hashable, Digest}, smirk, MerkleTree};
+use crate::{
+    hash::{Digest, Hashable},
+    smirk, MerkleTree,
+};
 
 #[test]
 fn simple_example() {
@@ -26,7 +29,7 @@ fn insert_already_exists() {
 
     tree.insert(1, "world");
 
-    assert_eq!(*tree.get(&1).unwrap(), "hello");
+    assert_eq!(*tree.get(&1).unwrap(), "world");
 }
 
 #[test]
@@ -63,4 +66,26 @@ fn hash_of_leaf_is_correct() {
     let expected: Digest = [1.hash(), "hello".hash()].iter().collect();
 
     assert_eq!(hash, expected);
+}
+
+#[test]
+fn stays_balanced_in_order_inserts() {
+    let values = (0..1000).map(|i| (i, i)).collect();
+    stays_balanced(values);
+}
+
+#[proptest]
+fn tree_stays_balanced(values: Vec<(i32, i32)>) {
+    stays_balanced(values);
+}
+
+fn stays_balanced(values: Vec<(i32, i32)>) {
+    let mut tree = smirk! {};
+
+    for (key, value) in values {
+        tree.insert(key, value);
+        let balance = tree.inner.as_ref().unwrap().balance_factor();
+        assert!(balance <= 1);
+        assert!(balance >= -1);
+    }
 }
