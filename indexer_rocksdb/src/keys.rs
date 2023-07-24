@@ -3,7 +3,7 @@ use std::{borrow::Cow, cmp::Ordering, fmt};
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
 
-use crate::proto;
+use crate::{proto, record::RocksDBIndexValue};
 
 use indexer_db_adaptor::record::{IndexValue, RecordError, RecordRoot};
 

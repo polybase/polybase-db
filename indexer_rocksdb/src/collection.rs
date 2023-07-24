@@ -1334,6 +1334,7 @@ impl<'a> RocksDBCollection<'a> {
 
 #[cfg(test)]
 mod tests {
+    //use futures::stream::StreamExt;
     use futures::TryStreamExt;
 
     use crate::store::tests::TestRocksDBStore;

@@ -248,8 +248,8 @@ pub(crate) mod tests {
         ops::{Deref, DerefMut},
     };
 
-    use crate::db::Database;
-    use crate::IndexValue;
+    use indexer_db_adaptor::db::Database;
+    use indexer_db_adaptor::record::IndexValue;
 
     use super::*;
 
