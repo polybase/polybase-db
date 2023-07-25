@@ -94,6 +94,16 @@ impl<K: Hashable, V: Hashable> PartialEq for MerkleTree<K, V> {
     }
 }
 
+impl<K, V> Hashable for MerkleTree<K, V>
+where
+    K: Hashable,
+    V: Hashable,
+{
+    fn hash(&self) -> Digest {
+        self.root_hash()
+    }
+}
+
 impl<K, V> Default for MerkleTree<K, V> {
     fn default() -> Self {
         Self::new()
@@ -146,6 +156,7 @@ impl<K, V> MerkleTree<K, V> {
         self.inner = Some(Self::insert_node(self.inner.take(), key, value));
     }
 
+    #[allow(clippy::unnecesary_box_returns)]
     fn insert_node(node: Option<Box<TreeNode<K, V>>>, key: K, value: V) -> Box<TreeNode<K, V>>
     where
         K: Hashable + Ord,

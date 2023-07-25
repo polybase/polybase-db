@@ -2,7 +2,7 @@
 #![warn(clippy::pedantic)]
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
-#![deny(clippy::integer_arithmetic)] // explicitly choose wrapping/saturating/checked
+#![deny(clippy::arithmetic_side_effects)] // explicitly choose wrapping/saturating/checked
 #![allow(
     clippy::module_name_repetitions,
     clippy::match_bool,  // overly restrictive style lint
