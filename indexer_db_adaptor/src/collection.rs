@@ -1,3 +1,4 @@
+use std::pin::Pin;
 use std::time::SystemTime;
 
 use crate::{publickey::PublicKey, record::RecordRoot};
@@ -30,7 +31,7 @@ pub trait Collection<'a> {
         list_query: Self::ListQuery,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<
-        Box<dyn futures::Stream<Item = Result<(Self::Cursor, RecordRoot), Self::Error>> + 'a>,
+        Pin<Box<dyn futures::Stream<Item = Result<(Self::Cursor, RecordRoot), Self::Error>> + 'a>>,
         Self::Error,
     >;
 
