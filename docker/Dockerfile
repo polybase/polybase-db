@@ -26,6 +26,7 @@ COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY solid ./solid/
+COPY smirk ./smirk/
 RUN cargo chef prepare --recipe-path /recipe.json
 
 
