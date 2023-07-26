@@ -69,7 +69,7 @@ impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let mut options = rocksdb::Options::default();
         options.create_if_missing(true);
-        options.set_comparator("polybase", keys::comparator);
+        options.set_comparator("polybase", Box::new(keys::comparator));
 
         let db = rocksdb::DB::open(&options, path)?;
 

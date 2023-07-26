@@ -26,6 +26,7 @@ COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY solid ./solid/
+COPY smirk ./smirk/
 RUN cargo chef prepare --recipe-path /recipe.json
 
 
@@ -46,6 +47,7 @@ COPY polybase ./polybase/
 COPY indexer ./indexer/
 COPY gateway ./gateway/
 COPY solid ./solid/
+COPY smirk ./smirk/
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build $(if [ "$RELEASE" = "1" ]; then echo "--release"; fi)

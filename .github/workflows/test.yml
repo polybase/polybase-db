@@ -4,6 +4,7 @@ name: Test
 
 env:
   RUSTFLAGS: "-Dwarnings --cfg tracing_unstable"
+  RUSTDOCFLAGS: "-Dwarnings"
 
 jobs:
   cargo-build:
@@ -157,3 +158,19 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --all-targets --all-features
+
+  docs:
+    name: Build smirk docs
+    runs-on: ubuntu-latest-16-cores
+    needs: cargo-build
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install protoc
+        run: |
+          sudo apt-get install -y protobuf-compiler
+
+      - name: Run Clippy
+        run: cargo doc --all-features -psmirk

@@ -1,0 +1,5 @@
+---
+source: smirk/src/testing.rs
+expression: tree.root_hash().to_hex()
+---
+f68a4fd087e98ee6af95ced5378e794cf85a68f58f46f9d2ccfc83c9872d8876

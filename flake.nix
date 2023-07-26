@@ -4,10 +4,9 @@
     nixpkgs.url = "github:NixOS/nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
     rust-overlay.url = "github:oxalica/rust-overlay";
-    naersk.url = "github:nix-community/naersk";
   };
 
-  outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }@inputs:
+  outputs = { nixpkgs, flake-utils, rust-overlay, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs {
@@ -15,7 +14,7 @@
           overlays = [ (import rust-overlay) ];
         };
 
-        rustToolchain = pkgs.rust-bin.stable.latest.default.override {
+        rustToolchain = pkgs.rust-bin.stable."1.68.0".default.override {
           extensions = [ "rust-src" ];
         };
 
@@ -29,6 +28,9 @@
             protobuf
 
             clang # required for rocksdb
+
+            cargo-insta # snapshot testing for smirk
+            gnuplot # criterion graphs
           ];
 
           LIBCLANG_PATH = "${pkgs.libclang.lib}/lib/";
