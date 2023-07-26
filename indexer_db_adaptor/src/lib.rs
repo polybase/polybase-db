@@ -2,6 +2,5 @@
 
 pub mod collection;
 pub mod db;
-pub mod indexer;
 pub mod publickey;
 pub mod record;

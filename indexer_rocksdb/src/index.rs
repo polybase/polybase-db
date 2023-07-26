@@ -26,12 +26,12 @@ impl<'a> CollectionIndexField<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct CollectionIndex<'a> {
+pub struct CollectionIndex<'a> {
     pub(crate) fields: Vec<CollectionIndexField<'a>>,
 }
 
 impl<'a> CollectionIndex<'a> {
-    pub(crate) fn new(mut fields: Vec<CollectionIndexField<'a>>) -> Self {
+    pub fn new(mut fields: Vec<CollectionIndexField<'a>>) -> Self {
         let id_field = CollectionIndexField::new(vec!["id".into()], keys::Direction::Ascending);
 
         if let Some(true) = fields.last().map(|f| f == &id_field) {
@@ -42,7 +42,7 @@ impl<'a> CollectionIndex<'a> {
         Self { fields }
     }
 
-    pub(crate) fn should_list_in_reverse(&self, sort: &[CollectionIndexField<'a>]) -> bool {
+    pub fn should_list_in_reverse(&self, sort: &[CollectionIndexField<'a>]) -> bool {
         let Some(last_sort) = sort.last() else {
             return false;
         };
@@ -54,11 +54,7 @@ impl<'a> CollectionIndex<'a> {
             != Some(last_sort.direction)
     }
 
-    pub(crate) fn matches(
-        &self,
-        where_query: &WhereQuery,
-        sort: &[CollectionIndexField<'a>],
-    ) -> bool {
+    pub fn matches(&self, where_query: &WhereQuery, sort: &[CollectionIndexField<'a>]) -> bool {
         let Ok(mut requirements) = index_requirements(where_query, sort) else { return false; };
 
         if requirements.len() > self.fields.len() {

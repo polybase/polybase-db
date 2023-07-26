@@ -1,7 +1,8 @@
 use tracing::info;
 
 use crate::collection::{
-    collection_ast_from_json, RocksDBCollection, RocksDBCollectionError, RocksDBCollectionUserError,
+    collection_ast_from_json, CollectionError, CollectionUserError, RocksDBCollection,
+    RocksDBCollectionAdaptor,
 };
 use crate::store;
 use crate::{index, keys, proto};
@@ -9,7 +10,6 @@ use prost::Message;
 use std::collections::{HashMap, HashSet};
 
 use indexer_db_adaptor::{
-    collection::Collection,
     db::Database,
     record::{json_to_record, record_to_json, IndexValue, RecordError, RecordRoot, RecordValue},
 };
@@ -21,13 +21,13 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("collection error")]
-    Collection(#[from] RocksDBCollectionError),
+    Collection(#[from] CollectionError),
 
     #[error("collection error")]
-    CollectionUser(#[from] RocksDBCollectionUserError),
+    CollectionUser(#[from] CollectionUserError),
 
     #[error("store error")]
-    RocksDBStore(#[from] store::RocksDBStoreError),
+    Store(#[from] store::RocksDBStoreError),
 
     #[error("record error")]
     Record(#[from] RecordError),
@@ -115,7 +115,7 @@ async fn set_migration_version(store: &store::RocksDBStore, version: u64) -> Res
 }
 
 /// Get a Collection instance for given collection_id
-async fn get_collection(store: &store::RocksDBStore, id: String) -> Result<RocksDBCollection<'_>> {
+async fn get_collection(store: &store::RocksDBStore, id: String) -> Result<RocksDBCollection> {
     Ok(RocksDBCollection::load(store, id).await?)
 }
 
@@ -252,17 +252,17 @@ async fn build_collection_indexes(
     let collection = get_collection(store, collection_id).await?;
 
     let meta = collection_collection
-        .get(collection.id().to_string(), None)
+        .get(collection.collection.id().to_string(), None)
         .await?;
     let Some(meta) = meta else {
-            return Err(RocksDBCollectionUserError::CollectionNotFound { name: collection.id().to_string() })?;
+            return Err(CollectionUserError::CollectionNotFound { name: collection.collection.id().to_string() })?;
         };
 
     let collection_ast = match meta.get("ast") {
         Some(RecordValue::String(ast)) => {
-            collection_ast_from_json(ast, collection.name().as_str())?
+            collection_ast_from_json(ast, collection.collection.name().as_str())?
         }
-        _ => return Err(RocksDBCollectionError::CollectionRecordMissingAST)?,
+        _ => return Err(CollectionError::CollectionRecordMissingAST)?,
     };
 
     let mut i = 0;
@@ -276,7 +276,7 @@ async fn build_collection_indexes(
             continue;
         };
         let Some(RecordValue::String(id)) = data.get("id") else {
-            return Err(RocksDBCollectionError::RecordMissingID)?;
+            return Err(CollectionError::RecordMissingID)?;
         };
         let id = id.clone();
 

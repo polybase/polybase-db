@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
 use crate::keys;
-use indexer_db_adaptor::{
+pub use indexer_db_adaptor::{
     publickey,
-    record::{ForeignRecordReference, IndexValue, RecordError},
+    record::{Converter, ForeignRecordReference, IndexValue, RecordError, RecordUserError},
 };
 
 pub type Result<T> = std::result::Result<T, RecordError>;

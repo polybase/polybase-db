@@ -1,14 +1,19 @@
 use std::{
     borrow::Cow,
     collections::HashMap,
-    pin::Pin,
     time::{Duration, SystemTime},
 };
 
-use indexer_db_adaptor::{
-    collection::{AuthUser, Collection, CollectionMetadata, RecordMetadata},
+pub use indexer_db_adaptor::{
+    collection::{
+        AuthUser, Collection, CollectionError, CollectionMetadata, CollectionUserError,
+        RecordMetadata,
+    },
     db::Database,
-    record::{json_to_record, record_to_json, PathFinder, RecordError, RecordRoot, RecordValue},
+    record::{
+        json_to_record, record_to_json, PathFinder, RecordError, RecordRoot, RecordUserError,
+        RecordValue,
+    },
 };
 
 use crate::{
@@ -26,126 +31,7 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 use tracing::{error, warn};
 
-pub type Result<T> = std::result::Result<T, RocksDBCollectionError>;
-
 // The RocksDB specific functionality
-
-#[derive(Debug, thiserror::Error)]
-pub enum RocksDBCollectionError {
-    #[error(transparent)]
-    UserError(#[from] RocksDBCollectionUserError),
-
-    #[error("collection {name} not found in AST")]
-    CollectionNotFoundInAST { name: String },
-
-    #[error("collection record ID is not a string")]
-    CollectionRecordIDIsNotAString,
-
-    #[error("collection record AST is not a string")]
-    CollectionRecordASTIsNotAString,
-
-    #[error("collection record missing ID")]
-    CollectionRecordMissingID,
-
-    #[error("collection record missing AST")]
-    CollectionRecordMissingAST,
-
-    #[error("metadata is missing lastRecordUpdatedAt")]
-    MetadataMissingLastRecordUpdatedAt,
-
-    #[error("metadata is missing updatedAt")]
-    MetadataMissingUpdatedAt,
-
-    #[error("record ID argument does not match record data ID value")]
-    RecordIDArgDoesNotMatchRecordDataID,
-
-    #[error("record ID must be a string")]
-    RecordIDMustBeAString,
-
-    #[error("record is missing ID field")]
-    RecordMissingID,
-
-    #[error("Collection collection record not found for collection {id:?}")]
-    CollectionCollectionRecordNotFound { id: String },
-
-    #[error("keys error")]
-    KeysError(#[from] keys::KeysError),
-
-    #[error("store error")]
-    RocksDBStoreError(#[from] store::RocksDBStoreError),
-
-    #[error("where query error")]
-    WhereQueryError(#[from] where_query::WhereQueryError),
-
-    #[error("record error")]
-    RecordError(#[from] RecordError),
-
-    #[error("parse int error")]
-    ParseIntError(#[from] std::num::ParseIntError),
-
-    #[error("system time error")]
-    SystemTimeError(#[from] std::time::SystemTimeError),
-
-    #[error("serde_json error")]
-    SerdeJSONError(#[from] serde_json::Error),
-
-    #[error("prost decode error")]
-    ProstDecodeError(#[from] prost::DecodeError),
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RocksDBCollectionUserError {
-    #[error("collection {name} not found")]
-    CollectionNotFound { name: String },
-
-    #[error("no index found matching the query")]
-    NoIndexFoundMatchingTheQuery,
-
-    #[error("unauthorized read")]
-    UnauthorizedRead,
-
-    #[error("invalid index key")]
-    InvalidCursorKey,
-
-    #[error("collection id is missing namespace")]
-    CollectionIdMissingNamespace,
-
-    #[error("collection name cannot start with '$'")]
-    CollectionNameCannotStartWithDollarSign,
-
-    #[error("collection must have an 'id' field")]
-    CollectionMissingIdField,
-
-    #[error("collection 'id' field must be a string")]
-    CollectionIdFieldMustBeString,
-
-    #[error("collection 'id' field cannot be optional")]
-    CollectionIdFieldCannotBeOptional,
-
-    #[error("code is missing definition for collection {name}")]
-    MissingDefinitionForCollection { name: String },
-
-    #[error("index field {field:?} not found in schema")]
-    IndexFieldNotFoundInSchema { field: String },
-
-    #[error("cannot index field {field:?} of type array")]
-    IndexFieldCannotBeAnArray { field: String },
-
-    #[error("cannot index field {field:?} of type map")]
-    IndexFieldCannotBeAMap { field: String },
-
-    #[error("cannot index field {field:?} of type object")]
-    IndexFieldCannotBeAnObject { field: String },
-
-    #[error("cannot index field {field:?} of type bytes")]
-    IndexFieldCannotBeBytes { field: String },
-
-    #[error("collection directive {directive:?} cannot have arguments")]
-    CollectionDirectiveCannotHaveArguments { directive: &'static str },
-
-    #[error("unknown collection directives {directives:?}")]
-    UnknownCollectionDirectives { directives: Vec<String> },
-}
 
 static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
     let mut hm = HashMap::new();
@@ -204,7 +90,7 @@ collection Collection {
 });
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct Authorization {
+pub struct Authorization {
     /// Anyone can read the collection.
     pub(crate) read_all: bool,
     /// Anyone can call the collection functions.
@@ -217,470 +103,34 @@ pub(crate) struct Authorization {
     pub(crate) delegate_fields: Vec<where_query::FieldPath>,
 }
 
-/// The RocksDB concrete implementation
-#[derive(Clone)]
-pub struct RocksDBCollection<'a> {
-    store: &'a store::RocksDBStore,
-    collection_id: String,
-    indexes: Vec<index::CollectionIndex<'a>>,
+pub type Result<T> = std::result::Result<T, CollectionError>;
+
+/// The concrete RocksDB Collection type that embeds the generic `Collection` struct.
+pub struct RocksDBCollection<'r> {
+    pub collection: Collection<'r, store::RocksDBStore>,
+    indexes: Vec<index::CollectionIndex<'r>>,
     authorization: Authorization,
 }
 
-#[async_trait::async_trait]
-impl<'a> Collection<'a> for RocksDBCollection<'a> {
-    type Error = RocksDBCollectionError;
-    type Key = keys::Key<'a>;
-    type Value = store::Value<'a>;
-    type ListQuery = ListQuery<'a>;
-    type Cursor = Cursor;
-
-    #[tracing::instrument(skip(self))]
-    async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
-        if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
-        }
-
-        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
-            return Ok(None);
-        };
-
-        Ok(Some(value))
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>> {
-        if self.collection_id == "Collection" && id == "Collection" {
-            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
-        }
-
-        let key = keys::Key::new_data(self.collection_id.clone(), id)?;
-        let Some(value) = self.store.get(&key).await? else {
-            return Ok(None);
-        };
-
-        if !self.user_can_read(&value, &user).await? {
-            return Err(RocksDBCollectionUserError::UnauthorizedRead)?;
-        }
-
-        Ok(Some(value))
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
-        let record_metadata_key = keys::Key::new_system_data(format!(
-            "{}/records/{}/metadata",
-            &self.collection_id, record_id
-        ))?;
-
-        let Some(record) = self.store.get(&record_metadata_key).await? else {
-            return Ok(None);
-        };
-
-        let updated_at = match record.find_path(&["updatedAt"]) {
-            Some(RecordValue::String(s)) => {
-                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
-            }
-            _ => return Err(RocksDBCollectionError::MetadataMissingUpdatedAt),
-        };
-
-        Ok(Some(RecordMetadata { updated_at }))
-    }
-
-    async fn list(
-        &'a self,
-        ListQuery {
-            limit,
-            where_query,
-            order_by,
-            cursor_before,
-            cursor_after,
-        }: ListQuery<'a>,
-        user: &'a Option<&'a AuthUser>,
-    ) -> Result<Pin<Box<dyn futures::Stream<Item = Result<(Cursor, RecordRoot)>> + 'a>>> {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
-            return Err(RocksDBCollectionUserError::NoIndexFoundMatchingTheQuery)?;
-        };
-
-        let mut ast_holder = None;
-        let ast = self.ast(&mut ast_holder).await?;
-
-        let key_range = where_query.key_range(
-            &ast,
-            self.collection_id.clone(),
-            &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-            &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-        )?;
-
-        let key_range = where_query::KeyRange {
-            lower: key_range.lower.with_static(),
-            upper: key_range.upper.with_static(),
-        };
-
-        let mut reverse = index.should_list_in_reverse(order_by);
-        let key_range = match (cursor_after, cursor_before) {
-            (Some(mut after), _) => {
-                after.0.immediate_successor_value_mut()?;
-                where_query::KeyRange {
-                    lower: after.0,
-                    upper: key_range.upper,
-                }
-            }
-            (_, Some(before)) => {
-                reverse = !reverse;
-                where_query::KeyRange {
-                    lower: key_range.lower,
-                    upper: before.0,
-                }
-            }
-            (None, None) => key_range,
-        };
-
-        Ok(Box::pin(
-            futures::stream::iter(
-                self.store
-                    .list(&key_range.lower, &key_range.upper, reverse)?,
-            )
-            .map(|res| async {
-                let (k, v) = res?;
-
-                let index_key = Cursor::new(keys::Key::deserialize(&k)?.with_static())?;
-                let index_record = proto::IndexRecord::decode(&v[..])?;
-                let data_key = keys::Key::deserialize(&index_record.id)?;
-                let data = match self.store.get(&data_key).await? {
-                    Some(d) => d,
-                    None => return Ok(None),
-                };
-
-                Ok(Some((index_key, data)))
-            })
-            .filter_map(|r| async {
-                match r.await {
-                    // Skip records that we couldn't find by the data key
-                    Ok(None) => None,
-                    Ok(Some(x)) => Some(Ok(x)),
-                    Err(e) => Some(Err(e)),
-                }
-            })
-            .filter_map(|r| async {
-                match r {
-                    Ok((cursor, record)) => {
-                        match self.user_can_read(&record, user).await {
-                            Ok(false) => None,
-                            Ok(true) => Some(Ok((cursor, record))),
-                            Err(e) => {
-                                // TODO: should we propagate this error?
-                                warn!("failed to check if user can read record: {e:#?}",);
-                                None
-                            }
-                        }
-                    }
-                    Err(e) => Some(Err(e)),
-                }
-            })
-            .take(limit.unwrap_or(usize::MAX)),
-        ))
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
-        let collection_metadata_key =
-            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
-
-        let Some(record) = self.store.get(&collection_metadata_key).await? else {
-            return Ok(None);
-        };
-
-        let last_record_updated_at = match record.find_path(&["lastRecordUpdatedAt"]) {
-            Some(RecordValue::String(s)) => {
-                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
-            }
-            _ => return Err(RocksDBCollectionError::MetadataMissingLastRecordUpdatedAt),
-        };
-
-        Ok(Some(CollectionMetadata {
-            last_record_updated_at,
-        }))
-    }
-}
-
-#[derive(Debug)]
-pub struct ListQuery<'a> {
-    pub limit: Option<usize>,
-    pub where_query: where_query::WhereQuery,
-    pub order_by: &'a [index::CollectionIndexField<'a>],
-    pub cursor_before: Option<Cursor>,
-    pub cursor_after: Option<Cursor>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Cursor(keys::Key<'static>);
-
-impl Cursor {
-    fn new(key: keys::Key<'static>) -> Result<Self> {
-        match key {
-            keys::Key::Index { .. } => {}
-            _ => return Err(RocksDBCollectionUserError::InvalidCursorKey)?,
-        }
-
-        Ok(Self(key))
-    }
-
-    pub fn immediate_successor(mut self) -> Result<Self> {
-        self.0.immediate_successor_value_mut()?;
-        Ok(self)
-    }
-}
-
-impl Serialize for Cursor {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let buf = self.0.serialize().map_err(serde::ser::Error::custom)?;
-        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(buf))
-    }
-}
-
-impl<'de> Deserialize<'de> for Cursor {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        let buf = base64::engine::general_purpose::STANDARD
-            .decode(s.as_bytes())
-            .map_err(serde::de::Error::custom)?;
-        let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
-        Self::new(key.with_static()).map_err(serde::de::Error::custom)
-    }
-}
-
-fn collection_ast_from_root<'a>(
-    ast: stableast::Root<'a>,
-    collection_name: &str,
-) -> Option<stableast::Collection<'a>> {
-    ast.0.into_iter().find_map(|node| match node {
-        polylang::stableast::RootNode::Collection(collection)
-            if collection.name == collection_name =>
-        {
-            Some(collection)
-        }
-        _ => None,
-    })
-}
-
-#[tracing::instrument]
-pub fn collection_ast_from_json<'a>(
-    ast_json: &'a str,
-    collection_name: &str,
-) -> Result<stableast::Collection<'a>> {
-    let ast = serde_json::from_str::<polylang::stableast::Root>(ast_json)?;
-    let Some(collection_ast) = collection_ast_from_root(ast, collection_name) else {
-        return Err(RocksDBCollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
-    };
-
-    Ok(collection_ast)
-}
-
-#[tracing::instrument]
-pub fn validate_schema_change(
-    collection_name: &str,
-    old_ast: stableast::Root,
-    new_ast: stableast::Root,
-) -> Result<()> {
-    let Some(_old_ast) = collection_ast_from_root(old_ast, collection_name) else {
-        return Err(RocksDBCollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
-    };
-    let Some(_new_ast) = collection_ast_from_root(new_ast, collection_name) else {
-        return Err(RocksDBCollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
-    };
-
-    Ok(())
-}
-
-#[tracing::instrument]
-pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
-    let (namespace, name) = if let Some(RecordValue::String(id)) = record.get("id") {
-        let Some((namespace, name)) = id.rsplit_once('/') else {
-                return Err(RocksDBCollectionUserError::CollectionIdMissingNamespace)?;
-            };
-
-        (namespace, name)
-    } else {
-        unreachable!()
-    };
-
-    if namespace.is_empty() {
-        return Err(RocksDBCollectionUserError::CollectionIdMissingNamespace.into());
-    }
-
-    if name.starts_with('$') {
-        return Err(RocksDBCollectionUserError::CollectionNameCannotStartWithDollarSign.into());
-    }
-
-    let Some(ast) = record.get("ast") else {
-        return Err(RocksDBCollectionError::CollectionRecordMissingAST);
-    };
-
-    let ast = match ast {
-        RecordValue::String(ast) => ast,
-        _ => return Err(RocksDBCollectionError::CollectionRecordASTIsNotAString),
-    };
-
-    let ast = serde_json::from_str::<polylang::stableast::Root>(ast)?;
-
-    let Some(collection) = collection_ast_from_root(ast, &RocksDBCollection::normalize_name( name)) else {
-        return Err(RocksDBCollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
-    };
-
-    let properties = collection
-        .attributes
-        .iter()
-        .filter_map(|a| match a {
-            stableast::CollectionAttribute::Property(p) => Some(p),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    let Some(id_property) = properties.iter().find(|p| p.name == "id") else {
-        return Err(RocksDBCollectionUserError::CollectionMissingIdField.into());
-    };
-
-    if id_property.type_
-        != stableast::Type::Primitive(stableast::Primitive {
-            value: stableast::PrimitiveType::String,
-        })
-    {
-        return Err(RocksDBCollectionUserError::CollectionIdFieldMustBeString.into());
-    }
-
-    if !id_property.required {
-        return Err(RocksDBCollectionUserError::CollectionIdFieldCannotBeOptional.into());
-    }
-
-    let indexes = collection
-        .attributes
-        .iter()
-        .filter_map(|a| match a {
-            stableast::CollectionAttribute::Index(i) => Some(i),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-
-    for index in indexes {
-        for index_field in &index.fields {
-            let Some(field) = collection.find_field(&index_field.field_path) else {
-                return Err(RocksDBCollectionUserError::IndexFieldNotFoundInSchema {
-                    field: index_field.field_path.join("."),
-                }
-                .into());
-            };
-
-            match field.type_() {
-                stableast::Type::Array(_) => {
-                    return Err(RocksDBCollectionUserError::IndexFieldCannotBeAnArray {
-                        field: index_field.field_path.join("."),
-                    }
-                    .into());
-                }
-                stableast::Type::Map(_) => {
-                    return Err(RocksDBCollectionUserError::IndexFieldCannotBeAMap {
-                        field: index_field.field_path.join("."),
-                    }
-                    .into());
-                }
-                stableast::Type::Object(_) => {
-                    return Err(RocksDBCollectionUserError::IndexFieldCannotBeAnObject {
-                        field: index_field.field_path.join("."),
-                    }
-                    .into());
-                }
-                stableast::Type::Primitive(stableast::Primitive {
-                    value: stableast::PrimitiveType::Bytes,
-                }) => {
-                    return Err(RocksDBCollectionUserError::IndexFieldCannotBeBytes {
-                        field: index_field.field_path.join("."),
-                    }
-                    .into());
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let directives = collection
-        .attributes
-        .iter()
-        .filter_map(|a| match a {
-            stableast::CollectionAttribute::Directive(d) => Some(d),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    if let Some(public_directive) = directives.iter().find(|d| d.name == "public") {
-        if !public_directive.arguments.is_empty() {
-            return Err(
-                RocksDBCollectionUserError::CollectionDirectiveCannotHaveArguments {
-                    directive: "public",
-                }
-                .into(),
-            );
-        }
-    }
-    if let Some(read_directive) = directives.iter().find(|d| d.name == "read") {
-        if !read_directive.arguments.is_empty() {
-            return Err(
-                RocksDBCollectionUserError::CollectionDirectiveCannotHaveArguments {
-                    directive: "read",
-                }
-                .into(),
-            );
-        }
-    }
-    if let Some(call_directive) = directives.iter().find(|d| d.name == "call") {
-        if !call_directive.arguments.is_empty() {
-            return Err(
-                RocksDBCollectionUserError::CollectionDirectiveCannotHaveArguments {
-                    directive: "call",
-                }
-                .into(),
-            );
-        }
-    }
-
-    const VALID_COLLECTION_DIRECTIVES: &[&str] = &["public", "read", "call"];
-    let unknown_directives = directives
-        .iter()
-        .filter(|d| !VALID_COLLECTION_DIRECTIVES.contains(&d.name.as_ref()))
-        .map(|d| d.name.as_ref().to_owned())
-        .collect::<Vec<_>>();
-    if !unknown_directives.is_empty() {
-        return Err(RocksDBCollectionUserError::UnknownCollectionDirectives {
-            directives: unknown_directives,
-        }
-        .into());
-    }
-
-    Ok(())
-}
-
-impl<'a> RocksDBCollection<'a> {
+impl<'r> RocksDBCollection<'r> {
     fn new(
-        store: &'a store::RocksDBStore,
+        store: &'r store::RocksDBStore,
         collection_id: String,
-        indexes: Vec<index::CollectionIndex<'a>>,
+        indexes: Vec<index::CollectionIndex<'r>>,
         authorization: Authorization,
-    ) -> Self {
-        Self {
-            store,
-            collection_id,
+    ) -> RocksDBCollection<'r> {
+        RocksDBCollection {
+            collection: Collection::<store::RocksDBStore> {
+                store,
+                collection_id,
+            },
             indexes,
             authorization,
         }
     }
 
     #[tracing::instrument(skip(store))]
-    pub async fn load(store: &'a store::RocksDBStore, id: String) -> Result<RocksDBCollection<'_>> {
+    pub async fn load(store: &'r store::RocksDBStore, id: String) -> Result<RocksDBCollection> {
         let collection_collection = Self::new(
             store,
             "Collection".to_string(),
@@ -715,23 +165,23 @@ impl<'a> RocksDBCollection<'a> {
         }
 
         let Some(record) = collection_collection.get(id.clone(), None).await? else {
-            return Err(RocksDBCollectionUserError::CollectionNotFound { name: id })?;
+            return Err(CollectionUserError::CollectionNotFound { name: id })?;
         };
 
         let id = match record.get("id") {
             Some(RecordValue::String(id)) => id,
-            Some(_) => return Err(RocksDBCollectionError::CollectionRecordIDIsNotAString),
-            None => return Err(RocksDBCollectionError::CollectionRecordMissingID),
+            Some(_) => return Err(CollectionError::CollectionRecordIDIsNotAString),
+            None => return Err(CollectionError::CollectionRecordMissingID),
         };
 
-        let short_collection_name = RocksDBCollection::normalize_name(id.as_str());
+        let short_collection_name = Collection::<store::RocksDBStore>::normalize_name(id.as_str());
 
         let collection_ast: stableast::Collection = match record.get("ast") {
             Some(RecordValue::String(ast)) => {
-                collection_ast_from_json(ast, short_collection_name.as_str())?
+                collection_ast_from_json(&ast, short_collection_name.as_str())?
             }
-            Some(_) => return Err(RocksDBCollectionError::CollectionRecordASTIsNotAString),
-            None => return Err(RocksDBCollectionError::CollectionRecordMissingAST),
+            Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
+            None => return Err(CollectionError::CollectionRecordMissingAST),
         };
 
         let mut indexes = collection_ast
@@ -787,13 +237,17 @@ impl<'a> RocksDBCollection<'a> {
         // Sort indexes by number of fields, so that we use the most specific index first
         indexes.sort_by(|a, b| a.fields.len().cmp(&b.fields.len()));
 
-        let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
+        let is_public = collection_ast.attributes.iter().any(
+        |attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"),
+    );
         let is_read_all = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "read" && d.arguments.is_empty()));
         let is_call_all = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
-        Ok(Self {
-            store,
-            collection_id: id.to_string(),
+        Ok(RocksDBCollection {
+            collection: Collection::<store::RocksDBStore> {
+                store,
+                collection_id: id.to_string(),
+            },
             indexes,
             authorization: Authorization {
                 read_all: is_public || is_read_all,
@@ -831,57 +285,302 @@ impl<'a> RocksDBCollection<'a> {
         })
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn list(
+        &'r self,
+        ListQuery {
+            limit,
+            where_query,
+            order_by,
+            cursor_before,
+            cursor_after,
+        }: ListQuery<'_>,
+        user: &'r Option<&'r AuthUser>,
+    ) -> Result<impl futures::Stream<Item = Result<(Cursor, RecordRoot)>> + '_> {
+        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
+            return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
+        };
+
+        let mut ast_holder = None;
+        let ast = self.ast(&mut ast_holder).await?;
+
+        let key_range = where_query
+            .key_range(
+                &ast,
+                self.collection.collection_id.clone(),
+                &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+            )
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+        let key_range = where_query::KeyRange {
+            lower: key_range.lower.with_static(),
+            upper: key_range.upper.with_static(),
+        };
+
+        let mut reverse = index.should_list_in_reverse(order_by);
+        let key_range = match (cursor_after, cursor_before) {
+            (Some(mut after), _) => {
+                after
+                    .0
+                    .immediate_successor_value_mut()
+                    .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+                where_query::KeyRange {
+                    lower: after.0,
+                    upper: key_range.upper,
+                }
+            }
+            (_, Some(before)) => {
+                reverse = !reverse;
+                where_query::KeyRange {
+                    lower: key_range.lower,
+                    upper: before.0,
+                }
+            }
+            (None, None) => key_range,
+        };
+
+        Ok(futures::stream::iter(
+            self.collection
+                .store
+                .list(&key_range.lower, &key_range.upper, reverse)
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?,
+        )
+        .map(|res| async {
+            let (k, v) = res.map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+            let index_key = Cursor::new(
+                keys::Key::deserialize(&k)
+                    .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?
+                    .with_static(),
+            )
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+            let index_record = proto::IndexRecord::decode(&v[..])?;
+            let data_key = keys::Key::deserialize(&index_record.id)
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+            let data = match self
+                .collection
+                .store
+                .get(&data_key)
+                .await
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?
+            {
+                Some(d) => d,
+                None => return Ok(None),
+            };
+
+            Ok(Some((index_key, data)))
+        })
+        .filter_map(|r| async {
+            match r.await {
+                // Skip records that we couldn't find by the data key
+                Ok(None) => None,
+                Ok(Some(x)) => Some(Ok(x)),
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .filter_map(|r| async {
+            match r {
+                Ok((cursor, record)) => {
+                    match self.user_can_read(&record, user).await {
+                        Ok(false) => None,
+                        Ok(true) => Some(Ok((cursor, record))),
+                        Err(e) => {
+                            // TODO: should we propagate this error?
+                            warn!("failed to check if user can read record: {e:#?}",);
+                            None
+                        }
+                    }
+                }
+                Err(e) => Some(Err(e)),
+            }
+        })
+        .take(limit.unwrap_or(usize::MAX)))
+    }
+
+    async fn rebuild<'async_recursion>(
+        &self,
+        // The old collection record, loaded before the AST was changed
+        old_collection: RocksDBCollection<'r>,
+        old_collection_record: &RecordRoot,
+    ) -> Result<()> {
+        let collection_collection =
+            RocksDBCollection::load(self.collection.store, "Collection".to_string()).await?;
+        let meta = collection_collection
+            .get(self.collection.id().to_string(), None)
+            .await?;
+        let Some(meta) = meta else {
+            return Err(CollectionUserError::CollectionNotFound { name: self.collection.name() })?;
+        };
+
+        let collection_ast = match meta.get("ast") {
+            Some(RecordValue::String(ast)) => {
+                collection_ast_from_json(ast, self.collection.name().as_str())?
+            }
+            _ => return Err(CollectionError::CollectionRecordMissingAST),
+        };
+
+        let old_collection_ast = match old_collection_record.get("ast") {
+            Some(RecordValue::String(ast)) => {
+                collection_ast_from_json(ast, self.collection.name().as_str())?
+            }
+            _ => return Err(CollectionError::CollectionRecordMissingAST),
+        };
+
+        if collection_ast == old_collection_ast {
+            // Collection code was not changed, no need to rebuild anything
+            return Ok(());
+        }
+
+        // TODO: diff old and new ASTs to determine which indexes need to be rebuilt
+        // For now, let's just rebuild all indexes
+
+        let start_key = keys::Key::new_index(
+            self.collection.id().to_string(),
+            &[&["id"]],
+            &[keys::Direction::Ascending],
+            vec![],
+        )
+        .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+        let end_key = start_key.clone().wildcard();
+        for entry in self
+            .collection
+            .store
+            .list(&start_key, &end_key, false)
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?
+        {
+            let (_, value) =
+                entry.map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+            let index_record = proto::IndexRecord::decode(&value[..])
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+            let data_key = keys::Key::deserialize(&index_record.id)
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+            let data = self
+                .collection
+                .store
+                .get(&data_key)
+                .await
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+            let Some(data) = data else {
+                continue;
+            };
+            let Some(RecordValue::String(id)) = data.get("id") else {
+                return Err(CollectionError::RecordMissingID);
+            };
+            let id = id.clone();
+
+            let json_data = record_to_json(data)?;
+            let new_data = json_to_record(&collection_ast, json_data, true)?;
+            // Delete from the old collection object (loaded from old ast), to delete the old data and indexes
+            old_collection.delete(id.clone()).await?;
+            // Insert into the new collection object (loaded from new ast), to create the new data and indexes
+            self.set(id.clone(), &new_data).await?;
+        }
+
+        Ok(())
+    }
+}
+
+/// RocksDB-specific behaviour
+#[async_trait::async_trait]
+pub(crate) trait RocksDBCollectionAdaptor {
+    async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>>;
+    async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>>;
+
+    async fn ast<'ast>(
+        &self,
+        ast_json_holder: &'ast mut Option<String>,
+    ) -> Result<stableast::Collection<'ast>>;
+
+    async fn user_can_read(&self, record: &RecordRoot, user: &Option<&AuthUser>) -> Result<bool>;
+    async fn update_metadata(&self, time: &SystemTime) -> Result<()>;
+
+    async fn update_record_metadata(
+        &self,
+        record_id: String,
+        updated_at: &SystemTime,
+    ) -> Result<()>;
+
+    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot);
+    async fn delete_indexes(&self, record_id: &str, record: &RecordRoot);
+
+    async fn has_delegate_access(
+        &self,
+        record: &(impl PathFinder + Sync),
+        user: &Option<&AuthUser>,
+    ) -> Result<bool>;
+
+    async fn delete(&self, id: String) -> Result<()>;
+    async fn set(&self, id: String, value: &RecordRoot) -> Result<()>;
+    async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>>;
+    async fn get_metadata(&self) -> Result<Option<CollectionMetadata>>;
+}
+
+#[async_trait::async_trait]
+impl<'r> RocksDBCollectionAdaptor for RocksDBCollection<'r> {
+    #[tracing::instrument(skip(self))]
+    async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>> {
+        if self.collection.collection_id == "Collection" && id == "Collection" {
+            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
+        }
+
+        let key = keys::Key::new_data(self.collection.collection_id.clone(), id)
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+        let Some(value) = self.collection.store.get(&key).await.map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))? else {
+            return Ok(None);
+        };
+
+        if !self.user_can_read(&value, &user).await? {
+            return Err(CollectionUserError::UnauthorizedRead)?;
+        }
+
+        Ok(Some(value))
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>> {
+        if self.collection.collection_id == "Collection" && id == "Collection" {
+            return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
+        }
+
+        let key = keys::Key::new_data(self.collection.collection_id.clone(), id)
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+        let Some(value) = self.collection.store.get(&key).await.map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))? else {
+            return Ok(None);
+        };
+
+        Ok(Some(value))
+    }
+
     async fn ast<'ast>(
         &self,
         ast_json_holder: &'ast mut Option<String>,
     ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.store, "Collection".to_owned())
+        let Some(record) = RocksDBCollection::load(self.collection.store, "Collection".to_owned())
             .await?
-            .get(self.collection_id.clone(), None)
+            .get(self.collection.collection_id.clone(), None)
             .await? else {
-            return Err(RocksDBCollectionError::CollectionCollectionRecordNotFound {
-                id: self.collection_id.clone(),
+            return Err(CollectionError::CollectionCollectionRecordNotFound {
+                id: self.collection.collection_id.clone(),
             });
         };
 
         let ast_json = match record.get("ast") {
             Some(RecordValue::String(ast_json)) => ast_json,
-            Some(_) => return Err(RocksDBCollectionError::CollectionRecordASTIsNotAString),
-            None => return Err(RocksDBCollectionError::CollectionRecordMissingAST),
+            Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
+            None => return Err(CollectionError::CollectionRecordMissingAST),
         };
 
         *ast_json_holder = Some(ast_json.clone());
         #[allow(clippy::unwrap_used)]
         let ast_json = ast_json_holder.as_ref().unwrap();
 
-        collection_ast_from_json(ast_json, self.name().as_str())
-    }
-
-    pub fn id(&self) -> &str {
-        &self.collection_id
-    }
-
-    pub fn name(&self) -> String {
-        Self::normalize_name(self.collection_id.as_str())
-    }
-
-    fn normalize_name(collection_id: &str) -> String {
-        #[allow(clippy::unwrap_used)] // split always returns at least one element
-        let last_part = collection_id.split('/').last().unwrap();
-
-        last_part.replace('-', "_")
-    }
-
-    pub fn namespace(&self) -> &str {
-        let Some(slash_index) = self.collection_id.rfind('/') else {
-            return "";
-        };
-
-        &self.collection_id[0..slash_index]
+        collection_ast_from_json(ast_json, self.collection.name().as_str())
     }
 
     #[tracing::instrument(skip(self))]
-    #[async_recursion]
+    //#[async_recursion]
     async fn user_can_read(&self, record: &RecordRoot, user: &Option<&AuthUser>) -> Result<bool> {
         if self.authorization.read_all {
             return Ok(true);
@@ -958,9 +657,11 @@ impl<'a> RocksDBCollection<'a> {
             }
 
             for foreign_record_reference in foreign_record_references {
-                let collection =
-                    RocksDBCollection::load(self.store, foreign_record_reference.collection_id)
-                        .await?;
+                let collection = RocksDBCollection::load(
+                    self.collection.store,
+                    foreign_record_reference.collection_id,
+                )
+                .await?;
 
                 let Some(record) = collection
                     .get(foreign_record_reference.id, Some(user))
@@ -986,9 +687,147 @@ impl<'a> RocksDBCollection<'a> {
         Ok(authorized)
     }
 
+    async fn update_metadata(&self, time: &SystemTime) -> Result<()> {
+        let collection_metadata_key =
+            keys::Key::new_system_data(format!("{}/metadata", &self.collection.collection_id))
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+        self.collection
+            .store
+            .set(
+                &collection_metadata_key,
+                &store::Value::DataValue(
+                    &[(
+                        "lastRecordUpdatedAt".into(),
+                        RecordValue::String(
+                            time.duration_since(SystemTime::UNIX_EPOCH)?
+                                .as_millis()
+                                .to_string(),
+                        ),
+                    )]
+                    .into(),
+                ),
+            )
+            .await
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn update_record_metadata(
+        &self,
+        record_id: String,
+        updated_at: &SystemTime,
+    ) -> Result<()> {
+        let record_metadata_key = keys::Key::new_system_data(format!(
+            "{}/records/{}/metadata",
+            &self.collection.collection_id, record_id
+        ))
+        .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+        self.collection
+            .store
+            .set(
+                &record_metadata_key,
+                &store::Value::DataValue(
+                    &[(
+                        "updatedAt".into(),
+                        RecordValue::String(
+                            updated_at
+                                .duration_since(SystemTime::UNIX_EPOCH)?
+                                .as_millis()
+                                .to_string(),
+                        ),
+                    )]
+                    .into(),
+                ),
+            )
+            .await
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+        Ok(())
+    }
+
+    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
+        let index_value = store::Value::IndexValue(proto::IndexRecord {
+            id: match data_key.serialize() {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("failed to serialize data key: {e}");
+                    return;
+                }
+            },
+        });
+
+        for index in self.indexes.iter() {
+            if let Err(indexing_failure) = async {
+                let index_key = keys::index_record_key_with_record(
+                    self.collection.collection_id.clone(),
+                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+                    record,
+                )
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+                self.collection
+                    .store
+                    .set(&index_key, &index_value)
+                    .await
+                    .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+                Ok::<_, CollectionError>(())
+            }
+            .await
+            {
+                error!(
+                    record = record_id,
+                    index = index
+                        .fields
+                        .iter()
+                        .map(|f| f.path.join("."))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    "indexing failure: {indexing_failure}"
+                );
+            }
+        }
+    }
+
+    async fn delete_indexes(&self, record_id: &str, record: &RecordRoot) {
+        for index in self.indexes.iter() {
+            if let Err(deindexing_failure) = async {
+                let index_key = keys::index_record_key_with_record(
+                    self.collection.collection_id.clone(),
+                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
+                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
+                    record,
+                )
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+                self.collection
+                    .store
+                    .delete(&index_key)
+                    .await
+                    .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+                Ok::<_, CollectionError>(())
+            }
+            .await
+            {
+                error!(
+                    record = record_id,
+                    index = index
+                        .fields
+                        .iter()
+                        .map(|f| f.path.join("."))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    "failed to delete index: {deindexing_failure}"
+                );
+            }
+        }
+    }
+
     /// Returns true if the user is one of the delegates for the record
-    #[tracing::instrument(skip(self, record))]
-    #[async_recursion]
     async fn has_delegate_access(
         &self,
         record: &(impl PathFinder + Sync),
@@ -1005,7 +844,7 @@ impl<'a> RocksDBCollection<'a> {
 
             #[async_recursion]
             async fn check_delegate_value(
-                self_col: &RocksDBCollection<'_>,
+                self_col: &RocksDBCollection,
                 delegate_value: &RecordValue,
                 user: &AuthUser,
             ) -> Result<bool> {
@@ -1027,9 +866,11 @@ impl<'a> RocksDBCollection<'a> {
                         }
                     }
                     RecordValue::ForeignRecordReference(fr) => {
-                        let collection =
-                            RocksDBCollection::load(self_col.store, fr.collection_id.clone())
-                                .await?;
+                        let collection = RocksDBCollection::load(
+                            self_col.collection.store,
+                            fr.collection_id.clone(),
+                        )
+                        .await?;
 
                         let Some(record) = collection.get(fr.id.clone(), Some(user)).await? else {
                             return Ok(false);
@@ -1064,80 +905,51 @@ impl<'a> RocksDBCollection<'a> {
         Ok(false)
     }
 
-    async fn update_metadata(&self, time: &SystemTime) -> Result<()> {
-        let collection_metadata_key =
-            keys::Key::new_system_data(format!("{}/metadata", &self.collection_id))?;
+    #[tracing::instrument(skip(self))]
+    async fn delete(&self, id: String) -> Result<()> {
+        let Some(record) = self.get_without_auth_check(id.clone()).await? else {
+            return Ok(());
+        };
 
-        self.store
-            .set(
-                &collection_metadata_key,
-                &store::Value::DataValue(
-                    &[(
-                        "lastRecordUpdatedAt".into(),
-                        RecordValue::String(
-                            time.duration_since(SystemTime::UNIX_EPOCH)?
-                                .as_millis()
-                                .to_string(),
-                        ),
-                    )]
-                    .into(),
-                ),
-            )
-            .await?;
+        let key = keys::Key::new_data(self.collection.collection_id.clone(), id.clone())
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+        self.collection
+            .store
+            .delete(&key)
+            .await
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+        let now = SystemTime::now();
+        self.update_metadata(&now).await?;
+        self.update_record_metadata(id.clone(), &now).await?;
+
+        self.delete_indexes(&id, &record).await;
+
         Ok(())
     }
 
     #[tracing::instrument(skip(self))]
-    async fn update_record_metadata(
-        &self,
-        record_id: String,
-        updated_at: &SystemTime,
-    ) -> Result<()> {
-        let record_metadata_key = keys::Key::new_system_data(format!(
-            "{}/records/{}/metadata",
-            &self.collection_id, record_id
-        ))?;
-
-        self.store
-            .set(
-                &record_metadata_key,
-                &store::Value::DataValue(
-                    &[(
-                        "updatedAt".into(),
-                        RecordValue::String(
-                            updated_at
-                                .duration_since(SystemTime::UNIX_EPOCH)?
-                                .as_millis()
-                                .to_string(),
-                        ),
-                    )]
-                    .into(),
-                ),
-            )
-            .await?;
-        Ok(())
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn set(&self, id: String, value: &RecordRoot) -> Result<()> {
+    async fn set(&self, id: String, value: &RecordRoot) -> Result<()> {
         match value.get("id") {
             Some(rv) => match rv {
                 RecordValue::String(record_id) => {
                     if &id != record_id {
-                        return Err(RocksDBCollectionError::RecordIDArgDoesNotMatchRecordDataID);
+                        return Err(CollectionError::RecordIDArgDoesNotMatchRecordDataID);
                     }
                 }
-                _ => return Err(RocksDBCollectionError::RecordIDMustBeAString),
+                _ => return Err(CollectionError::RecordIDMustBeAString),
             },
-            None => return Err(RocksDBCollectionError::RecordMissingID),
+            None => return Err(CollectionError::RecordMissingID),
         }
 
-        let collection_before = if self.collection_id == "Collection" {
-            match RocksDBCollection::load(self.store, id.clone()).await {
+        let collection_before = if self.collection.collection_id == "Collection" {
+            match RocksDBCollection::load(self.collection.store, id.clone()).await {
                 Ok(c) => Some(c),
-                Err(RocksDBCollectionError::UserError(
-                    RocksDBCollectionUserError::CollectionNotFound { .. },
-                )) => None,
+                Err(CollectionError::UserError(CollectionUserError::CollectionNotFound {
+                    ..
+                })) => None,
                 Err(err) => return Err(err),
             }
         } else {
@@ -1146,11 +958,14 @@ impl<'a> RocksDBCollection<'a> {
 
         let old_value = self.get_without_auth_check(id.clone()).await?;
 
-        let data_key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
+        let data_key = keys::Key::new_data(self.collection.collection_id.clone(), id.clone())
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
 
-        self.store
+        self.collection
+            .store
             .set(&data_key, &store::Value::DataValue(value))
-            .await?;
+            .await
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
 
         self.update_metadata(&SystemTime::now()).await?;
         self.update_record_metadata(id.clone(), &SystemTime::now())
@@ -1163,13 +978,13 @@ impl<'a> RocksDBCollection<'a> {
 
         self.add_indexes(&id, &data_key, value).await;
 
-        if self.collection_id == "Collection" && id != "Collection" {
+        if self.collection.collection_id == "Collection" && id != "Collection" {
             if let Some(collection_before) = collection_before {
                 // Unwrap is safe because collection_before had to load the existing record.
                 #[allow(clippy::unwrap_used)]
                 let old_value = old_value.unwrap();
 
-                let target_col = RocksDBCollection::load(self.store, id).await?;
+                let target_col = RocksDBCollection::load(self.collection.store, id).await?;
 
                 target_col.rebuild(collection_before, &old_value).await?;
             }
@@ -1178,159 +993,307 @@ impl<'a> RocksDBCollection<'a> {
         Ok(())
     }
 
-    async fn add_indexes(&self, record_id: &str, data_key: &keys::Key<'_>, record: &RecordRoot) {
-        let index_value = store::Value::IndexValue(proto::IndexRecord {
-            id: match data_key.serialize() {
-                Ok(data) => data,
-                Err(e) => {
-                    error!("failed to serialize data key: {e}");
-                    return;
-                }
-            },
-        });
+    #[tracing::instrument(skip(self))]
+    async fn get_record_metadata(&self, record_id: &str) -> Result<Option<RecordMetadata>> {
+        let record_metadata_key = keys::Key::new_system_data(format!(
+            "{}/records/{}/metadata",
+            &self.collection.collection_id, record_id
+        ))
+        .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
 
-        for index in self.indexes.iter() {
-            if let Err(indexing_failure) = async {
-                let index_key = keys::index_record_key_with_record(
-                    self.collection_id.clone(),
-                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-                    record,
-                )?;
+        let Some(record) = self.collection.store.get(&record_metadata_key).await.map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))? else {
+            return Ok(None);
+        };
 
-                self.store.set(&index_key, &index_value).await?;
-
-                Ok::<_, RocksDBCollectionError>(())
+        let updated_at = match record.find_path(&["updatedAt"]) {
+            Some(RecordValue::String(s)) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
             }
-            .await
-            {
-                error!(
-                    record = record_id,
-                    index = index
-                        .fields
-                        .iter()
-                        .map(|f| f.path.join("."))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    "indexing failure: {indexing_failure}"
-                );
-            }
-        }
-    }
+            _ => return Err(CollectionError::MetadataMissingUpdatedAt),
+        };
 
-    async fn delete_indexes(&self, record_id: &str, record: &RecordRoot) {
-        for index in self.indexes.iter() {
-            if let Err(deindexing_failure) = async {
-                let index_key = keys::index_record_key_with_record(
-                    self.collection_id.clone(),
-                    &index.fields.iter().map(|f| &f.path[..]).collect::<Vec<_>>(),
-                    &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
-                    record,
-                )?;
-
-                self.store.delete(&index_key).await?;
-
-                Ok::<_, RocksDBCollectionError>(())
-            }
-            .await
-            {
-                error!(
-                    record = record_id,
-                    index = index
-                        .fields
-                        .iter()
-                        .map(|f| f.path.join("."))
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    "failed to delete index: {deindexing_failure}"
-                );
-            }
-        }
+        Ok(Some(RecordMetadata { updated_at }))
     }
 
     #[tracing::instrument(skip(self))]
-    async fn delete(&self, id: String) -> Result<()> {
-        let Some(record) = self.get_without_auth_check(id.clone()).await? else {
-            return Ok(());
+    async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
+        let collection_metadata_key =
+            keys::Key::new_system_data(format!("{}/metadata", &self.collection.collection_id))
+                .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+
+        let Some(record) = self.collection.store.get(&collection_metadata_key).await.map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))? else {
+            return Ok(None);
         };
 
-        let key = keys::Key::new_data(self.collection_id.clone(), id.clone())?;
+        let last_record_updated_at = match record.find_path(&["lastRecordUpdatedAt"]) {
+            Some(RecordValue::String(s)) => {
+                SystemTime::UNIX_EPOCH + Duration::from_millis(s.parse()?)
+            }
+            _ => return Err(CollectionError::MetadataMissingLastRecordUpdatedAt),
+        };
 
-        self.store.delete(&key).await?;
-
-        let now = SystemTime::now();
-        self.update_metadata(&now).await?;
-        self.update_record_metadata(id.clone(), &now).await?;
-
-        self.delete_indexes(&id, &record).await;
-
-        Ok(())
+        Ok(Some(CollectionMetadata {
+            last_record_updated_at,
+        }))
     }
+}
 
-    #[async_recursion]
-    async fn rebuild(
-        &self,
-        // The old collection record, loaded before the AST was changed
-        old_collection: RocksDBCollection<'async_recursion>,
-        old_collection_record: &RecordRoot,
-    ) -> Result<()> {
-        let collection_collection =
-            RocksDBCollection::load(self.store, "Collection".to_string()).await?;
-        let meta = collection_collection
-            .get(self.id().to_string(), None)
-            .await?;
-        let Some(meta) = meta else {
-            return Err(RocksDBCollectionUserError::CollectionNotFound { name: self.name() })?;
-        };
+#[derive(Debug)]
+pub struct ListQuery<'a> {
+    pub limit: Option<usize>,
+    pub where_query: where_query::WhereQuery,
+    pub order_by: &'a [index::CollectionIndexField<'a>],
+    pub cursor_before: Option<Cursor>,
+    pub cursor_after: Option<Cursor>,
+}
 
-        let collection_ast = match meta.get("ast") {
-            Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
-            _ => return Err(RocksDBCollectionError::CollectionRecordMissingAST),
-        };
+#[derive(Debug, Clone)]
+pub struct Cursor(keys::Key<'static>);
 
-        let old_collection_ast = match old_collection_record.get("ast") {
-            Some(RecordValue::String(ast)) => collection_ast_from_json(ast, self.name().as_str())?,
-            _ => return Err(RocksDBCollectionError::CollectionRecordMissingAST),
-        };
-
-        if collection_ast == old_collection_ast {
-            // Collection code was not changed, no need to rebuild anything
-            return Ok(());
+impl Cursor {
+    fn new(key: keys::Key<'static>) -> Result<Self> {
+        match key {
+            keys::Key::Index { .. } => {}
+            _ => return Err(CollectionUserError::InvalidCursorKey)?,
         }
 
-        // TODO: diff old and new ASTs to determine which indexes need to be rebuilt
-        // For now, let's just rebuild all indexes
-
-        let start_key = keys::Key::new_index(
-            self.id().to_string(),
-            &[&["id"]],
-            &[keys::Direction::Ascending],
-            vec![],
-        )?;
-        let end_key = start_key.clone().wildcard();
-        for entry in self.store.list(&start_key, &end_key, false)? {
-            let (_, value) = entry?;
-            let index_record = proto::IndexRecord::decode(&value[..])?;
-            let data_key = keys::Key::deserialize(&index_record.id)?;
-            let data = self.store.get(&data_key).await?;
-            let Some(data) = data else {
-                continue;
-            };
-            let Some(RecordValue::String(id)) = data.get("id") else {
-                return Err(RocksDBCollectionError::RecordMissingID);
-            };
-            let id = id.clone();
-
-            let json_data = record_to_json(data)?;
-            let new_data = json_to_record(&collection_ast, json_data, true)?;
-            // Delete from the old collection object (loaded from old ast), to delete the old data and indexes
-            old_collection.delete(id.clone()).await?;
-            // Insert into the new collection object (loaded from new ast), to create the new data and indexes
-            self.set(id.clone(), &new_data).await?;
-        }
-
-        Ok(())
+        Ok(Self(key))
     }
+
+    pub fn immediate_successor(mut self) -> Result<Self> {
+        self.0
+            .immediate_successor_value_mut()
+            .map_err(|e| CollectionError::ConcreteCollectionError(Box::new(e)))?;
+        Ok(self)
+    }
+}
+
+impl Serialize for Cursor {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let buf = self.0.serialize().map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(buf))
+    }
+}
+
+impl<'de> Deserialize<'de> for Cursor {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let buf = base64::engine::general_purpose::STANDARD
+            .decode(s.as_bytes())
+            .map_err(serde::de::Error::custom)?;
+        let key = keys::Key::deserialize(&buf).map_err(serde::de::Error::custom)?;
+        Self::new(key.with_static()).map_err(serde::de::Error::custom)
+    }
+}
+
+fn collection_ast_from_root<'a>(
+    ast: stableast::Root<'a>,
+    collection_name: &str,
+) -> Option<stableast::Collection<'a>> {
+    ast.0.into_iter().find_map(|node| match node {
+        polylang::stableast::RootNode::Collection(collection)
+            if collection.name == collection_name =>
+        {
+            Some(collection)
+        }
+        _ => None,
+    })
+}
+
+#[tracing::instrument]
+pub fn collection_ast_from_json<'a>(
+    ast_json: &'a str,
+    collection_name: &str,
+) -> Result<stableast::Collection<'a>> {
+    let ast = serde_json::from_str::<polylang::stableast::Root>(ast_json)?;
+    let Some(collection_ast) = collection_ast_from_root(ast, collection_name) else {
+        return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
+    };
+
+    Ok(collection_ast)
+}
+
+#[tracing::instrument]
+pub fn validate_schema_change(
+    collection_name: &str,
+    old_ast: stableast::Root,
+    new_ast: stableast::Root,
+) -> Result<()> {
+    let Some(_old_ast) = collection_ast_from_root(old_ast, collection_name) else {
+        return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
+    };
+    let Some(_new_ast) = collection_ast_from_root(new_ast, collection_name) else {
+        return Err(CollectionError::CollectionNotFoundInAST { name: collection_name.to_string() });
+    };
+
+    Ok(())
+}
+
+#[tracing::instrument]
+pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
+    let (namespace, name) = if let Some(RecordValue::String(id)) = record.get("id") {
+        let Some((namespace, name)) = id.rsplit_once('/') else {
+                return Err(CollectionUserError::CollectionIdMissingNamespace)?;
+            };
+
+        (namespace, name)
+    } else {
+        unreachable!()
+    };
+
+    if namespace.is_empty() {
+        return Err(CollectionUserError::CollectionIdMissingNamespace.into());
+    }
+
+    if name.starts_with('$') {
+        return Err(CollectionUserError::CollectionNameCannotStartWithDollarSign.into());
+    }
+
+    let Some(ast) = record.get("ast") else {
+        return Err(CollectionError::CollectionRecordMissingAST);
+    };
+
+    let ast = match ast {
+        RecordValue::String(ast) => ast,
+        _ => return Err(CollectionError::CollectionRecordASTIsNotAString),
+    };
+
+    let ast = serde_json::from_str::<polylang::stableast::Root>(ast)?;
+
+    let Some(collection) = collection_ast_from_root(ast, &Collection::<store::RocksDBStore>::normalize_name( name)) else {
+        return Err(CollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
+    };
+
+    let properties = collection
+        .attributes
+        .iter()
+        .filter_map(|a| match a {
+            stableast::CollectionAttribute::Property(p) => Some(p),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    let Some(id_property) = properties.iter().find(|p| p.name == "id") else {
+        return Err(CollectionUserError::CollectionMissingIdField.into());
+    };
+
+    if id_property.type_
+        != stableast::Type::Primitive(stableast::Primitive {
+            value: stableast::PrimitiveType::String,
+        })
+    {
+        return Err(CollectionUserError::CollectionIdFieldMustBeString.into());
+    }
+
+    if !id_property.required {
+        return Err(CollectionUserError::CollectionIdFieldCannotBeOptional.into());
+    }
+
+    let indexes = collection
+        .attributes
+        .iter()
+        .filter_map(|a| match a {
+            stableast::CollectionAttribute::Index(i) => Some(i),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    for index in indexes {
+        for index_field in &index.fields {
+            let Some(field) = collection.find_field(&index_field.field_path) else {
+                return Err(CollectionUserError::IndexFieldNotFoundInSchema {
+                    field: index_field.field_path.join("."),
+                }
+                .into());
+            };
+
+            match field.type_() {
+                stableast::Type::Array(_) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeAnArray {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                stableast::Type::Map(_) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeAMap {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                stableast::Type::Object(_) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeAnObject {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                stableast::Type::Primitive(stableast::Primitive {
+                    value: stableast::PrimitiveType::Bytes,
+                }) => {
+                    return Err(CollectionUserError::IndexFieldCannotBeBytes {
+                        field: index_field.field_path.join("."),
+                    }
+                    .into());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let directives = collection
+        .attributes
+        .iter()
+        .filter_map(|a| match a {
+            stableast::CollectionAttribute::Directive(d) => Some(d),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if let Some(public_directive) = directives.iter().find(|d| d.name == "public") {
+        if !public_directive.arguments.is_empty() {
+            return Err(
+                CollectionUserError::CollectionDirectiveCannotHaveArguments {
+                    directive: "public",
+                }
+                .into(),
+            );
+        }
+    }
+    if let Some(read_directive) = directives.iter().find(|d| d.name == "read") {
+        if !read_directive.arguments.is_empty() {
+            return Err(
+                CollectionUserError::CollectionDirectiveCannotHaveArguments { directive: "read" }
+                    .into(),
+            );
+        }
+    }
+    if let Some(call_directive) = directives.iter().find(|d| d.name == "call") {
+        if !call_directive.arguments.is_empty() {
+            return Err(
+                CollectionUserError::CollectionDirectiveCannotHaveArguments { directive: "call" }
+                    .into(),
+            );
+        }
+    }
+
+    const VALID_COLLECTION_DIRECTIVES: &[&str] = &["public", "read", "call"];
+    let unknown_directives = directives
+        .iter()
+        .filter(|d| !VALID_COLLECTION_DIRECTIVES.contains(&d.name.as_ref()))
+        .map(|d| d.name.as_ref().to_owned())
+        .collect::<Vec<_>>();
+    if !unknown_directives.is_empty() {
+        return Err(CollectionUserError::UnknownCollectionDirectives {
+            directives: unknown_directives,
+        }
+        .into());
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1349,7 +1312,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(collection.collection_id, "Collection");
+        assert_eq!(collection.collection.collection_id, "Collection");
         assert_eq!(
             collection.authorization,
             Authorization {
@@ -1463,7 +1426,7 @@ mod tests {
 
         store.commit().await.unwrap();
 
-        assert_eq!(collection_account.collection_id, "ns/Account");
+        assert_eq!(collection_account.collection.collection_id, "ns/Account");
         assert_eq!(
             collection_account.authorization,
             Authorization {
