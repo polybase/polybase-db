@@ -165,6 +165,34 @@ spec:
             {{- if .Values.extraVolumeMounts }}
             {{- include "polybase.render" (dict "value" .Values.extraVolumeMounts "context" $) | nindent 12 }}
             {{- end }}
+            
+        #cloud-sql-proxy
+        {{- if .Values.cloudsql.enabled }}
+        - name: {{ include "polybase.name" . }}-sql-proxy
+          args:
+          {{- if .Values.cloudsql.credentialFile }}
+          - --credentials-file={{ .Values.cloudsql.credentialFile }}
+          {{- end }}
+          {{- if .Values.cloudsql.usePrivateIP }}
+          - --private-ip
+          {{- end }}
+          - --max-sigterm-delay={{ .Values.cloudsql.timeout | default "30s" }}
+          {{- if .Values.cloudsql.externalProjectId }}
+          - "polybase-{{ .Values.cloudsql.externalProjectId }}:{{ .Values.cloudsql.region }}:{{ .Values.cloudsql.db_instance }}"
+          {{- else }}
+          - "polybase-{{ .Values.env }}:{{ .Values.cloudsql.region }}:{{ .Values.cloudsql.db_instance }}"
+          {{- end }}
+          image: {{ .Values.cloudsql.image }}:{{ .Values.cloudsql.tag }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            {{- toYaml .Values.cloudsql.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.cloudsql.resources | nindent 12 }}
+          {{- if .Values.cloudsql.volumesFromSecrets }}
+          volumeMounts:
+            {{ include "secret.container.mounts" .Values.cloudsql | indent 12 }}
+          {{- end }}
+        {{- end }}
       volumes:
       - name: scripts-vol
         configMap:

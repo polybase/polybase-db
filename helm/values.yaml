@@ -234,8 +234,30 @@ serviceAccount:
   ##
   automountServiceAccountToken: true
 
-## @section Traffic Exposure Parameters
-##
+## @section Cloud SQL Proxy
+cloudsql:
+  enabled: false
+  usePrivateIP: true
+  resources:
+    limits:
+      cpu: 500m
+      memory: 500Mi
+    requests:
+      cpu: 100m
+      memory: 100Mi
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+    privileged: false
+    readOnlyRootFilesystem: true
+  image: gcr.io/cloud-sql-connectors/cloud-sql-proxy
+  tag: "2.6.0"
+  region: us-central1
+  db_instance: polybase
+  credentialFile: "/path/to/credentials.json"
+  volumesFromSecrets: []
 
 ## Polybase service parameters
 ##
