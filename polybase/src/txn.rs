@@ -17,7 +17,7 @@ pub struct CallTxn {
     pub function_name: String,
     pub record_id: String,
     pub args: Vec<serde_json::Value>,
-    pub auth: Option<indexer::AuthUser>,
+    pub auth: Option<indexer_rocksdb::AuthUser>,
 }
 
 impl CallTxn {
@@ -26,7 +26,7 @@ impl CallTxn {
         function_name: &str,
         record_id: String,
         args: Vec<serde_json::Value>,
-        auth: Option<indexer::AuthUser>,
+        auth: Option<indexer_rocksdb::AuthUser>,
     ) -> Self {
         CallTxn {
             collection_id,

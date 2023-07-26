@@ -180,84 +180,88 @@ impl ReasonCode {
         }
     }
 
-    pub fn from_where_query_error(err: &indexer::where_query::WhereQueryUserError) -> Self {
+    pub fn from_where_query_error(err: &indexer_rocksdb::where_query::WhereQueryUserError) -> Self {
         match err {
-            indexer::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
+            indexer_rocksdb::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
                 ..
             } => ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch,
-            indexer::where_query::WhereQueryUserError::InequalityNotLast => {
+            indexer_rocksdb::where_query::WhereQueryUserError::InequalityNotLast => {
                 ReasonCode::IndexerQueryInequalityNotLast
             }
-            indexer::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
+            indexer_rocksdb::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
                 ReasonCode::IndexerMissingIndex
             }
         }
     }
 
-    pub fn from_collection_error(err: &indexer::collection::CollectionUserError) -> Self {
+    pub fn from_collection_error(err: &indexer_rocksdb::collection::CollectionUserError) -> Self {
         match err {
-            indexer::collection::CollectionUserError::CollectionNotFound { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::CollectionNotFound { .. } => {
                 ReasonCode::CollectionNotFound
             }
-            indexer::collection::CollectionUserError::NoIndexFoundMatchingTheQuery => {
+            indexer_rocksdb::collection::CollectionUserError::NoIndexFoundMatchingTheQuery => {
                 ReasonCode::IndexerMissingIndex
             }
-            indexer::collection::CollectionUserError::UnauthorizedRead => ReasonCode::Unauthorized,
-            indexer::collection::CollectionUserError::InvalidCursorKey => {
+            indexer_rocksdb::collection::CollectionUserError::UnauthorizedRead => {
+                ReasonCode::Unauthorized
+            }
+            indexer_rocksdb::collection::CollectionUserError::InvalidCursorKey => {
                 ReasonCode::IndexerInvalidCursorKey
             }
-            indexer::collection::CollectionUserError::CollectionIdMissingNamespace => {
+            indexer_rocksdb::collection::CollectionUserError::CollectionIdMissingNamespace => {
                 ReasonCode::CollectionInvalidId
             }
-            indexer::collection::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
+            indexer_rocksdb::collection::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
                 ReasonCode::CollectionInvalidId
             }
-            indexer::collection::CollectionUserError::MissingDefinitionForCollection { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::MissingDefinitionForCollection { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::CollectionMissingIdField => {
+            indexer_rocksdb::collection::CollectionUserError::CollectionMissingIdField => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::CollectionIdFieldMustBeString => {
+            indexer_rocksdb::collection::CollectionUserError::CollectionIdFieldMustBeString => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::CollectionIdFieldCannotBeOptional => {
+            indexer_rocksdb::collection::CollectionUserError::CollectionIdFieldCannotBeOptional => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
-            indexer::collection::CollectionUserError::CollectionDirectiveCannotHaveArguments {
+            indexer_rocksdb::collection::CollectionUserError::CollectionDirectiveCannotHaveArguments {
                 ..
             } => ReasonCode::CollectionInvalidSchema,
-            indexer::collection::CollectionUserError::UnknownCollectionDirectives { .. } => {
+            indexer_rocksdb::collection::CollectionUserError::UnknownCollectionDirectives { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
         }
     }
 
-    pub fn from_record_error(err: &indexer::RecordUserError) -> Self {
+    pub fn from_record_error(err: &indexer_rocksdb::RecordUserError) -> Self {
         match err {
-            indexer::RecordUserError::RecordRootShouldBeAnObject { .. } => {
+            indexer_rocksdb::RecordUserError::RecordRootShouldBeAnObject { .. } => {
                 ReasonCode::RecordNotObject
             }
-            indexer::RecordUserError::MissingField { .. } => ReasonCode::RecordMissingField,
-            indexer::RecordUserError::InvalidFieldValueType { .. } => {
+            indexer_rocksdb::RecordUserError::MissingField { .. } => ReasonCode::RecordMissingField,
+            indexer_rocksdb::RecordUserError::InvalidFieldValueType { .. } => {
                 ReasonCode::RecordInvalidField
             }
-            indexer::RecordUserError::UnexpectedFields { .. } => ReasonCode::RecordInvalidField,
+            indexer_rocksdb::RecordUserError::UnexpectedFields { .. } => {
+                ReasonCode::RecordInvalidField
+            }
         }
     }
 

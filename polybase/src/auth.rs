@@ -7,7 +7,7 @@ use std::{
 
 use actix_web::{http::header::CONTENT_LENGTH, FromRequest};
 use futures::{future::LocalBoxFuture, StreamExt};
-use indexer::PublicKey;
+use indexer_rocksdb::PublicKey;
 use serde::de::DeserializeOwned;
 
 use crate::errors::http::HTTPError;
@@ -95,7 +95,7 @@ pub(crate) struct Auth {
     pub(crate) public_key: PublicKey,
 }
 
-impl From<Auth> for indexer::AuthUser {
+impl From<Auth> for indexer_rocksdb::AuthUser {
     fn from(auth: Auth) -> Self {
         Self::new(auth.public_key)
     }

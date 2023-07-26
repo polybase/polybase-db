@@ -106,6 +106,7 @@ pub struct Authorization {
 pub type Result<T> = std::result::Result<T, CollectionError>;
 
 /// The concrete RocksDB Collection type that embeds the generic `Collection` struct.
+#[derive(Clone)]
 pub struct RocksDBCollection<'r> {
     pub collection: Collection<'r, store::RocksDBStore>,
     indexes: Vec<index::CollectionIndex<'r>>,
@@ -484,7 +485,7 @@ impl<'r> RocksDBCollection<'r> {
 
 /// RocksDB-specific behaviour
 #[async_trait::async_trait]
-pub(crate) trait RocksDBCollectionAdaptor {
+pub trait RocksDBCollectionAdaptor {
     async fn get(&self, id: String, user: Option<&AuthUser>) -> Result<Option<RecordRoot>>;
     async fn get_without_auth_check(&self, id: String) -> Result<Option<RecordRoot>>;
 

@@ -103,36 +103,42 @@ impl From<db::Error> for HTTPError {
     }
 }
 
-impl From<indexer::collection::CollectionError> for HTTPError {
-    fn from(err: indexer::collection::CollectionError) -> Self {
+impl From<indexer_rocksdb::collection::CollectionError> for HTTPError {
+    fn from(err: indexer_rocksdb::collection::CollectionError) -> Self {
         match err {
-            indexer::collection::CollectionError::UserError(e) => e.into(),
-            indexer::collection::CollectionError::WhereQueryError(e) => e.into(),
+            indexer_rocksdb::collection::CollectionError::UserError(e) => e.into(),
+            indexer_rocksdb::collection::CollectionError::ConcreteCollectionError(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
 }
 
-impl From<indexer::collection::CollectionUserError> for HTTPError {
-    fn from(err: indexer::collection::CollectionUserError) -> Self {
+impl From<Box<dyn std::error::Error>> for HTTPError {
+    fn from(err: Box<dyn std::error::Error>) -> Self {
+        HTTPError::new(ReasonCode::Internal, Some(err))
+    }
+}
+
+impl From<indexer_rocksdb::collection::CollectionUserError> for HTTPError {
+    fn from(err: indexer_rocksdb::collection::CollectionUserError) -> Self {
         HTTPError::new(ReasonCode::from_collection_error(&err), Some(Box::new(err)))
     }
 }
 
-impl From<indexer::where_query::WhereQueryError> for HTTPError {
-    fn from(err: indexer::where_query::WhereQueryError) -> Self {
+impl From<indexer_rocksdb::where_query::WhereQueryError> for HTTPError {
+    fn from(err: indexer_rocksdb::where_query::WhereQueryError) -> Self {
         match err {
-            indexer::where_query::WhereQueryError::UserError(e) => e.into(),
-            indexer::where_query::WhereQueryError::RecordError(
-                indexer::RecordError::UserError(e),
+            indexer_rocksdb::where_query::WhereQueryError::UserError(e) => e.into(),
+            indexer_rocksdb::where_query::WhereQueryError::RecordError(
+                indexer_rocksdb::RecordError::UserError(e),
             ) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
 }
 
-impl From<indexer::where_query::WhereQueryUserError> for HTTPError {
-    fn from(err: indexer::where_query::WhereQueryUserError) -> Self {
+impl From<indexer_rocksdb::where_query::WhereQueryUserError> for HTTPError {
+    fn from(err: indexer_rocksdb::where_query::WhereQueryUserError) -> Self {
         HTTPError::new(
             ReasonCode::from_where_query_error(&err),
             Some(Box::new(err)),
@@ -140,28 +146,28 @@ impl From<indexer::where_query::WhereQueryUserError> for HTTPError {
     }
 }
 
-impl From<indexer::RecordUserError> for HTTPError {
-    fn from(err: indexer::RecordUserError) -> Self {
+impl From<indexer_rocksdb::RecordUserError> for HTTPError {
+    fn from(err: indexer_rocksdb::RecordUserError) -> Self {
         HTTPError::new(ReasonCode::from_record_error(&err), Some(Box::new(err)))
     }
 }
 
-impl From<indexer::IndexerError> for HTTPError {
-    fn from(err: indexer::IndexerError) -> Self {
+impl From<indexer_rocksdb::IndexerError> for HTTPError {
+    fn from(err: indexer_rocksdb::IndexerError) -> Self {
         match err {
             // Collection
-            indexer::IndexerError::Collection(e) => match e {
-                indexer::collection::CollectionError::UserError(e) => e.into(),
+            indexer_rocksdb::IndexerError::Collection(e) => match e {
+                indexer_rocksdb::collection::CollectionError::UserError(e) => e.into(),
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
             // WhereQuery
-            indexer::IndexerError::WhereQuery(e) => match e {
-                indexer::where_query::WhereQueryError::UserError(e) => e.into(),
+            indexer_rocksdb::IndexerError::WhereQuery(e) => match e {
+                indexer_rocksdb::where_query::WhereQueryError::UserError(e) => e.into(),
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
             // Record
-            indexer::IndexerError::Record(e) => match e {
-                indexer::RecordError::UserError(e) => e.into(),
+            indexer_rocksdb::IndexerError::Record(e) => match e {
+                indexer_rocksdb::RecordError::UserError(e) => e.into(),
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
             // Other errors are internal

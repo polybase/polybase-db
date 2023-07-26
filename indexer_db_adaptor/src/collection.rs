@@ -47,7 +47,7 @@ pub enum CollectionError {
     #[error("Collection collection record not found for collection {id:?}")]
     CollectionCollectionRecordNotFound { id: String },
 
-    #[error("record error")]
+    #[error(transparent)]
     RecordError(#[from] RecordError),
 
     #[error("parse int error")]
@@ -62,6 +62,7 @@ pub enum CollectionError {
     #[error("prost decode error")]
     ProstDecodeError(#[from] prost::DecodeError),
 
+    // For all other errors
     #[error(transparent)]
     ConcreteCollectionError(#[from] Box<dyn std::error::Error>),
 }

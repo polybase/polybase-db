@@ -13,7 +13,9 @@ mod stableast_ext;
 mod store;
 pub mod where_query;
 
-pub use collection::{validate_schema_change, AuthUser, Cursor, ListQuery, RocksDBCollection};
+pub use collection::{
+    validate_schema_change, AuthUser, Collection, Cursor, ListQuery, RocksDBCollection,
+};
 
 pub use index::CollectionIndexField;
 pub use indexer_db_adaptor::record::{

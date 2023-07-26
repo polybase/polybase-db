@@ -4,10 +4,10 @@ use crate::txn::{self, CallTxn};
 use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
-use indexer::snapshot::{SnapshotChunk, SnapshotIterator};
-use indexer::{
-    collection::validate_collection_record, validate_schema_change, Cursor, Indexer, ListQuery,
-    RecordRoot,
+use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
+use indexer_rocksdb::{
+    collection::{validate_collection_record, RocksDBCollectionAdaptor},
+    validate_schema_change, Cursor, Indexer, ListQuery, RecordRoot,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -40,10 +40,10 @@ pub enum Error {
     Gateway(#[from] gateway::GatewayError),
 
     #[error("indexer error")]
-    Indexer(#[from] indexer::IndexerError),
+    Indexer(#[from] indexer_rocksdb::IndexerError),
 
     #[error("collection error")]
-    Collection(#[from] indexer::collection::CollectionError),
+    Collection(#[from] indexer_rocksdb::collection::CollectionError),
 
     #[error("serialize error")]
     Serializer(#[from] bincode::Error),
@@ -153,7 +153,7 @@ impl Db {
         &self,
         collection_id: String,
         record_id: String,
-        auth: Option<indexer::AuthUser>,
+        auth: Option<indexer_rocksdb::AuthUser>,
     ) -> Result<Option<RecordRoot>> {
         let collection = self.indexer.collection(collection_id.clone()).await?;
         Ok(collection.get(record_id, auth.as_ref()).await?)
@@ -164,7 +164,7 @@ impl Db {
         &self,
         collection_id: String,
         record_id: String,
-        auth: Option<indexer::AuthUser>,
+        auth: Option<indexer_rocksdb::AuthUser>,
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Option<RecordRoot>>> {
@@ -192,7 +192,7 @@ impl Db {
         &self,
         collection_id: String,
         query: ListQuery<'_>,
-        auth: Option<indexer::AuthUser>,
+        auth: Option<indexer_rocksdb::AuthUser>,
     ) -> Result<Vec<(Cursor, RecordRoot)>> {
         let collection = self.indexer.collection(collection_id.clone()).await?;
 
@@ -211,7 +211,7 @@ impl Db {
         &self,
         collection_id: String,
         query: ListQuery<'_>,
-        auth: Option<indexer::AuthUser>,
+        auth: Option<indexer_rocksdb::AuthUser>,
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Vec<(Cursor, RecordRoot)>>> {
@@ -472,8 +472,8 @@ impl Db {
     #[tracing::instrument(skip(self))]
     pub async fn set_manifest(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let b = bincode::serialize(&manifest)?;
-        let value = indexer::RecordValue::Bytes(b);
-        let mut record = indexer::RecordRoot::new();
+        let value = indexer_rocksdb::RecordValue::Bytes(b);
+        let mut record = indexer_rocksdb::RecordRoot::new();
         record.insert("manifest".to_string(), value);
         Ok(self
             .indexer
@@ -485,7 +485,7 @@ impl Db {
     pub async fn get_manifest(&self) -> Result<Option<proposal::ProposalManifest>> {
         let record = self.indexer.get_system_key("manifest".to_string()).await?;
         let value = match record.and_then(|mut r| r.remove("manifest")) {
-            Some(indexer::RecordValue::Bytes(b)) => b,
+            Some(indexer_rocksdb::RecordValue::Bytes(b)) => b,
             _ => return Ok(None),
         };
         let manifest: proposal::ProposalManifest = bincode::deserialize(&value)?;
@@ -529,24 +529,24 @@ impl Db {
         collection_id: &str,
         record_id: &str,
         record: &RecordRoot,
-        auth: Option<&indexer::AuthUser>,
+        auth: Option<&indexer_rocksdb::AuthUser>,
     ) -> Result<()> {
         let collection = self.indexer.collection(collection_id.to_owned()).await?;
 
         let old_record = collection
             .get(record_id.to_owned(), auth)
             .await
-            .map_err(indexer::IndexerError::from)?
+            .map_err(indexer_rocksdb::IndexerError::from)?
             .ok_or(Error::CollectionNotFound)?;
 
         let old_ast = old_record.get("ast").ok_or(Error::CollectionASTNotFound)?;
 
-        let indexer::RecordValue::String(old_ast) = old_ast
+        let indexer_rocksdb::RecordValue::String(old_ast) = old_ast
             else {
                 return Err(Error::CollectionASTInvalid("Collection AST in old record is not a string".into()));
             };
 
-        let indexer::RecordValue::String(new_ast) = record
+        let indexer_rocksdb::RecordValue::String(new_ast) = record
                 .get("ast")
                 .ok_or(Error::CollectionASTNotFound)? else {
             return Err(Error::CollectionASTInvalid("Collection AST in new record is not a string".into()));
@@ -558,9 +558,9 @@ impl Db {
             serde_json::from_str(old_ast)?,
             serde_json::from_str(new_ast)?,
         )
-        .map_err(indexer::IndexerError::from)?;
+        .map_err(indexer_rocksdb::IndexerError::from)?;
 
-        validate_collection_record(record).map_err(indexer::IndexerError::from)?;
+        validate_collection_record(record).map_err(indexer_rocksdb::IndexerError::from)?;
 
         Ok(())
     }

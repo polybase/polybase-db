@@ -539,7 +539,7 @@ impl<T: DeserializeOwned> Collection<T> {
     }
 }
 struct Signature {
-    public_key: Option<indexer::PublicKey>,
+    public_key: Option<indexer_rocksdb::PublicKey>,
     signature: secp256k1::ecdsa::RecoverableSignature,
     timestamp: SystemTime,
     version: String,
@@ -604,7 +604,7 @@ impl Signature {
         let sig = secp256k1::global::SECP256K1.sign_ecdsa_recoverable(&message, key);
 
         let public_key = key.public_key(secp256k1::global::SECP256K1);
-        let public_key = indexer::PublicKey::from_secp256k1_key(&public_key).unwrap();
+        let public_key = indexer_rocksdb::PublicKey::from_secp256k1_key(&public_key).unwrap();
 
         Self {
             public_key: Some(public_key),

@@ -1,6 +1,6 @@
 use super::db;
 use super::network;
-use indexer::IndexerError;
+use indexer_rocksdb::IndexerError;
 use libp2p::{identity, multiaddr};
 
 mod code;

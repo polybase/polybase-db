@@ -51,6 +51,7 @@ impl<'a> Value<'a> {
     }
 }
 
+#[derive(Clone)]
 pub struct RocksDBStore {
     pub(crate) db: Arc<rocksdb::DB>,
     state: Arc<Mutex<RocksDBStoreState>>,

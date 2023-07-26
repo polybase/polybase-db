@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-indexer = { path = "../indexer" }
+indexer_rocksdb = { path = "../indexer_rocksdb" }
 polylang = { git = "https://github.com/polybase/polylang", branch = "main" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
