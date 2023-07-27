@@ -179,7 +179,7 @@ impl<'r> RocksDBCollection<'r> {
 
         let collection_ast: stableast::Collection = match record.get("ast") {
             Some(RecordValue::String(ast)) => {
-                collection_ast_from_json(&ast, short_collection_name.as_str())?
+                collection_ast_from_json(ast, short_collection_name.as_str())?
             }
             Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
             None => return Err(CollectionError::CollectionRecordMissingAST),

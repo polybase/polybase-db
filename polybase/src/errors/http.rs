@@ -107,15 +107,15 @@ impl From<indexer_rocksdb::collection::CollectionError> for HTTPError {
     fn from(err: indexer_rocksdb::collection::CollectionError) -> Self {
         match err {
             indexer_rocksdb::collection::CollectionError::UserError(e) => e.into(),
-            indexer_rocksdb::collection::CollectionError::ConcreteCollectionError(e) => e.into(),
+            // TODO - clean and make more robust
+            indexer_rocksdb::collection::CollectionError::ConcreteCollectionError(e) => {
+                match e.downcast::<indexer_rocksdb::where_query::WhereQueryError>() {
+                    Ok(wq_err) => (*wq_err).into(),
+                    _ => HTTPError::new(ReasonCode::Internal, None),
+                }
+            }
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
-    }
-}
-
-impl From<Box<dyn std::error::Error>> for HTTPError {
-    fn from(err: Box<dyn std::error::Error>) -> Self {
-        HTTPError::new(ReasonCode::Internal, Some(err))
     }
 }
 
@@ -148,7 +148,10 @@ impl From<indexer_rocksdb::where_query::WhereQueryUserError> for HTTPError {
 
 impl From<indexer_rocksdb::RecordUserError> for HTTPError {
     fn from(err: indexer_rocksdb::RecordUserError) -> Self {
-        HTTPError::new(ReasonCode::from_record_error(&err), Some(Box::new(err)))
+        HTTPError::new(
+            ReasonCode::from_record_user_error(&err),
+            Some(Box::new(err)),
+        )
     }
 }
 
@@ -170,6 +173,7 @@ impl From<indexer_rocksdb::IndexerError> for HTTPError {
                 indexer_rocksdb::RecordError::UserError(e) => e.into(),
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
+
             // Other errors are internal
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }

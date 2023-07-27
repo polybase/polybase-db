@@ -63,7 +63,7 @@ pub enum CollectionError {
     ProstDecodeError(#[from] prost::DecodeError),
 
     // For all other errors
-    #[error(transparent)]
+    #[error("concrete collection error")]
     ConcreteCollectionError(#[from] Box<dyn std::error::Error>),
 }
 

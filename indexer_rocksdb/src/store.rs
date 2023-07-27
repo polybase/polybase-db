@@ -23,7 +23,7 @@ pub enum RocksDBStoreError {
     #[error("keys error")]
     KeysError(#[from] keys::KeysError),
 
-    #[error("RocksDB error")]
+    #[error(transparent)]
     RocksDBError(#[from] rocksdb::Error),
 
     #[error("bincode error")]

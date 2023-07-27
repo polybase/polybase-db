@@ -250,7 +250,7 @@ impl ReasonCode {
         }
     }
 
-    pub fn from_record_error(err: &indexer_rocksdb::RecordUserError) -> Self {
+    pub fn from_record_user_error(err: &indexer_rocksdb::RecordUserError) -> Self {
         match err {
             indexer_rocksdb::RecordUserError::RecordRootShouldBeAnObject { .. } => {
                 ReasonCode::RecordNotObject

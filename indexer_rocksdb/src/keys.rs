@@ -24,7 +24,7 @@ pub enum KeysError {
     #[error("key does not have immediate successor")]
     KeyDoesNotHaveImmediateSuccessor,
 
-    #[error("record error")]
+    #[error(transparent)]
     RecordError(#[from] RecordError),
 
     #[error("try from int error")]
