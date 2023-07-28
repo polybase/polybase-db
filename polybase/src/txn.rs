@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice as deserialize, to_vec as serialize};
 use sha3::{Digest, Sha3_256};
+use indexer_db_adaptor::collection::collection::AuthUser;
 
 pub type Result<T> = std::result::Result<T, CallTxnError>;
 
@@ -17,7 +18,7 @@ pub struct CallTxn {
     pub function_name: String,
     pub record_id: String,
     pub args: Vec<serde_json::Value>,
-    pub auth: Option<indexer_rocksdb::AuthUser>,
+    pub auth: Option<AuthUser>,
 }
 
 impl CallTxn {
@@ -26,7 +27,7 @@ impl CallTxn {
         function_name: &str,
         record_id: String,
         args: Vec<serde_json::Value>,
-        auth: Option<indexer_rocksdb::AuthUser>,
+        auth: Option<AuthUser>,
     ) -> Self {
         CallTxn {
             collection_id,

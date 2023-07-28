@@ -13,14 +13,14 @@ use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
-use indexer_rocksdb::AuthUser;
 use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
+use indexer_db_adaptor::{indexer::IndexerError, collection::{cursor, collection::AuthUser}, store::Store};
 
-struct RouteState {
-    db: Arc<Db>,
+struct RouteState<S: Store> {
+    db: Arc<Db<S>>,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
 }
@@ -70,15 +70,15 @@ struct GetRecordResponse {
 }
 
 #[get("/{collection}/records/{id}")]
-async fn get_record(
-    state: web::Data<RouteState>,
+async fn get_record<S: Store>(
+    state: web::Data<RouteState<S>>,
     path: web::Path<(String, String)>,
     query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
 ) -> Result<impl Responder, HTTPError> {
     let (collection, record_id) = path.into_inner();
     let auth = body.auth;
-    let auth: Option<indexer_rocksdb::AuthUser> = auth.map(|a| a.into());
+    let auth: Option<AuthUser> = auth.map(|a| a.into());
 
     let record = if let Some(since) = query.since {
         match state
@@ -101,8 +101,8 @@ async fn get_record(
 
     match record {
         Some(record) => {
-            let data = indexer_rocksdb::record_to_json(record)
-                .map_err(indexer_rocksdb::IndexerError::from)?;
+            let data = indexer_db_adaptor::collection::record::record_to_json(record)
+                .map_err(indexer_db_adaptor::indexer::IndexerError::from)?;
             if let Some(f) = &query.format {
                 if f == "nft" {
                     return Ok(HttpResponse::Ok().json(data));
@@ -125,11 +125,11 @@ enum Direction {
     Descending,
 }
 
-impl From<Direction> for indexer_rocksdb::Direction {
+impl From<Direction> for indexer_db_adaptor::collection::index::IndexDirection {
     fn from(dir: Direction) -> Self {
         match dir {
-            Direction::Ascending => indexer_rocksdb::Direction::Ascending,
-            Direction::Descending => indexer_rocksdb::Direction::Descending,
+            Direction::Ascending => indexer_db_adaptor::collection::index::IndexDirection::Ascending,
+            Direction::Descending => indexer_db_adaptor::collection::index::IndexDirection::Descending,
         }
     }
 }
@@ -167,9 +167,9 @@ impl<'de> Deserialize<'de> for Seconds {
 }
 
 #[derive(Debug)]
-struct OptionalCursor(Option<indexer_rocksdb::Cursor>);
+struct OptionalCursor<'a>(Option<cursor::Cursor<'a>>);
 
-impl<'de> Deserialize<'de> for OptionalCursor {
+impl<'de> Deserialize<'de> for OptionalCursor<'_> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -179,7 +179,7 @@ impl<'de> Deserialize<'de> for OptionalCursor {
 
         let cursor = Option::<String>::deserialize(deserializer)?
             .filter(|s| !s.is_empty())
-            .map(|s| indexer_rocksdb::Cursor::deserialize(s.into_deserializer()))
+            .map(|s| indexer_db_adaptor::collection::cursor::Cursor::deserialize(s.into_deserializer()))
             .transpose()?;
 
         Ok(OptionalCursor(cursor))
@@ -188,16 +188,16 @@ impl<'de> Deserialize<'de> for OptionalCursor {
 
 #[serde_as]
 #[derive(Debug, Deserialize)]
-struct ListQuery {
+struct ListQuery<'a> {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
-    where_query: indexer_rocksdb::WhereQuery,
+    where_query: indexer_db_adaptor::collection::where_query::WhereQuery,
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
-    before: OptionalCursor,
-    after: OptionalCursor,
+    before: OptionalCursor<'a>,
+    after: OptionalCursor<'a>,
     /// UNIX timestamp in seconds
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
@@ -205,42 +205,42 @@ struct ListQuery {
 }
 
 #[derive(Debug, Serialize)]
-struct Cursors {
-    before: Option<indexer_rocksdb::Cursor>,
-    after: Option<indexer_rocksdb::Cursor>,
+struct Cursors<'a> {
+    before: Option<cursor::Cursor<'a>>,
+    after: Option<cursor::Cursor<'a>>,
 }
 
 #[derive(Serialize)]
-struct ListResponse {
+struct ListResponse<'a> {
     data: Vec<GetRecordResponse>,
-    cursor: Cursors,
+    cursor: Cursors<'a>,
 }
 
 #[tracing::instrument(skip(state, body))]
 #[get("/{collection}/records")]
-async fn get_records(
+async fn get_records<'a, S: Store>(
     req: HttpRequest,
-    state: web::Data<RouteState>,
+    state: web::Data<RouteState<S>>,
     path: web::Path<String>,
-    query: web::Query<ListQuery>,
+    query: web::Query<ListQuery<'a>>,
     body: auth::SignedJSON<()>,
 ) -> Result<impl Responder, HTTPError> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let auth: Option<indexer_rocksdb::AuthUser> = auth.map(|a| a.into());
+    let auth: Option<AuthUser> = auth.map(|a| a.into());
 
     let sort_indexes = query
         .sort
         .iter()
         .map(|(path, dir)| {
-            indexer_rocksdb::CollectionIndexField::new(
+            indexer_db_adaptor::collection::index::IndexField::new(
                 path.split('.').map(|p| Cow::Owned(p.to_string())).collect(),
                 (*dir).into(),
             )
         })
         .collect::<Vec<_>>();
 
-    let list_query = indexer_rocksdb::ListQuery {
+    let list_query = indexer_db_adaptor::collection::collection::ListQuery {
         limit: Some(min(1000, query.limit.unwrap_or(100))),
         where_query: query.where_query.clone(),
         order_by: &sort_indexes,
@@ -301,12 +301,12 @@ async fn get_records(
                 .into_iter()
                 .map(|(_, r)| {
                     Ok(GetRecordResponse {
-                        data: indexer_rocksdb::record_to_json(r)?,
+                        data: indexer_db_adaptor::collection::record::record_to_json(r)?,
                         block: Default::default(),
                     })
                 })
-                .collect::<Result<_, indexer_rocksdb::RecordError>>()
-                .map_err(indexer_rocksdb::IndexerError::from)?,
+                .collect::<Result<_, indexer_db_adaptor::collection::record::RecordError>>()
+                .map_err(IndexerError::from)?,
         })
     }
     .await;
@@ -337,8 +337,8 @@ struct FunctionResponse {
 
 #[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records")]
-async fn post_record(
-    state: web::Data<RouteState>,
+async fn post_record<S: Store>(
+    state: web::Data<RouteState<S>>,
     path: web::Path<String>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
@@ -376,21 +376,21 @@ async fn post_record(
     };
 
     Ok(web::Json(FunctionResponse {
-        data: indexer_rocksdb::record_to_json(record)
-            .map_err(indexer_rocksdb::IndexerError::from)?,
+        data: indexer_db_adaptor::collection::record::record_to_json(record)
+            .map_err(IndexerError::from)?,
     }))
 }
 
 #[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records/{record}/call/{function}")]
-async fn call_function(
-    state: web::Data<RouteState>,
+async fn call_function<S: Store>(
+    state: web::Data<RouteState<S>>,
     path: web::Path<(String, String, String)>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
     let (collection_id, record_id, function) = path.into_inner();
 
-    let auth = body.auth.map(indexer_rocksdb::AuthUser::from);
+    let auth = body.auth.map(AuthUser::from);
     let db = Arc::clone(&state.db);
 
     let txn = CallTxn::new(
@@ -409,8 +409,8 @@ async fn call_function(
 
     Ok(web::Json(FunctionResponse {
         data: match record {
-            Some(record) => indexer_rocksdb::record_to_json(record)
-                .map_err(indexer_rocksdb::IndexerError::from)?,
+            Some(record) => indexer_db_adaptor::collection::record::record_to_json(record)
+                .map_err(IndexerError::from)?,
             None => serde_json::Value::Null,
         },
     }))
@@ -526,7 +526,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
 }
 
 #[get("/v0/health")]
-async fn health(state: web::Data<RouteState>) -> impl Responder {
+async fn health<S: Store>(state: web::Data<RouteState<S>>) -> impl Responder {
     if state.db.is_healthy() {
         HttpResponse::Ok()
     } else {
@@ -544,7 +544,7 @@ struct StatusResponse {
 
 #[tracing::instrument(skip(state))]
 #[get("/v0/status")]
-async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
+async fn status<S: Store>(state: web::Data<RouteState<S>>) -> Result<web::Json<StatusResponse>, HTTPError> {
     let manifest = state.db.get_manifest().await?;
     let height = manifest.as_ref().map(|m| m.height).unwrap_or(0);
     let hash = manifest
@@ -560,9 +560,9 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
 }
 
 #[tracing::instrument(skip(db))]
-pub fn create_rpc_server(
+pub fn create_rpc_server<S: Store>(
     rpc_laddr: String,
-    db: Arc<Db>,
+    db: Arc<Db<S>>,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
 ) -> Result<Server, std::io::Error> {

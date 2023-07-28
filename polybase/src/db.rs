@@ -4,12 +4,10 @@ use crate::txn::{self, CallTxn};
 use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
-use indexer_db_adaptor::indexer::Indexer;
 use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
-use indexer_rocksdb::{
-    collection::{validate_collection_record, RocksDBCollectionAdaptor},
-    validate_schema_change, Cursor, ListQuery, RecordRoot,
-};
+use indexer_db_adaptor::{indexer::{IndexerError, Indexer},
+    collection::{record::{RecordValue, RecordRoot}, collection::{AuthUser, ListQuery}, cursor::Cursor, 
+    validation::{validate_collection_record, validate_schema_change}}, store::Store};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
@@ -41,10 +39,10 @@ pub enum Error {
     Gateway(#[from] gateway::GatewayError),
 
     #[error("indexer error")]
-    Indexer(#[from] indexer_rocksdb::IndexerError),
+    Indexer(#[from] indexer_db_adaptor::indexer::IndexerError),
 
     #[error("collection error")]
-    Collection(#[from] indexer_rocksdb::collection::CollectionError),
+    Collection(#[from] indexer_db_adaptor::collection::CollectionError),
 
     #[error("serialize error")]
     Serializer(#[from] bincode::Error),
@@ -86,17 +84,17 @@ impl Default for DbConfig {
     }
 }
 
-pub struct Db {
+pub struct Db<S: Store> {
     mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
-    indexer: Indexer,
+    indexer: Indexer<S>,
     sender: AsyncMutex<mpsc::Sender<CallTxn>>,
     receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
     config: DbConfig,
     out_of_sync_height: Mutex<Option<usize>>,
 }
 
-impl Db {
+impl<S: Store> Db<S> {
     pub async fn new(root_dir: String, config: DbConfig) -> Result<Self> {
         let (sender, receiver) = mpsc::channel::<CallTxn>(100);
 
@@ -155,7 +153,7 @@ impl Db {
         &self,
         collection_id: String,
         record_id: String,
-        auth: Option<indexer_rocksdb::AuthUser>,
+        auth: Option<AuthUser>,
     ) -> Result<Option<RecordRoot>> {
         let collection = self.indexer.collection(&collection_id).await?;
         Ok(collection.get(&record_id, auth.as_ref()).await?)
@@ -166,7 +164,7 @@ impl Db {
         &self,
         collection_id: String,
         record_id: String,
-        auth: Option<indexer_rocksdb::AuthUser>,
+        auth: Option<AuthUser>,
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Option<RecordRoot>>> {
@@ -194,7 +192,7 @@ impl Db {
         &self,
         collection_id: String,
         query: ListQuery<'_>,
-        auth: Option<indexer_rocksdb::AuthUser>,
+        auth: Option<AuthUser>,
     ) -> Result<Vec<(Cursor, RecordRoot)>> {
         let collection = self.indexer.collection(&collection_id).await?;
 
@@ -213,7 +211,7 @@ impl Db {
         &self,
         collection_id: String,
         query: ListQuery<'_>,
-        auth: Option<indexer_rocksdb::AuthUser>,
+        auth: Option<AuthUser>,
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Vec<(Cursor, RecordRoot)>>> {
@@ -474,8 +472,8 @@ impl Db {
     #[tracing::instrument(skip(self))]
     pub async fn set_manifest(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let b = bincode::serialize(&manifest)?;
-        let value = indexer_rocksdb::RecordValue::Bytes(b);
-        let mut record = indexer_rocksdb::RecordRoot::new();
+        let value = RecordValue::Bytes(b);
+        let mut record = RecordRoot::new();
         record.insert("manifest", value);
         Ok(self.indexer.set_system_key("manifest", &record).await?)
     }
@@ -486,10 +484,10 @@ impl Db {
         let value = match record.and_then(
             |mut r: std::collections::HashMap<
                 String,
-                indexer_db_adaptor::collection::record::RecordValue,
+                RecordValue,
             >| r.remove("manifest"),
         ) {
-            Some(indexer_rocksdb::RecordValue::Bytes(b)) => b,
+            Some(RecordValue::Bytes(b)) => b,
             _ => return Ok(None),
         };
         let manifest: proposal::ProposalManifest = bincode::deserialize(&value)?;
@@ -533,24 +531,24 @@ impl Db {
         collection_id: &str,
         record_id: &str,
         record: &RecordRoot,
-        auth: Option<&indexer_rocksdb::AuthUser>,
+        auth: Option<&AuthUser>,
     ) -> Result<()> {
         let collection = self.indexer.collection(&collection_id).await?;
 
         let old_record = collection
             .get(&record_id, auth)
             .await
-            .map_err(indexer_rocksdb::IndexerError::from)?
+            .map_err(IndexerError::from)?
             .ok_or(Error::CollectionNotFound)?;
 
         let old_ast = old_record.get("ast").ok_or(Error::CollectionASTNotFound)?;
 
-        let indexer_rocksdb::RecordValue::String(old_ast) = old_ast
+        let RecordValue::String(old_ast) = old_ast
             else {
                 return Err(Error::CollectionASTInvalid("Collection AST in old record is not a string".into()));
             };
 
-        let indexer_rocksdb::RecordValue::String(new_ast) = record
+        let RecordValue::String(new_ast) = record
                 .get("ast")
                 .ok_or(Error::CollectionASTNotFound)? else {
             return Err(Error::CollectionASTInvalid("Collection AST in new record is not a string".into()));
@@ -562,9 +560,9 @@ impl Db {
             serde_json::from_str(old_ast)?,
             serde_json::from_str(new_ast)?,
         )
-        .map_err(indexer_rocksdb::IndexerError::from)?;
+        .map_err(IndexerError::from)?;
 
-        validate_collection_record(record).map_err(indexer_rocksdb::IndexerError::from)?;
+        validate_collection_record(record).map_err(IndexerError::from)?;
 
         Ok(())
     }
