@@ -29,7 +29,7 @@ async fn get_collection_collection_records_with_invalid_signature_different_publ
 
     let (_, another_public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
     let another_public_key =
-        indexer_rocksdb::PublicKey::from_secp256k1_key(&another_public_key).unwrap();
+        indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&another_public_key).unwrap();
 
     let signer = Signer::from(move |body: &str| {
         let mut signature = Signature::create(&private_key, SystemTime::now(), body);
@@ -103,13 +103,13 @@ collection People {
     struct People {
         id: String,
         name: Option<String>,
-        public_key: Option<indexer_rocksdb::PublicKey>,
+        public_key: Option<indexer_db_adaptor::publickey::PublicKey>,
     }
 
     let server = Server::setup_and_wait(None).await;
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key = indexer_rocksdb::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let public_key = indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
     let signer =
         Signer::from(move |body: &str| Signature::create(&private_key, SystemTime::now(), body));
 
@@ -220,7 +220,7 @@ collection Account {
     struct Account {
         id: String,
         balance: f64,
-        owner: Option<indexer_rocksdb::PublicKey>,
+        owner: Option<indexer_db_adaptor::publickey::PublicKey>,
     }
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
@@ -242,7 +242,7 @@ collection Account {
         Account {
             id: "id1".to_string(),
             balance: 10.0,
-            owner: Some(indexer_rocksdb::PublicKey::from_secp256k1_key(&public_key).unwrap()),
+            owner: Some(indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap()),
         }
     );
 
@@ -342,8 +342,8 @@ collection Account {
     struct Account {
         id: String,
         balance: f64,
-        manager: indexer_rocksdb::PublicKey,
-        owner: indexer_rocksdb::PublicKey,
+        manager: indexer_db_adaptor::publickey::PublicKey,
+        owner: indexer_db_adaptor::publickey::PublicKey,
     }
 
     let collection = server
@@ -354,7 +354,7 @@ collection Account {
     let (owner_private_key, owner_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
     let owner_public_key =
-        indexer_rocksdb::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
+        indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
     let owner_signer = Signer::from(move |body: &str| {
         Signature::create(&owner_private_key, SystemTime::now(), body)
     });
@@ -362,7 +362,7 @@ collection Account {
     let (manager_private_key, manager_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
     let manager_public_key =
-        indexer_rocksdb::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
+        indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
     let manager_signer = Signer::from(move |body: &str| {
         Signature::create(&manager_private_key, SystemTime::now(), body)
     });
@@ -518,7 +518,7 @@ collection User {
     struct User {
         id: String,
         name: String,
-        pk: indexer_rocksdb::PublicKey,
+        pk: indexer_db_adaptor::publickey::PublicKey,
     }
 
     let user_collection = server
@@ -535,7 +535,7 @@ collection User {
         secp256k1::generate_keypair(&mut rand::thread_rng());
 
     let owner_public_key =
-        indexer_rocksdb::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
+        indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
     let owner_signer = Signer::from(move |body: &str| {
         Signature::create(&owner_private_key, SystemTime::now(), body)
     });
@@ -543,7 +543,7 @@ collection User {
     let (reader_private_key, reader_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
     let reader_public_key =
-        indexer_rocksdb::PublicKey::from_secp256k1_key(&reader_public_key).unwrap();
+        indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&reader_public_key).unwrap();
     let reader_signer = Signer::from(move |body: &str| {
         Signature::create(&reader_private_key, SystemTime::now(), body)
     });
@@ -758,8 +758,8 @@ collection Account {
     struct Account {
         id: String,
         balance: f64,
-        owner: indexer_rocksdb::PublicKey,
-        manager: indexer_rocksdb::PublicKey,
+        owner: indexer_db_adaptor::publickey::PublicKey,
+        manager: indexer_db_adaptor::publickey::PublicKey,
     }
 
     let account_collection = server
@@ -770,7 +770,7 @@ collection Account {
     let (owner_private_key, owner_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
     let owner_public_key =
-        indexer_rocksdb::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
+        indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
     let owner_signer = Signer::from(move |body: &str| {
         Signature::create(&owner_private_key, SystemTime::now(), body)
     });
@@ -778,7 +778,7 @@ collection Account {
     let (manager_private_key, manager_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
     let manager_public_key =
-        indexer_rocksdb::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
+        indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
     let manager_signer = Signer::from(move |body: &str| {
         Signature::create(&manager_private_key, SystemTime::now(), body)
     });
@@ -979,7 +979,7 @@ collection Manager {
     #[serde(rename_all = "camelCase")]
     struct Manager {
         id: String,
-        public_key: indexer_rocksdb::PublicKey,
+        public_key: indexer_db_adaptor::publickey::PublicKey,
     }
 
     let account_collection = server
