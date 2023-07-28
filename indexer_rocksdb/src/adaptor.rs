@@ -10,6 +10,7 @@ use indexer_db_adaptor::{
 };
 use std::{path::Path, pin::Pin, time::SystemTime};
 
+#[derive(Clone)]
 pub struct RocksDBAdaptor {
     store: Store,
 }
