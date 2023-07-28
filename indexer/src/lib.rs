@@ -37,21 +37,19 @@ pub enum IndexerError {
     #[error("store error")]
     Store(#[from] store::StoreError),
 
-    #[error("index error")]
-    Index(#[from] index::IndexError),
-
+    // #[error("index error")]
+    // Index(#[from] index::IndexError),
     #[error("keys error")]
     Keys(#[from] keys::KeysError),
 
-    #[error(transparent)]
-    PublicKey(#[from] publickey::PublicKeyError),
+    // #[error(transparent)]
+    // PublicKey(#[from] publickey::PublicKeyError),
 
-    #[error("record error")]
-    Record(#[from] record::RecordError),
+    // #[error("record error")]
+    // Record(#[from] record::RecordError),
 
-    #[error("where query error")]
-    WhereQuery(#[from] where_query::WhereQueryError),
-
+    // #[error("where query error")]
+    // WhereQuery(#[from] where_query::WhereQueryError),
     #[error("migration error")]
     Migration(#[from] migrate::Error),
 }

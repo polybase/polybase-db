@@ -15,6 +15,7 @@ base64 = "0.21"
 cid = "0.10"
 once_cell = "1.17.0"
 polylang = { git = "https://github.com/polybase/polylang", branch = "main", version = "0.1.0" }
+indexer_db_adaptor = { path = "../indexer_db_adaptor" }
 prost = "0.11"
 prost-types = "0.11"
 rocksdb = "0.19"
@@ -30,7 +31,6 @@ hex = "0.4"
 parking_lot = "0.12.1"
 tracing = "0.1.37"
 async-trait = "0.1.72"
-indexer_db_adaptor = { path = "../indexer_db_adaptor" }
 
 [build-dependencies]
 prost-build = "0.11"

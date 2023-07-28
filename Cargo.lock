@@ -1945,7 +1945,7 @@ name = "gateway"
 version = "0.6.5"
 dependencies = [
  "async-recursion",
- "indexer",
+ "indexer_db_adaptor",
  "polylang 0.1.0 (git+https://github.com/polybase/polylang?branch=main)",
  "rand 0.8.5",
  "serde",
@@ -3766,7 +3766,8 @@ dependencies = [
  "futures-util",
  "gateway",
  "hex",
- "indexer",
+ "indexer_db_adaptor",
+ "indexer_rocksdb",
  "libp2p",
  "libp2p-quic",
  "once_cell",

@@ -1,12 +1,8 @@
-use std::{borrow::Cow, cmp::Ordering, fmt};
-
+use crate::{index, proto};
 use cid::multihash::{Hasher, MultihashDigest};
+use indexer_db_adaptor::collection::record::{self, IndexValue, RecordRoot};
 use prost::Message;
-
-use crate::proto;
-
-use crate::record::RocksDBIndexValue;
-use indexer_db_adaptor::record::{IndexValue, RecordError, RecordRoot};
+use std::{borrow::Cow, cmp::Ordering, fmt};
 
 pub type Result<T> = std::result::Result<T, KeysError>;
 
@@ -24,8 +20,8 @@ pub enum KeysError {
     #[error("key does not have immediate successor")]
     KeyDoesNotHaveImmediateSuccessor,
 
-    #[error(transparent)]
-    RecordError(#[from] RecordError),
+    #[error("record error")]
+    RecordError(#[from] record::RecordError),
 
     #[error("try from int error")]
     TryFromIntError(#[from] std::num::TryFromIntError),
@@ -38,6 +34,9 @@ pub enum KeysError {
 
     #[error("path and directions must be the same length")]
     PathAndDirectionsLengthMismatch,
+
+    #[error("index error")]
+    IndexError(#[from] crate::index::Error),
 }
 
 const MULTICODEC_PROTOBUF: u64 = 0x50;
@@ -152,7 +151,7 @@ fn generate_cid(data: &[u8], out: &mut Vec<u8>) -> std::result::Result<(), cid::
 }
 
 #[derive(PartialEq, Clone)]
-pub enum Key<'a> {
+pub(crate) enum Key<'a> {
     /// A wildcard key is always greater than a key whose prefix matches the inner key.
     Wildcard(Box<Key<'a>>),
     /// A data key is a key that points to a record.
@@ -271,7 +270,7 @@ impl<'a> Key<'a> {
                 }
 
                 for value in values.iter() {
-                    value.as_ref().serialize(&mut key)?;
+                    index::serialize(value.as_ref(), &mut key)?;
                 }
                 Ok(key)
             }
@@ -303,7 +302,7 @@ impl<'a> Key<'a> {
                         let mut i = 39 + directions_len;
                         while i < key.len() {
                             let (field, _) = eat_field(&key[i..]);
-                            let value = crate::record::RocksDBIndexValue::deserialize(field)?;
+                            let value = index::deserialize(field)?;
                             values.push(Cow::Owned(value));
                             i += 2 + field.len();
                         }
@@ -443,7 +442,6 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::record::RocksDBIndexValue;
 
     impl Key<'_> {
         pub(crate) fn immediate_successor_value(mut self) -> Result<Self> {
@@ -456,9 +454,9 @@ mod test {
     fn test_index_value_number() {
         let value = IndexValue::Number(40.0);
         let mut serialized = vec![];
-        value.serialize(&mut serialized).unwrap();
+        index::serialize(&value, &mut serialized).unwrap();
         let (field, _) = eat_field(&serialized);
-        let deserialized = IndexValue::deserialize(field).unwrap();
+        let deserialized = index::deserialize(field).unwrap();
         assert_eq!(deserialized, value);
     }
 
@@ -466,9 +464,9 @@ mod test {
     fn test_index_value_string() {
         let value = IndexValue::String("hello".to_string().into());
         let mut serialized = vec![];
-        value.serialize(&mut serialized).unwrap();
+        index::serialize(&value, &mut serialized).unwrap();
         let (field, _) = eat_field(&serialized);
-        let deserialized = IndexValue::deserialize(field).unwrap();
+        let deserialized = index::deserialize(field).unwrap();
         assert_eq!(deserialized, value);
     }
 

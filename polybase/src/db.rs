@@ -4,10 +4,11 @@ use crate::txn::{self, CallTxn};
 use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
+use indexer_db_adaptor::indexer::Indexer;
 use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
 use indexer_rocksdb::{
     collection::{validate_collection_record, RocksDBCollectionAdaptor},
-    validate_schema_change, Cursor, Indexer, ListQuery, RecordRoot,
+    validate_schema_change, Cursor, ListQuery, RecordRoot,
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -102,7 +103,8 @@ impl Db {
         // Create the indexer
         #[allow(clippy::unwrap_used)]
         let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
-        let indexer = Indexer::new(indexer_dir)?;
+        let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+        let indexer = Indexer::new(rocksdb_adaptor)?;
 
         // Check for any migrations
         // indexer
@@ -142,9 +144,9 @@ impl Db {
         collection_id: String,
         record_id: String,
     ) -> Result<Option<RecordRoot>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        let collection = self.indexer.collection(&collection_id).await?;
 
-        let record = collection.get_without_auth_check(record_id).await;
+        let record = collection.get_without_auth_check(&record_id).await;
         record.map_err(|e| Error::Indexer(e.into()))
     }
 
@@ -155,8 +157,8 @@ impl Db {
         record_id: String,
         auth: Option<indexer_rocksdb::AuthUser>,
     ) -> Result<Option<RecordRoot>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
-        Ok(collection.get(record_id, auth.as_ref()).await?)
+        let collection = self.indexer.collection(&collection_id).await?;
+        Ok(collection.get(&record_id, auth.as_ref()).await?)
     }
 
     #[tracing::instrument(skip(self))]
@@ -168,7 +170,7 @@ impl Db {
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Option<RecordRoot>>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        let collection = self.indexer.collection(&collection_id).await?;
 
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
         // updated within the given time.
@@ -181,7 +183,7 @@ impl Db {
         .await?;
 
         Ok(if updated {
-            DbWaitResult::Updated(collection.get(record_id, auth.as_ref()).await?)
+            DbWaitResult::Updated(collection.get(&record_id, auth.as_ref()).await?)
         } else {
             DbWaitResult::NotModified
         })
@@ -194,7 +196,7 @@ impl Db {
         query: ListQuery<'_>,
         auth: Option<indexer_rocksdb::AuthUser>,
     ) -> Result<Vec<(Cursor, RecordRoot)>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        let collection = self.indexer.collection(&collection_id).await?;
 
         #[allow(clippy::let_and_return)]
         let records = Ok(collection
@@ -215,7 +217,7 @@ impl Db {
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Vec<(Cursor, RecordRoot)>>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        let collection = self.indexer.collection(&collection_id).await?;
 
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
         // updated within the given time.
@@ -474,17 +476,19 @@ impl Db {
         let b = bincode::serialize(&manifest)?;
         let value = indexer_rocksdb::RecordValue::Bytes(b);
         let mut record = indexer_rocksdb::RecordRoot::new();
-        record.insert("manifest".to_string(), value);
-        Ok(self
-            .indexer
-            .set_system_key("manifest".to_string(), &record)
-            .await?)
+        record.insert("manifest", value);
+        Ok(self.indexer.set_system_key("manifest", &record).await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_manifest(&self) -> Result<Option<proposal::ProposalManifest>> {
-        let record = self.indexer.get_system_key("manifest".to_string()).await?;
-        let value = match record.and_then(|mut r| r.remove("manifest")) {
+        let record = self.indexer.get_system_key("manifest").await?;
+        let value = match record.and_then(
+            |mut r: std::collections::HashMap<
+                String,
+                indexer_db_adaptor::collection::record::RecordValue,
+            >| r.remove("manifest"),
+        ) {
             Some(indexer_rocksdb::RecordValue::Bytes(b)) => b,
             _ => return Ok(None),
         };
@@ -500,10 +504,10 @@ impl Db {
         record_id: String,
     ) -> Result<()> {
         // Get the indexer collection instance
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        let collection = self.indexer.collection(&collection_id).await?;
 
         // Update the indexer
-        collection.delete(record_id.clone()).await?;
+        collection.delete(&record_id).await?;
 
         Ok(())
     }
@@ -516,10 +520,10 @@ impl Db {
         record: RecordRoot,
     ) -> Result<()> {
         // Get the indexer collection instance
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        let collection = self.indexer.collection(&collection_id).await?;
 
         // Update the indexer
-        collection.set(record_id.clone(), &record).await?;
+        collection.set(&record_id, &record).await?;
 
         Ok(())
     }
@@ -531,10 +535,10 @@ impl Db {
         record: &RecordRoot,
         auth: Option<&indexer_rocksdb::AuthUser>,
     ) -> Result<()> {
-        let collection = self.indexer.collection(collection_id.to_owned()).await?;
+        let collection = self.indexer.collection(&collection_id).await?;
 
         let old_record = collection
-            .get(record_id.to_owned(), auth)
+            .get(&record_id, auth)
             .await
             .map_err(indexer_rocksdb::IndexerError::from)?
             .ok_or(Error::CollectionNotFound)?;

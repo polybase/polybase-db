@@ -4,10 +4,16 @@ use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 use tracing::debug;
-
-use indexer_rocksdb::{
-    collection::{RocksDBCollectionAdaptor,validate_collection_record}, Converter, FieldWalker, Indexer, IndexerError,
-    PathFinder, RecordValue,
+use indexer_db_adaptor::{
+    store::Store,
+    memory::MemoryStore,
+    indexer::{Indexer, IndexerError},
+    publickey::PublicKey,
+    collection::{
+        collection::{Collection, AuthUser},
+        record::{RecordError, RecordUserError, RecordValue, RecordRoot, Converter, PathFinder, json_to_record, record_to_json},
+        validation::validate_collection_record
+    },
 };
 
 pub type Result<T> = std::result::Result<T, GatewayError>;
@@ -16,7 +22,7 @@ pub type Result<T> = std::result::Result<T, GatewayError>;
 pub enum GatewayError {
     #[error("gateway user error")]
     UserError(#[from] GatewayUserError),
-
+ 
     #[error("collection has no AST")]
     CollectionHasNoAST,
 
@@ -33,7 +39,7 @@ pub enum GatewayError {
     FailedToCompileScript,
 
     #[error("indexer error")]
-    IndexerError(#[from] indexer_rocksdb::IndexerError),
+    IndexerError(#[from] IndexerError),
 
     #[error("serde_json error")]
     SerdeJsonError(#[from] serde_json::Error),
@@ -86,7 +92,7 @@ pub enum GatewayUserError {
     #[error("invalid argument type for parameter {parameter_name:?}: {source}")]
     FunctionInvalidArgumentType {
         parameter_name: String,
-        source: indexer_rocksdb::RecordError,
+        source: RecordError,
     },
 
     #[error("function timed out")]
@@ -115,12 +121,12 @@ pub struct FunctionOutput {
     self_destruct: bool,
 }
 
-pub struct Gateway {
+pub struct Gateway{
     // This is so the consumer of this library can't create a Gateway without calling initialize
     _x: (),
 }
 
-pub fn initialize() -> Gateway {
+pub fn initialize<S: Store>() -> Gateway {
     let platform = v8::new_default_platform(0, false).make_shared();
     v8::V8::initialize_platform(platform);
     v8::V8::initialize();
@@ -128,11 +134,11 @@ pub fn initialize() -> Gateway {
     Gateway { _x: () }
 }
 
-async fn dereference_args(
-    indexer: &Indexer,
-    collection: &indexer_rocksdb::RocksDBCollection<'_>,
+async fn dereference_args<S: Store>(
+    indexer: &Indexer<S>,
+    collection: &Collection<'_, S>,
     args: Vec<RecordValue>,
-    auth: Option<&indexer_rocksdb::AuthUser>,
+    auth: Option<&AuthUser>,
 ) -> Result<Vec<RecordValue>> {
     let mut dereferenced_args = Vec::<RecordValue>::new();
 
@@ -142,7 +148,7 @@ async fn dereference_args(
             RecordValue::ForeignRecordReference(fr) => (
                 Cow::Owned(
                     indexer
-                        .collection(fr.collection_id)
+                        .collection(&fr.collection_id)
                         .await
                         .map_err(IndexerError::from)?,
                 ),
@@ -155,7 +161,7 @@ async fn dereference_args(
         };
 
         let record = collection
-            .get(record_id.clone(), auth)
+            .get(&record_id, auth)
             .await
             .map_err(IndexerError::from)?
             .ok_or_else(|| GatewayUserError::RecordNotFound {
@@ -186,13 +192,13 @@ fn find_record_fields<'a>(
 }
 
 /// Dereferences records/foreign records in record fields.
-async fn dereference_fields(
-    indexer: &Indexer,
-    collection: &indexer_rocksdb::RocksDBCollection<'_>,
+async fn dereference_fields<S: Store>(
+    indexer: &Indexer<S>,
+    collection: &Collection<'_, S>,
     collection_ast: &polylang::stableast::Collection<'_>,
-    mut record: indexer_rocksdb::RecordRoot,
-    auth: Option<&indexer_rocksdb::AuthUser>,
-) -> Result<indexer_rocksdb::RecordRoot> {
+    mut record: RecordRoot,
+    auth: Option<&AuthUser>,
+) -> Result<RecordRoot> {
     let record_fields = find_record_fields(collection_ast);
 
     for (path, type_) in record_fields {
@@ -221,7 +227,7 @@ async fn dereference_fields(
 
             Cow::Owned(
                 indexer
-                    .collection(foreign_collection_id)
+                    .collection(&foreign_collection_id)
                     .await
                     .map_err(IndexerError::from)?,
             )
@@ -245,8 +251,8 @@ async fn dereference_fields(
 }
 
 /// Turns dereferenced records back into references.
-fn reference_records(
-    collection: &indexer_rocksdb::RocksDBCollection,
+fn reference_records<S: Store>(
+    collection: &Collection<'_, S>,
     collection_ast: &polylang::stableast::Collection,
     record: serde_json::Value,
 ) -> Result<serde_json::Value> {
@@ -361,13 +367,13 @@ fn reference_records(
     Ok(record)
 }
 
-async fn has_permission_to_call(
-    indexer: &Indexer,
-    collection: &indexer_rocksdb::RocksDBCollection<'_>,
+async fn has_permission_to_call<S: Store>(
+    indexer: &Indexer<S>,
+    collection: &Collection<'_, S>,
     collection_ast: &polylang::stableast::Collection<'_>,
     method_ast: &polylang::stableast::Method<'_>,
-    record: &indexer_rocksdb::RecordRoot,
-    auth: Option<&indexer_rocksdb::AuthUser>,
+    record: &RecordRoot,
+    auth: Option<&AuthUser>,
 ) -> Result<bool> {
     let is_col_public = collection_ast.attributes.iter().any(|attr| matches!(attr, polylang::stableast::CollectionAttribute::Directive(d) if d.name == "public"));
     // a @public collection is the same as a @read + @call collection
@@ -411,74 +417,76 @@ async fn has_permission_to_call(
             continue;
         };
 
-        #[async_recursion]
-        async fn can_call(
-            indexer: &Indexer,
-            collection: &indexer_rocksdb::RocksDBCollection<'_>,
-            value: &RecordValue,
-            auth: &indexer_rocksdb::AuthUser,
-        ) -> Result<bool> {
-            match value {
-                RecordValue::PublicKey(pk) if pk == auth.public_key() => {
-                    return Ok(true);
-                }
-                RecordValue::RecordReference(r) => {
-                    let record = collection
-                        .get(r.id.clone(), Some(auth))
-                        .await
-                        .map_err(IndexerError::from)?
-                        .ok_or_else(|| GatewayUserError::RecordNotFound {
-                            record_id: r.id.clone(),
-                            collection_id: collection.collection.id().to_string(),
-                        })?;
-
-                    if collection
-                        .has_delegate_access(&record, &Some(auth))
-                        .await
-                        .map_err(IndexerError::from)?
-                    {
-                        return Ok(true);
-                    }
-                }
-                RecordValue::ForeignRecordReference(fr) => {
-                    let collection = indexer
-                        .collection(fr.collection_id.clone())
-                        .await
-                        .map_err(IndexerError::from)?;
-
-                    let record = collection
-                        .get(fr.id.clone(), Some(auth))
-                        .await
-                        .map_err(IndexerError::from)?
-                        .ok_or_else(|| GatewayUserError::RecordNotFound {
-                            record_id: fr.id.clone(),
-                            collection_id: collection.collection.id().to_string(),
-                        })?;
-
-                    if collection
-                        .has_delegate_access(&record, &Some(auth))
-                        .await
-                        .map_err(IndexerError::from)?
-                    {
-                        return Ok(true);
-                    }
-                }
-                RecordValue::Array(arr) => {
-                    for v in arr {
-                        if can_call(indexer, collection, v, auth).await? {
-                            return Ok(true);
-                        }
-                    }
-                }
-                _ => {}
-            }
-
-            Ok(false)
-        }
+       
 
         if can_call(indexer, collection, value, auth).await? {
             return Ok(true);
         }
+    }
+
+    Ok(false)
+}
+
+#[async_recursion]
+async fn can_call<S: Store>(
+    indexer: &Indexer<S>,
+    collection: &Collection<'_, S>,
+    value: &RecordValue,
+    auth: &AuthUser,
+) -> Result<bool> {
+    match value {
+        RecordValue::PublicKey(pk) if pk == auth.public_key() => {
+            return Ok(true);
+        }
+        RecordValue::RecordReference(r) => {
+            let record = collection
+                .get(&r.id, Some(auth))
+                .await
+                .map_err(IndexerError::from)?
+                .ok_or_else(|| GatewayUserError::RecordNotFound {
+                    record_id: r.id.clone(),
+                    collection_id: collection.collection.id().to_string(),
+                })?;
+
+            if collection
+                .has_delegate_access(&record, &Some(auth))
+                .await
+                .map_err(IndexerError::from)?
+            {
+                return Ok(true);
+            }
+        }
+        RecordValue::ForeignRecordReference(fr) => {
+            let collection = indexer
+                .collection(&fr.collection_id)
+                .await
+                .map_err(IndexerError::from)?;
+
+            let record = collection
+                .get(fr.id.clone(), Some(auth))
+                .await
+                .map_err(IndexerError::from)?
+                .ok_or_else(|| GatewayUserError::RecordNotFound {
+                    record_id: fr.id.clone(),
+                    collection_id: collection.collection.id().to_string(),
+                })?;
+
+            if collection
+                .has_delegate_access(&record, &Some(auth))
+                .await
+                .map_err(IndexerError::from)?
+            {
+                return Ok(true);
+            }
+        }
+        RecordValue::Array(arr) => {
+            for v in arr {
+                if can_call(indexer, collection, v, auth).await? {
+                    return Ok(true);
+                }
+            }
+        }
+        _ => {}
     }
 
     Ok(false)
@@ -489,12 +497,12 @@ pub enum Change {
     Create {
         collection_id: String,
         record_id: String,
-        record: indexer_rocksdb::RecordRoot,
+        record: RecordRoot,
     },
     Update {
         collection_id: String,
         record_id: String,
-        record: indexer_rocksdb::RecordRoot,
+        record: RecordRoot,
     },
     Delete {
         collection_id: String,
@@ -526,7 +534,7 @@ impl Change {
 
 fn get_collection_ast<'a>(
     collection_name: &str,
-    collection_meta_record: &'a indexer_rocksdb::RecordRoot,
+    collection_meta_record: &'a RecordRoot,
 ) -> Result<(&'a str, polylang::stableast::Collection<'a>)> {
     let Some(ast) = collection_meta_record.get("ast") else {
         return Err(GatewayError::CollectionHasNoAST)?;
@@ -552,22 +560,22 @@ fn get_collection_ast<'a>(
 
 impl Gateway {
     #[tracing::instrument(skip(self, indexer))]
-    pub async fn call(
+    pub async fn call<S: Store>(
         &self,
-        indexer: &Indexer,
+        indexer: &Indexer<S>,
         collection_id: String,
         function_name: &str,
         record_id: String,
         args: Vec<serde_json::Value>,
-        auth: Option<&indexer_rocksdb::AuthUser>,
+        auth: Option<&AuthUser>,
     ) -> Result<Vec<Change>> {
         let mut changes = Vec::new();
         let collection_collection = indexer
-            .collection("Collection".to_string())
+            .collection("Collection")
             .await
             .map_err(IndexerError::from)?;
         let collection = indexer
-            .collection(collection_id.clone())
+            .collection(&collection_id)
             .await
             .map_err(IndexerError::from)?;
 
@@ -601,10 +609,10 @@ impl Gateway {
         };
 
         let instance_record = if function_name == "constructor" {
-            indexer_rocksdb::RecordRoot::new()
+            RecordRoot::new()
         } else {
             collection
-                .get(record_id.clone(), auth)
+                .get(&record_id, auth)
                 .await
                 .map_err(IndexerError::from)?
                 .ok_or_else(|| GatewayUserError::RecordNotFound {
@@ -670,7 +678,7 @@ impl Gateway {
                 .await?;
         let output = {
             let instance_json =
-                indexer_rocksdb::record_to_json(instance_record.clone()).map_err(IndexerError::from)?;
+            record_to_json(instance_record.clone()).map_err(IndexerError::from)?;
             let args = dereferenced_args
                 .clone()
                 .into_iter()
@@ -705,9 +713,9 @@ impl Gateway {
 
             output
         };
-        let instance = indexer_rocksdb::json_to_record(&collection_ast, output.instance, false).map_err(
+        let instance = json_to_record(&collection_ast, output.instance, false).map_err(
             |e| match e {
-                indexer_rocksdb::RecordError::UserError(indexer_rocksdb::RecordUserError::MissingField {
+                RecordError::UserError(RecordUserError::MissingField {
                     field,
                 }) if field == "id" && function_name == "constructor" => {
                     GatewayError::UserError(GatewayUserError::ConstructorMustAssignId)
@@ -780,7 +788,7 @@ impl Gateway {
                             return Err(GatewayUserError::RecordIDModified)?;
                         }
 
-                        Some((collection.collection.id().to_owned(), indexer_rocksdb::json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
+                        Some((collection.collection.id().to_owned(), json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
                     },
                     polylang::stableast::Type::ForeignRecord(fr) => {
                         let Some(output_id) = output_arg.get("id") else {
@@ -801,7 +809,7 @@ impl Gateway {
 
                         let (_, ast) = get_collection_ast(fr.collection.as_ref(), &collection_meta)?;
 
-                        Some((collection_id, indexer_rocksdb::json_to_record(&ast, output_arg, false).map_err(IndexerError::from)?))
+                        Some((collection_id, json_to_record(&ast, output_arg, false).map_err(IndexerError::from)?))
                     }
                     _ => None,
                 }) else {
@@ -872,7 +880,7 @@ impl Gateway {
         function_name: &str,
         instance: &serde_json::Value,
         args: &[serde_json::Value],
-        auth: Option<&indexer_rocksdb::AuthUser>,
+        auth: Option<&AuthUser>,
     ) -> Result<FunctionOutput> {
         let mut isolate = v8::Isolate::new(Default::default());
         let terminate_handle = isolate.thread_safe_handle();
@@ -978,7 +986,7 @@ impl Gateway {
                     let public_key_json = public_key_json.to_rust_string_lossy(scope);
 
                     let public_key =
-                        match serde_json::from_str::<indexer_rocksdb::PublicKey>(&public_key_json) {
+                        match serde_json::from_str::<PublicKey>(&public_key_json) {
                             Ok(pk) => pk,
                             Err(e) => {
                                 #[allow(clippy::unwrap_used)] // we can't recover from this
@@ -1205,7 +1213,7 @@ mod tests {
 
     use super::*;
 
-    pub(crate) struct TestIndexer(Option<Indexer>);
+    pub(crate) struct TestIndexer(Option<Indexer<MemoryStore>>);
 
     impl Default for TestIndexer {
         fn default() -> Self {
@@ -1228,7 +1236,7 @@ mod tests {
     }
 
     impl Deref for TestIndexer {
-        type Target = Indexer;
+        type Target = Indexer<MemoryStore>;
 
         fn deref(&self) -> &Self::Target {
             self.0.as_ref().unwrap()
@@ -1259,15 +1267,15 @@ mod tests {
 
         let indexer = TestIndexer::default();
 
-        let collection_collection = indexer.collection("Collection".to_string()).await.unwrap();
+        let collection_collection = indexer.collection("Collection").await.unwrap();
         collection_collection
             .set(
-                "ns/User".to_string(),
+                "ns/User",
                 &[
-                    ("id".into(), indexer_rocksdb::RecordValue::String("ns/User".into())),
+                    ("id".into(), RecordValue::String("ns/User".into())),
                     (
                         "ast".into(),
-                        indexer_rocksdb::RecordValue::String(serde_json::to_string(&stable_ast).unwrap()),
+                        RecordValue::String(serde_json::to_string(&stable_ast).unwrap()),
                     ),
                 ]
                 .into(),
@@ -1277,13 +1285,13 @@ mod tests {
 
         indexer.commit().await.unwrap();
 
-        let user_collection = indexer.collection("ns/User".to_string()).await.unwrap();
+        let user_collection = indexer.collection("ns/User").await.unwrap();
         user_collection
             .set(
-                "1".to_string(),
+                "1",
                 &[
-                    ("id".into(), indexer_rocksdb::RecordValue::String("1".into())),
-                    ("name".into(), indexer_rocksdb::RecordValue::String("John".into())),
+                    ("id".into(), RecordValue::String("1".into())),
+                    ("name".into(), RecordValue::String("John".into())),
                 ]
                 .into(),
             )
@@ -1312,8 +1320,8 @@ mod tests {
                 collection_id: "ns/User".to_string(),
                 record_id: "1".to_string(),
                 record: HashMap::from([
-                    ("id".into(), indexer_rocksdb::RecordValue::String("1".into())),
-                    ("name".into(), indexer_rocksdb::RecordValue::String("Tim".into()))
+                    ("id".into(), RecordValue::String("1".into())),
+                    ("name".into(), RecordValue::String("Tim".into()))
                 ])
             }
         );

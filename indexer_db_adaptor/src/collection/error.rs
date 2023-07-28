@@ -1,11 +1,6 @@
-use std::time::SystemTime;
-
-use crate::db::Database;
-use crate::publickey::PublicKey;
-use crate::record::RecordError;
-use serde::{Deserialize, Serialize};
-
-/// The generic collection functionality
+use super::record;
+use super::where_query;
+use crate::store;
 
 pub type Result<T> = std::result::Result<T, CollectionError>;
 
@@ -47,8 +42,11 @@ pub enum CollectionError {
     #[error("Collection collection record not found for collection {id:?}")]
     CollectionCollectionRecordNotFound { id: String },
 
-    #[error(transparent)]
-    RecordError(#[from] RecordError),
+    #[error("where query error")]
+    WhereQueryError(#[from] where_query::WhereQueryError),
+
+    #[error("record error")]
+    RecordError(#[from] record::RecordError),
 
     #[error("parse int error")]
     ParseIntError(#[from] std::num::ParseIntError),
@@ -62,12 +60,9 @@ pub enum CollectionError {
     #[error("prost decode error")]
     ProstDecodeError(#[from] prost::DecodeError),
 
-    // For all other errors
-    #[error("concrete collection error")]
-    ConcreteCollectionError(#[from] Box<dyn std::error::Error>),
+    #[error("store error")]
+    Store(#[from] store::Error),
 }
-
-unsafe impl Send for CollectionError {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CollectionUserError {
@@ -121,61 +116,4 @@ pub enum CollectionUserError {
 
     #[error("unknown collection directives {directives:?}")]
     UnknownCollectionDirectives { directives: Vec<String> },
-}
-
-#[derive(Clone)]
-pub struct Collection<'c, D: Database> {
-    pub store: &'c D,
-    pub collection_id: String,
-}
-
-impl<'c, D> Collection<'c, D>
-where
-    D: Database,
-{
-    pub fn id(&self) -> &str {
-        &self.collection_id
-    }
-
-    pub fn normalize_name(collection_id: &str) -> String {
-        #[allow(clippy::unwrap_used)] // split always returns at least one element
-        let last_part = collection_id.split('/').last().unwrap();
-
-        last_part.replace('-', "_")
-    }
-
-    pub fn name(&self) -> String {
-        Self::normalize_name(self.collection_id.as_str())
-    }
-
-    pub fn namespace(&self) -> &str {
-        let Some(slash_index) = self.collection_id.rfind('/') else {
-            return "";
-        };
-
-        &self.collection_id[0..slash_index]
-    }
-}
-
-pub struct CollectionMetadata {
-    pub last_record_updated_at: SystemTime,
-}
-
-pub struct RecordMetadata {
-    pub updated_at: SystemTime,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthUser {
-    pub public_key: PublicKey,
-}
-
-impl AuthUser {
-    pub fn new(public_key: PublicKey) -> Self {
-        Self { public_key }
-    }
-
-    pub fn public_key(&self) -> &PublicKey {
-        &self.public_key
-    }
 }

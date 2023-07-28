@@ -7,6 +7,7 @@ use crate::publickey;
 
 pub type Result<T> = std::result::Result<T, RecordError>;
 
+// TODO: review if we still need all these errors
 #[derive(Debug, thiserror::Error)]
 pub enum RecordError {
     #[error(transparent)]
