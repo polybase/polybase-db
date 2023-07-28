@@ -8,6 +8,7 @@ use crate::store::{Result, Store};
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
 
+#[derive(Clone)]
 pub struct MemoryStore {
     state: Arc<Mutex<MemoryStoreState>>,
 }

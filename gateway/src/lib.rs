@@ -235,7 +235,7 @@ async fn dereference_fields<S: Store>(
         };
 
         let record = collection
-            .get(value.to_string(), auth)
+            .get(&value.to_string(), auth)
             .await
             .map_err(IndexerError::from)?
             .ok_or(GatewayUserError::RecordNotFound {

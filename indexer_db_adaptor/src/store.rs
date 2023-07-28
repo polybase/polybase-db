@@ -20,7 +20,7 @@ impl std::fmt::Display for Error {
 
 /// The Store trait
 #[async_trait::async_trait]
-pub trait Store: Send + Sync {
+pub trait Store: Send + Sync + Clone{
     // type Error: std::error::Error + Send + Sync + 'static;
     type Config;
 
