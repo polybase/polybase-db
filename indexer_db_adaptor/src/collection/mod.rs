@@ -7,6 +7,7 @@ pub mod collection;
 mod collection_record;
 pub mod cursor;
 mod error;
+pub mod field_path;
 pub mod index;
 pub mod record;
 pub mod stableast_ext;

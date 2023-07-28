@@ -985,6 +985,30 @@ pub enum IndexValue<'a> {
     ForeignRecordReference(Cow<'a, ForeignRecordReference>),
 }
 
+impl From<u64> for IndexValue<'_> {
+    fn from(n: u64) -> Self {
+        IndexValue::Number(n as f64)
+    }
+}
+
+impl From<f64> for IndexValue<'_> {
+    fn from(n: f64) -> Self {
+        IndexValue::Number(n)
+    }
+}
+
+impl From<bool> for IndexValue<'_> {
+    fn from(b: bool) -> Self {
+        IndexValue::Boolean(b)
+    }
+}
+
+impl<'a> From<&'a str> for IndexValue<'a> {
+    fn from(s: &'a str) -> Self {
+        IndexValue::String(Cow::Borrowed(s))
+    }
+}
+
 impl IndexValue<'_> {
     pub fn with_static(self) -> IndexValue<'static> {
         match self {

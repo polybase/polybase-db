@@ -4,10 +4,17 @@ use crate::txn::{self, CallTxn};
 use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
+use indexer_db_adaptor::{
+    collection::{
+        collection::{AuthUser, ListQuery},
+        cursor::Cursor,
+        record::{RecordRoot, RecordValue},
+        validation::{validate_collection_record, validate_schema_change},
+    },
+    indexer::{Indexer, IndexerError},
+    store::Store,
+};
 use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
-use indexer_db_adaptor::{indexer::{IndexerError, Indexer},
-    collection::{record::{RecordValue, RecordRoot}, collection::{AuthUser, ListQuery}, cursor::Cursor, 
-    validation::{validate_collection_record, validate_schema_change}}, store::Store};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
@@ -95,26 +102,13 @@ pub struct Db<S: Store> {
 }
 
 impl<S: Store> Db<S> {
-    pub async fn new(root_dir: String, config: DbConfig) -> Result<Self> {
+    pub async fn new(store: S, config: DbConfig) -> Result<Self> {
         let (sender, receiver) = mpsc::channel::<CallTxn>(100);
-
-        // Create the indexer
-        #[allow(clippy::unwrap_used)]
-        let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
-        //let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
-        //let indexer = Indexer::new(rocksdb_adaptor)?;
-
-        let indexer: Indexer<S> = Indexer::<S>::new(S::new(indexer_dir).await)?;
-
-        // Check for any migrations
-        // indexer
-        //     .check_for_migration(config.migration_batch_size)
-        //     .await?;
 
         Ok(Self {
             mempool: Mempool::new(),
             gateway: gateway::initialize::<S>(),
-            indexer,
+            indexer: Indexer::new(store)?,
             sender: AsyncMutex::new(sender),
             receiver: AsyncMutex::new(receiver),
             config,
@@ -150,7 +144,6 @@ impl<S: Store> Db<S> {
         record.map_err(|e| Error::Indexer(e.into()))
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn get(
         &self,
         collection_id: String,
@@ -195,7 +188,7 @@ impl<S: Store> Db<S> {
         collection_id: String,
         query: ListQuery<'_>,
         auth: Option<AuthUser>,
-    ) -> Result<Vec<(Cursor, RecordRoot)>> {
+    ) -> Result<Vec<RecordRoot>> {
         let collection = self.indexer.collection(&collection_id).await?;
 
         #[allow(clippy::let_and_return)]
@@ -216,7 +209,7 @@ impl<S: Store> Db<S> {
         auth: Option<AuthUser>,
         since: f64,
         wait_for: Duration,
-    ) -> Result<DbWaitResult<Vec<(Cursor, RecordRoot)>>> {
+    ) -> Result<DbWaitResult<Vec<RecordRoot>>> {
         let collection = self.indexer.collection(&collection_id).await?;
 
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
@@ -486,12 +479,9 @@ impl<S: Store> Db<S> {
     #[tracing::instrument(skip(self))]
     pub async fn get_manifest(&self) -> Result<Option<proposal::ProposalManifest>> {
         let record = self.indexer.get_system_key("manifest").await?;
-        let value = match record.and_then(
-            |mut r: std::collections::HashMap<
-                String,
-                RecordValue,
-            >| r.remove("manifest"),
-        ) {
+        let value = match record
+            .and_then(|mut r: std::collections::HashMap<String, RecordValue>| r.remove("manifest"))
+        {
             Some(RecordValue::Bytes(b)) => b,
             _ => return Ok(None),
         };

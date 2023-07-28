@@ -27,10 +27,6 @@ impl RocksDBAdaptor {
 impl StoreAdaptor for RocksDBAdaptor {
     type Config = String;
 
-    async fn new(root_dir: impl AsRef<Path> + Send) -> Self {
-        Self::new(root_dir)
-    }
-
     async fn commit(&self) -> Result<()> {
         self.store.commit().await?;
         Ok(())
@@ -49,10 +45,8 @@ impl StoreAdaptor for RocksDBAdaptor {
         &self,
         collection_id: &str,
         limit: Option<usize>,
-        where_query: WhereQuery,
+        where_query: WhereQuery<'_>,
         order_by: &[IndexField<'_>],
-        cursor_before: Option<Cursor<'_>>,
-        cursor_after: Option<Cursor<'_>>,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         todo!()
     }

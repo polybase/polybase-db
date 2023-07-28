@@ -1192,13 +1192,16 @@ impl<'a> Collection<'a> {
         }: ListQuery<'_>,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<impl futures::Stream<Item = Result<(Cursor, RecordRoot)>> + '_> {
+        // Select the best index for the query
         let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
             return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
         };
 
+        // Get the AST for the collection
         let mut ast_holder = None;
         let ast = self.ast(&mut ast_holder).await?;
 
+        // Borrwed key range of the query
         let key_range = where_query.key_range(
             &ast,
             self.collection_id.clone(),
@@ -1206,24 +1209,34 @@ impl<'a> Collection<'a> {
             &index.fields.iter().map(|f| f.direction).collect::<Vec<_>>(),
         )?;
 
+        // Owned key range of the query
         let key_range = where_query::KeyRange {
             lower: key_range.lower.with_static(),
             upper: key_range.upper.with_static(),
         };
 
+        // Looking at the provided sort order, to know if we need to reverse the results
+        // based on the index direction
         let mut reverse = index.should_list_in_reverse(order_by);
+
+        // If we have a cursor, we need to adjust the lower/upper bounds of the query based
+        // key range
         let key_range = match (cursor_after, cursor_before) {
             (Some(mut after), _) => {
                 after.0.immediate_successor_value_mut()?;
                 where_query::KeyRange {
+                    // Lower bound is set by cursor
                     lower: after.0,
+                    // Upper bound is set by query
                     upper: key_range.upper,
                 }
             }
             (_, Some(before)) => {
                 reverse = !reverse;
                 where_query::KeyRange {
+                    // Lower bound is set by query
                     lower: key_range.lower,
+                    // Upper bound is set by cursor
                     upper: before.0,
                 }
             }

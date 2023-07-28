@@ -18,6 +18,7 @@ use crate::rpc::create_rpc_server;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
+use indexer_rocksdb::adaptor::RocksDBAdaptor;
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
@@ -33,7 +34,6 @@ use std::{
         Arc,
     },
 };
-use indexer_rocksdb::adaptor::RocksDBAdaptor;
 
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
@@ -130,12 +130,16 @@ async fn main() -> Result<()> {
     // setup tracing for the whole project
     setup_tracing(&config.log_level, &config.log_format).await?;
 
+    // Create the underlying store
+    let indexer_dir = util::get_indexer_dir(&config.root_dir).unwrap();
+    let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+
     // Database combines various components into a single interface
     // that is thread safe
     #[allow(clippy::unwrap_used)]
     let db: Arc<Db<RocksDBAdaptor>> = Arc::new(
         Db::new(
-            config.root_dir.clone(),
+            rocksdb_adaptor,
             DbConfig {
                 migration_batch_size: config.migration_batch_size,
                 ..Default::default()

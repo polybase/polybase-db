@@ -43,10 +43,12 @@ impl<'a> CollectionIndex<'a> {
     }
 
     pub(crate) fn should_list_in_reverse(&self, sort: &[CollectionIndexField<'a>]) -> bool {
+        // if not the last sort field, then cannot reverse
         let Some(last_sort) = sort.last() else {
             return false;
         };
 
+        //
         self.fields
             .iter()
             .find(|f| f.path == last_sort.path)

@@ -1,10 +1,9 @@
 use crate::collection::{
-    cursor::Cursor,
     index::{Index, IndexField},
     record::RecordRoot,
     where_query::WhereQuery,
 };
-use std::{pin::Pin, path::Path};
+use std::pin::Pin;
 use std::time::SystemTime;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -20,12 +19,9 @@ impl std::fmt::Display for Error {
 
 /// The Store trait
 #[async_trait::async_trait]
-pub trait Store: Send + Sync + Clone{
+pub trait Store: Send + Sync + Clone {
     // type Error: std::error::Error + Send + Sync + 'static;
     type Config;
-
-    // todo - see how to abstract out the param for different backends
-    async fn new(root_dir: impl AsRef<Path> + Send) -> Self;
 
     async fn commit(&self) -> Result<()>;
 
@@ -37,10 +33,8 @@ pub trait Store: Send + Sync + Clone{
         &self,
         collection_id: &str,
         limit: Option<usize>,
-        where_query: WhereQuery,
+        where_query: WhereQuery<'_>,
         order_by: &[IndexField<'_>],
-        cursor_before: Option<Cursor<'_>>,
-        cursor_after: Option<Cursor<'_>>,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>>;
 
     async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()>;

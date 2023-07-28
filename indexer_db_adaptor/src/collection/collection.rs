@@ -4,6 +4,7 @@ use super::{
     collection_record::COLLECTION_COLLECTION_RECORD,
     cursor::Cursor,
     error::{CollectionError, CollectionUserError, Result},
+    field_path::FieldPath,
     index::{self, Index, IndexDirection},
     record::{PathFinder, RecordRoot, RecordValue},
     stableast_ext::{self, FieldWalker},
@@ -36,7 +37,7 @@ pub struct RecordMetadata {
 
 pub struct ListQuery<'a> {
     pub limit: Option<usize>,
-    pub where_query: where_query::WhereQuery,
+    pub where_query: where_query::WhereQuery<'a>,
     pub order_by: &'a [index::IndexField<'a>],
     pub cursor_before: Option<Cursor<'a>>,
     pub cursor_after: Option<Cursor<'a>>,
@@ -146,8 +147,8 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
                     .filter_map(|prop| {
                         prop.directives
                             .iter()
-                            .find(|dir| dir.name == "read")
-                            .map(|_| where_query::FieldPath(vec![prop.name.to_string()]))
+                            .find(|dir: &&stableast::Directive<'_>| dir.name == "read")
+                            .map(|_| FieldPath(vec![prop.name.to_string()]))
                     })
                     .collect::<Vec<_>>(),
                 delegate_fields: {
@@ -156,9 +157,8 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
                     collection_ast.walk_fields(&mut vec![], &mut |path, field| {
                         if let stableast_ext::Field::Property(p) = field {
                             if p.directives.iter().any(|dir| dir.name == "delegate") {
-                                delegate_fields.push(where_query::FieldPath(
-                                    path.iter().map(|p| p.to_string()).collect(),
-                                ));
+                                delegate_fields
+                                    .push(FieldPath(path.iter().map(|p| p.to_string()).collect()));
                             }
                         };
                     });
@@ -468,7 +468,6 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         Ok(Some(value))
     }
 
-
     // todo - remove this
     pub async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
         todo!()
@@ -478,7 +477,6 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
     pub async fn get_record_metadata(&self, _record_id: &str) -> Result<Option<RecordMetadata>> {
         todo!()
     }
-
 
     #[tracing::instrument(skip(self))]
     pub async fn delete(&self, record_id: &str) -> Result<()> {
@@ -498,23 +496,24 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         }: ListQuery<'_>,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<impl futures::Stream<Item = Result<RecordRoot>> + '_> {
-        let Some(_index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
+        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
             return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
         };
 
         let mut ast_holder = None;
         let _ast = self.ast(&mut ast_holder).await?;
 
+        // match (cursor_before, cursor_after) {
+        //     (Some(before), None) => {
+        //         if let Some(before_value) = before.get(index.field()) {
+        //             where_query = where_query.and(index.field(), "<", before_value);
+        //         }
+        //     }
+        // }
+
         let stream = self
             .store
-            .list(
-                self.id(),
-                limit,
-                where_query,
-                order_by,
-                cursor_before,
-                cursor_after,
-            )
+            .list(self.id(), limit, where_query, order_by)
             .await?;
 
         Ok(stream
@@ -811,7 +810,7 @@ mod tests {
                     limit: None,
                     where_query: where_query::WhereQuery(
                         [(
-                            where_query::FieldPath(vec!["name".into()]),
+                            FieldPath(vec!["name".into()]),
                             where_query::WhereNode::Equality(where_query::WhereValue(
                                 "test".into(),
                             )),

@@ -20,6 +20,7 @@ pub type Result<T> = std::result::Result<T, GatewayError>;
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
     #[error("gateway user error")]
+
     UserError(#[from] GatewayUserError),
  
     #[error("collection has no AST")]

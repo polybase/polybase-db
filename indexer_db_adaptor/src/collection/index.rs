@@ -17,6 +17,12 @@ pub struct IndexField<'a> {
     pub(crate) direction: IndexDirection,
 }
 
+impl From<IndexField<'_>> for Vec<String> {
+    fn from(field: IndexField<'_>) -> Self {
+        field.path.into_iter().map(|s| s.into_owned()).collect()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum IndexDirection {
     Ascending,
@@ -261,7 +267,10 @@ fn index_recommendation<'a>(
 mod test {
     use std::collections::HashMap;
 
-    use super::super::where_query::{FieldPath, WhereInequality, WhereValue};
+    use super::super::{
+        field_path::FieldPath,
+        where_query::{WhereInequality, WhereValue},
+    };
     use super::*;
 
     macro_rules! test_index_requirements {

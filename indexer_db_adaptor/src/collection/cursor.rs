@@ -1,6 +1,7 @@
-use super::index::Index;
+use super::{field_path::FieldPath, record::IndexValue};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -15,13 +16,18 @@ pub enum Error {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cursor<'a> {
-    collection_id: String,
-    record_id: String,
-    index: Index<'a>,
-    values: Vec<String>,
+    pub record_id: String,
+    pub values: HashMap<FieldPath, IndexValue<'a>>,
 }
 
-/// where age >= age_value && id > id_value
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// #[serde(transparent)]
+// pub struct CursorValues<'a>(pub HashMap<FieldPath, IndexValue<'a>>);
+
+pub enum CursorDirection {
+    Before,
+    After,
+}
 
 impl<'a> Cursor<'a> {
     pub fn as_base64(&self) -> Result<String> {
@@ -31,8 +37,21 @@ impl<'a> Cursor<'a> {
         Ok(STANDARD.encode(buf))
     }
 
+    // pub fn
+
     // todo - handle or remove this
     pub fn immediate_successor(&self) -> Result<Self> {
         todo!()
     }
 }
+
+// impl CursorValues<'_> {
+//     pub fn with_static(self) -> CursorValues<'static> {
+//         CursorValues(
+//             self.0
+//                 .into_iter()
+//                 .map(|(k, v)| (k, v.with_static()))
+//                 .collect(),
+//         )
+//     }
+// }

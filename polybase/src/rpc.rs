@@ -13,12 +13,16 @@ use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
+use indexer_db_adaptor::{
+    collection::{collection::AuthUser, cursor},
+    indexer::IndexerError,
+    store::Store,
+};
 use indexer_rocksdb::adaptor::RocksDBAdaptor;
 use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
-use indexer_db_adaptor::{indexer::IndexerError, collection::{cursor, collection::AuthUser}, store::Store};
 
 struct RouteState<S: Store> {
     db: Arc<Db<S>>,
@@ -129,8 +133,12 @@ enum Direction {
 impl From<Direction> for indexer_db_adaptor::collection::index::IndexDirection {
     fn from(dir: Direction) -> Self {
         match dir {
-            Direction::Ascending => indexer_db_adaptor::collection::index::IndexDirection::Ascending,
-            Direction::Descending => indexer_db_adaptor::collection::index::IndexDirection::Descending,
+            Direction::Ascending => {
+                indexer_db_adaptor::collection::index::IndexDirection::Ascending
+            }
+            Direction::Descending => {
+                indexer_db_adaptor::collection::index::IndexDirection::Descending
+            }
         }
     }
 }
@@ -180,7 +188,9 @@ impl<'de> Deserialize<'de> for OptionalCursor<'_> {
 
         let cursor = Option::<String>::deserialize(deserializer)?
             .filter(|s| !s.is_empty())
-            .map(|s| indexer_db_adaptor::collection::cursor::Cursor::deserialize(s.into_deserializer()))
+            .map(|s| {
+                indexer_db_adaptor::collection::cursor::Cursor::deserialize(s.into_deserializer())
+            })
             .transpose()?;
 
         Ok(OptionalCursor(cursor))
@@ -193,7 +203,7 @@ struct ListQuery<'a> {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
-    where_query: indexer_db_adaptor::collection::where_query::WhereQuery,
+    where_query: indexer_db_adaptor::collection::where_query::WhereQuery<'a>,
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
@@ -277,30 +287,13 @@ async fn get_records<'a>(
 
         Ok(ListResponse {
             cursor: Cursors {
-                before: records
-                    .first()
-                    .map(|(c, _)| c.clone())
-                    .or_else(|| query.before.0.clone())
-                    // TODO: is this right?
-                    // The `after` cursor is the key of the last record the user received,
-                    // if they don't receive any records,
-                    // then querying again with the returned `before` should return the `after` record,
-                    // not just records before it.
-                    .or_else(|| {
-                        query.after.0.clone().map(|a| {
-                            #[allow(clippy::unwrap_used)]
-                            // Unwrap is safe because `a` is an index key, immediate_sucessor works on index keys
-                            a.immediate_successor().unwrap()
-                        })
-                    }),
-                after: records
-                    .last()
-                    .map(|(c, _)| c.clone())
-                    .or_else(|| query.after.0.clone()),
+                // TODO: implement cursor
+                before: None, //records.first().map(|r| None),
+                after: None,  // records.last().map(|r| None),
             },
             data: records
                 .into_iter()
-                .map(|(_, r)| {
+                .map(|r| {
                     Ok(GetRecordResponse {
                         data: indexer_db_adaptor::collection::record::record_to_json(r)?,
                         block: Default::default(),
@@ -338,7 +331,7 @@ struct FunctionResponse {
 
 #[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records")]
-async fn post_record<>(
+async fn post_record(
     state: web::Data<RouteState<RocksDBAdaptor>>,
     path: web::Path<String>,
     body: auth::SignedJSON<FunctionCall>,
@@ -545,7 +538,9 @@ struct StatusResponse {
 
 #[tracing::instrument(skip(state))]
 #[get("/v0/status")]
-async fn status(state: web::Data<RouteState<RocksDBAdaptor>>) -> Result<web::Json<StatusResponse>, HTTPError> {
+async fn status(
+    state: web::Data<RouteState<RocksDBAdaptor>>,
+) -> Result<web::Json<StatusResponse>, HTTPError> {
     let manifest = state.db.get_manifest().await?;
     let height = manifest.as_ref().map(|m| m.height).unwrap_or(0);
     let hash = manifest

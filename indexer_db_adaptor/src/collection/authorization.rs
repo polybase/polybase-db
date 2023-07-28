@@ -1,4 +1,4 @@
-use super::where_query;
+use super::field_path;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Authorization {
@@ -7,9 +7,9 @@ pub(crate) struct Authorization {
     /// Anyone can call the collection functions.
     pub(crate) call_all: bool,
     /// PublicKeys/Delegates in this list can read the collection.
-    pub(crate) read_fields: Vec<where_query::FieldPath>,
+    pub(crate) read_fields: Vec<field_path::FieldPath>,
     /// PublicKeys/Delegates in this list have delegate permissions,
     /// i.e. if someone @read's a field with a record from this collection,
     /// anyone in the delegate list can read that record.
-    pub(crate) delegate_fields: Vec<where_query::FieldPath>,
+    pub(crate) delegate_fields: Vec<field_path::FieldPath>,
 }

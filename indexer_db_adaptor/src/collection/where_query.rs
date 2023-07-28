@@ -1,7 +1,11 @@
-use super::record::{self, IndexValue};
-use super::stableast_ext::FieldWalker;
+use super::{
+    cursor::{Cursor, CursorDirection},
+    field_path::FieldPath,
+    record::{self, IndexValue},
+};
+use crate::collection::index::IndexDirection;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, collections::HashMap};
+use std::collections::HashMap;
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
@@ -10,8 +14,6 @@ pub enum WhereQueryError {
     #[error(transparent)]
     UserError(#[from] WhereQueryUserError),
 
-    // #[error("keys error")]
-    // KeysError(#[from] keys::KeysError),
     #[error("record error")]
     RecordError(#[from] record::RecordError),
 }
@@ -28,130 +30,105 @@ pub enum WhereQueryUserError {
     CannotFilterOrSortByField(String),
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone)]
-pub(crate) struct FieldPath(pub(crate) Vec<String>);
-
-impl PartialEq<&[&str]> for FieldPath {
-    fn eq(&self, other: &&[&str]) -> bool {
-        self.0.iter().zip(other.iter()).all(|(a, b)| a == b)
-    }
-}
-
-impl<'de> Deserialize<'de> for FieldPath {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = Cow::<'de, str>::deserialize(deserializer)?;
-        let mut path = Vec::new();
-        for part in s.split('.') {
-            path.push(part.to_string());
-        }
-        Ok(FieldPath(path))
-    }
-}
-
-impl Serialize for FieldPath {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut s = String::new();
-        for (i, part) in self.0.iter().enumerate() {
-            if i > 0 {
-                s.push('.');
-            }
-            s.push_str(part);
-        }
-        serializer.serialize_str(&s)
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
-pub struct WhereQuery(pub(crate) HashMap<FieldPath, WhereNode>);
+pub struct WhereQuery<'a>(pub(crate) HashMap<FieldPath, WhereNode<'a>>);
+
+impl<'a> WhereQuery<'a> {
+    /// Applies a cursor to the query, updating the query to only return records after the cursor.
+    ///
+    /// # Example
+    ///
+    /// Given the original query:
+    /// ```sql
+    /// WHERE
+    ///     name == calum && group > 0 and group <= 3 && age > 10
+    /// ORDER BY name, group, age
+    /// ```
+    /// After applying the cursor, it would look like:
+    /// ```sql
+    /// WHERE
+    ///     name == calum && group >= 2 and group <= 3 && age >= 30
+    /// ORDER BY name, group, age
+    /// ```
+    /// The record list (before applying the cursor) would look like this:
+    /// ```
+    /// calum, 1, 20, 4  <- lower bound
+    /// calum, 2, 20, 2
+    /// calum, 2, 30, 1  <- this is the cursor
+    /// calum, 2, 40, 7
+    /// calum, 3, 10, 3  <- upper bound
+    /// ---
+    /// john, 1, 20, 5
+    /// ```
+    /// ## Filter Conditions
+    /// * If equality filter, leave as is
+    /// * If range filter (>, >=, <, <=):
+    ///     * If ASC + (>, >=), update to >= `<cursor_record_value>`
+    ///     * If DESC + (<, <=), update to <= `<cursor_record_value>`
+    ///  
+    /// `index selection` - Determined by `where_query` + `order_by`
+    ///
+    /// `direction` - Determined by `order_by`
+    ///
+    /// `lower bound` - Determined by `cursor`
+    ///
+    /// `upper bound` - Determined by `where_query`
+    fn apply_cursor(
+        &mut self,
+        cursor: Cursor,
+        dir: CursorDirection,
+        // TODO: does this include ID?
+        order_by: &[super::index::IndexField<'_>],
+    ) {
+        // let values = cursor.values.with_static();
+        for (key, value) in &mut self.0 {
+            // We only care about inequality filters
+            if let WhereNode::Inequality(node) = value {
+                // Get the sort_order direction for where query
+                let order_for_key = order_by
+                    .iter()
+                    .find(|field| field.path == key.0)
+                    .map(|field| field.direction)
+                    .unwrap_or(IndexDirection::Ascending);
+
+                if order_for_key == IndexDirection::Ascending
+                    && (node.gt.is_some() || node.gte.is_some())
+                {
+                    // Only update if the cursor has the value for the field
+                    if let Some(cursor_field_value) = cursor.values.get(&key) {
+                        node.gte = Some(WhereValue(cursor_field_value.clone().with_static()));
+                        node.gt = None;
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
-pub(crate) enum WhereNode {
-    Inequality(WhereInequality),
-    Equality(WhereValue),
+pub(crate) enum WhereNode<'a> {
+    Inequality(WhereInequality<'a>),
+    Equality(WhereValue<'a>),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub(crate) struct WhereValue(pub(crate) serde_json::Value);
-
-impl WhereValue {
-    // todo: remove this
-    #[allow(dead_code)]
-    fn into_record_value<T>(
-        self,
-        collection_ast: &polylang::stableast::Collection,
-        path: &[T],
-    ) -> Result<record::RecordValue>
-    where
-        for<'a> &'a str: std::cmp::PartialEq<T>,
-        T: AsRef<str>,
-    {
-        let field = collection_ast.find_field(path).ok_or_else(|| {
-            WhereQueryError::UserError(WhereQueryUserError::CannotFilterOrSortByField(
-                path.iter()
-                    .map(|x| x.as_ref())
-                    .collect::<Vec<_>>()
-                    .join("."),
-            ))
-        })?;
-
-        // Only implicitly cast string to PublicKey. We can relax this in the future.
-        // Relaxing this would mean that if the user provides an invalid value,
-        // they will search by the defualt value instead of returning nothing or getting an error.
-        let always_cast =
-            matches!(field.type_(), polylang::stableast::Type::PublicKey(_)) && self.0.is_string();
-
-        Ok(record::Converter::convert(
-            (field.type_(), self.0),
-            &mut path
-                .iter()
-                .map(|x| Cow::Borrowed(x.as_ref()))
-                .collect::<Vec<_>>(),
-            always_cast,
-        )?)
-    }
-
-    // todo: remove this
-    #[allow(dead_code)]
-    fn into_index_value<'a, T>(
-        self,
-        collection_ast: &polylang::stableast::Collection,
-        path: &[T],
-    ) -> Result<IndexValue<'a>>
-    where
-        for<'b> &'b str: std::cmp::PartialEq<T>,
-        T: AsRef<str>,
-    {
-        record::IndexValue::try_from(self.into_record_value(collection_ast, path)?).map_err(|_| {
-            WhereQueryError::UserError(WhereQueryUserError::CannotFilterOrSortByField(
-                path.iter()
-                    .map(|x| x.as_ref())
-                    .collect::<Vec<_>>()
-                    .join("."),
-            ))
-        })
-    }
-}
+pub(crate) struct WhereValue<'a>(pub(crate) IndexValue<'a>);
 
 #[derive(Debug, Serialize, Default, Clone)]
-pub(crate) struct WhereInequality {
+pub(crate) struct WhereInequality<'a> {
     #[serde(rename = "$gt")]
-    pub(crate) gt: Option<WhereValue>,
+    pub(crate) gt: Option<WhereValue<'a>>,
     #[serde(rename = "$gte")]
-    pub(crate) gte: Option<WhereValue>,
+    pub(crate) gte: Option<WhereValue<'a>>,
     #[serde(rename = "$lt")]
-    pub(crate) lt: Option<WhereValue>,
+    pub(crate) lt: Option<WhereValue<'a>>,
     #[serde(rename = "$lte")]
-    pub(crate) lte: Option<WhereValue>,
+    pub(crate) lte: Option<WhereValue<'a>>,
 }
 
-impl<'de> Deserialize<'de> for WhereInequality {
+// Implementing Deserialize manually, so we can provide better error messages
+impl<'de, 'a> Deserialize<'de> for WhereInequality<'a> {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
