@@ -5,7 +5,7 @@ use crate::collection::{
     where_query::WhereQuery,
 };
 use crate::store::{Result, Store};
-use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime, path::Path};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -48,6 +48,10 @@ impl Default for MemoryStore {
 #[async_trait::async_trait]
 impl Store for MemoryStore {
     type Config = ();
+
+    async fn new(_root_dir: impl AsRef<Path> + Send) -> Self {
+        MemoryStore::new()
+    }
 
     async fn commit(&self) -> Result<()> {
         Ok(())

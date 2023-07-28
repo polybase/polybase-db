@@ -33,6 +33,7 @@ use std::{
         Arc,
     },
 };
+use indexer_rocksdb::adaptor::RocksDBAdaptor;
 
 use tracing::{debug, error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
@@ -132,7 +133,7 @@ async fn main() -> Result<()> {
     // Database combines various components into a single interface
     // that is thread safe
     #[allow(clippy::unwrap_used)]
-    let db: Arc<Db> = Arc::new(
+    let db: Arc<Db<RocksDBAdaptor>> = Arc::new(
         Db::new(
             config.root_dir.clone(),
             DbConfig {

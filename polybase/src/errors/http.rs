@@ -107,13 +107,6 @@ impl From<indexer_db_adaptor::collection::CollectionError> for HTTPError {
     fn from(err: indexer_db_adaptor::collection::CollectionError) -> Self {
         match err {
             indexer_db_adaptor::collection::CollectionError::UserError(e) => e.into(),
-            // TODO - clean and make more robust
-            indexer_db_adaptor::collection::CollectionError::ConcreteCollectionError(e) => {
-                match e.downcast::<indexer_db_adaptor::collection::where_query::WhereQueryError>() {
-                    Ok(wq_err) => (*wq_err).into(),
-                    _ => HTTPError::new(ReasonCode::Internal, None),
-                }
-            }
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
@@ -164,10 +157,11 @@ impl From<indexer_db_adaptor::indexer::IndexerError> for HTTPError {
                 _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             },
             // WhereQuery
-            indexer_db_adaptor::indexer::IndexerError::WhereQuery(e) => match e {
-                indexer_db_adaptor::collection::where_query::WhereQueryError::UserError(e) => e.into(),
-                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
-            },
+            // todo - this variant is not in IndexerError anymore.
+            //indexer_db_adaptor::indexer::IndexerError::WhereQuery(e) => match e {
+            //    indexer_db_adaptor::collection::where_query::WhereQueryError::UserError(e) => e.into(),
+            //    _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            //},
             // Record
             indexer_db_adaptor::indexer::IndexerError::Record(e) => match e {
                 indexer_db_adaptor::collection::record::RecordError::UserError(e) => e.into(),

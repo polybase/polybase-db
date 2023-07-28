@@ -101,8 +101,10 @@ impl<S: Store> Db<S> {
         // Create the indexer
         #[allow(clippy::unwrap_used)]
         let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
-        let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
-        let indexer = Indexer::new(rocksdb_adaptor)?;
+        //let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+        //let indexer = Indexer::new(rocksdb_adaptor)?;
+
+        let indexer: Indexer<S> = Indexer::<S>::new(S::new(indexer_dir).await)?;
 
         // Check for any migrations
         // indexer
@@ -111,7 +113,7 @@ impl<S: Store> Db<S> {
 
         Ok(Self {
             mempool: Mempool::new(),
-            gateway: gateway::initialize(),
+            gateway: gateway::initialize::<S>(),
             indexer,
             sender: AsyncMutex::new(sender),
             receiver: AsyncMutex::new(receiver),
@@ -474,7 +476,7 @@ impl<S: Store> Db<S> {
         let b = bincode::serialize(&manifest)?;
         let value = RecordValue::Bytes(b);
         let mut record = RecordRoot::new();
-        record.insert("manifest", value);
+        record.insert("manifest".to_string(), value);
         Ok(self.indexer.set_system_key("manifest", &record).await?)
     }
 

@@ -27,6 +27,10 @@ impl RocksDBAdaptor {
 impl StoreAdaptor for RocksDBAdaptor {
     type Config = String;
 
+    async fn new(root_dir: impl AsRef<Path> + Send) -> Self {
+        Self::new(root_dir)
+    }
+
     async fn commit(&self) -> Result<()> {
         self.store.commit().await?;
         Ok(())
