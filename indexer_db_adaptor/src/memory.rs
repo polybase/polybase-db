@@ -87,6 +87,8 @@ impl Store for MemoryStore {
         Ok(None)
     }
 
+    // todo : remove this
+    #[allow(unused_variables)]
     async fn list(
         &self,
         collection_id: &str,
@@ -138,7 +140,7 @@ impl Store for MemoryStore {
         Ok(())
     }
 
-    async fn apply_indexes<'a>(&self, indexes: Vec<Index<'a>>, _: Vec<Index<'a>>) -> Result<()> {
+    async fn apply_indexes<'a>(&self, _indexes: Vec<Index<'a>>, _: Vec<Index<'a>>) -> Result<()> {
         Ok(())
     }
 

@@ -1,3 +1,6 @@
+// todo: remove this
+#![allow(unused_variables, dead_code)]
+
 mod adaptor;
 mod error;
 mod index;

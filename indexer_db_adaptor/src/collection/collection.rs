@@ -204,7 +204,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
     }
 
     pub fn normalize_name(collection_id: &str) -> String {
-        return util::normalize_name(collection_id);
+        util::normalize_name(collection_id)
     }
 
     pub fn namespace(&self) -> &str {
@@ -406,7 +406,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         match value.get("id") {
             Some(rv) => match rv {
                 RecordValue::String(id) => {
-                    if &record_id != id {
+                    if record_id != id {
                         return Err(CollectionError::RecordIDArgDoesNotMatchRecordDataID);
                     }
                 }
@@ -470,7 +470,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
 
     #[tracing::instrument(skip(self))]
     pub async fn delete(&self, record_id: &str) -> Result<()> {
-        self.store.delete(self.id(), &record_id).await?;
+        self.store.delete(self.id(), record_id).await?;
         Ok(())
     }
 
@@ -486,14 +486,14 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         }: ListQuery<'_>,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<impl futures::Stream<Item = Result<RecordRoot>> + '_> {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
+        let Some(_index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
             return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
         };
 
         let mut ast_holder = None;
-        let ast = self.ast(&mut ast_holder).await?;
+        let _ast = self.ast(&mut ast_holder).await?;
 
-        let mut stream = self
+        let stream = self
             .store
             .list(
                 self.id(),

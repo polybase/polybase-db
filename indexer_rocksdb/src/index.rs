@@ -16,10 +16,10 @@ pub enum Error {
     InvalidTypePrefix { b: u8 },
 
     #[error("record error")]
-    RecordError(#[from] record::RecordError),
+    Record(#[from] record::RecordError),
 
     #[error("public key error")]
-    PublicKeyError(#[from] indexer_db_adaptor::publickey::PublicKeyError),
+    PublicKey(#[from] indexer_db_adaptor::publickey::PublicKeyError),
 
     #[error("try from int error")]
     TryFromIntError(#[from] std::num::TryFromIntError),
@@ -28,10 +28,10 @@ pub enum Error {
     TryFromSliceError(#[from] std::array::TryFromSliceError),
 
     #[error("from utf8 error")]
-    FromUtf8Error(#[from] std::string::FromUtf8Error),
+    FromUtf8(#[from] std::string::FromUtf8Error),
 
     #[error("IO error")]
-    IOError(#[from] std::io::Error),
+    IO(#[from] std::io::Error),
 }
 
 pub(crate) fn byte_prefix(index_value: &IndexValue) -> u8 {
@@ -64,7 +64,7 @@ pub(crate) fn serialize(index_value: &IndexValue, mut w: impl std::io::Write) ->
 
     let len = 1 + u16::try_from(value.len())?;
     w.write_all(&len.to_le_bytes())?;
-    w.write_all(&[byte_prefix(&index_value)])?;
+    w.write_all(&[byte_prefix(index_value)])?;
     w.write_all(&value[..])?;
 
     Ok(())

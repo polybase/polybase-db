@@ -578,7 +578,7 @@ impl Gateway {
             .await
             .map_err(IndexerError::from)?;
 
-        let Some(meta) = collection_collection.get(&collection.id().to_string(), None).await.map_err(IndexerError::from)? else {
+        let Some(meta) = collection_collection.get(collection.id(), None).await.map_err(IndexerError::from)? else {
             return Err(GatewayUserError::RecordNotFound {
                 record_id: collection.id().to_string(),
                 collection_id: collection_collection.id().to_string()

@@ -46,7 +46,7 @@ pub fn collection_ast_from_json<'a>(
     Ok(collection_ast)
 }
 
-pub fn indexes_from_ast<'a>(collection_ast: &stableast::Collection<'a>) -> Vec<Index<'static>> {
+pub fn indexes_from_ast(collection_ast: &stableast::Collection<'_>) -> Vec<Index<'static>> {
     // Extract manually defined indexes
     let mut indexes = collection_ast
         .attributes

@@ -48,11 +48,11 @@ impl<S: Store> Indexer<S> {
 
     #[tracing::instrument(skip(self))]
     pub async fn set_system_key(&self, key: &str, data: &RecordRoot) -> Result<()> {
-        Ok(self.store.set_system_key(&key, data).await?)
+        Ok(self.store.set_system_key(key, data).await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_system_key(&self, key: &str) -> Result<Option<RecordRoot>> {
-        Ok(self.store.get_system_key(&key).await?)
+        Ok(self.store.get_system_key(key).await?)
     }
 }

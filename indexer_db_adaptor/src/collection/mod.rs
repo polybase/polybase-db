@@ -2,6 +2,7 @@ pub use error::{CollectionError, CollectionUserError};
 
 pub mod ast;
 mod authorization;
+#[allow(clippy::module_inception)]
 pub mod collection;
 mod collection_record;
 pub mod cursor;

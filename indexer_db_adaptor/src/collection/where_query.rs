@@ -81,6 +81,8 @@ pub(crate) enum WhereNode {
 pub(crate) struct WhereValue(pub(crate) serde_json::Value);
 
 impl WhereValue {
+    // todo: remove this
+    #[allow(dead_code)]
     fn into_record_value<T>(
         self,
         collection_ast: &polylang::stableast::Collection,
@@ -115,6 +117,8 @@ impl WhereValue {
         )?)
     }
 
+    // todo: remove this
+    #[allow(dead_code)]
     fn into_index_value<'a, T>(
         self,
         collection_ast: &polylang::stableast::Collection,
