@@ -13,8 +13,8 @@ actix-server = "2.2"
 indexer = { path = "../indexer" }
 gateway = { path = "../gateway" }
 solid = { path = "../solid" }
-polylang-prover = { git = "https://github.com/polybase/polylang", rev = "72b19082ece80f03f79a8eaecfd8407b9f013dcd", version = "0.1.0" }
-abi = { git = "https://github.com/polybase/polylang", rev = "72b19082ece80f03f79a8eaecfd8407b9f013dcd", version = "0.1.0" }
+polylang-prover = { git = "https://github.com/polybase/polylang", rev = "91996dea0efa572666e6f82cbc9a1d2641082ebe", version = "0.1.0" }
+abi = { git = "https://github.com/polybase/polylang", rev = "91996dea0efa572666e6f82cbc9a1d2641082ebe", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = { version = "2.2", features = ["json"] }
