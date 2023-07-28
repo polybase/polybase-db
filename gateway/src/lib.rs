@@ -1,15 +1,14 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-use async_recursion::async_recursion;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 use tracing::debug;
 use indexer_db_adaptor::{
     store::Store,
-    memory::MemoryStore,
     indexer::{Indexer, IndexerError},
     publickey::PublicKey,
     collection::{
+        stableast_ext::FieldWalker,
         collection::{Collection, AuthUser},
         record::{RecordError, RecordUserError, RecordValue, RecordRoot, Converter, PathFinder, json_to_record, record_to_json},
         validation::validate_collection_record
@@ -166,7 +165,7 @@ async fn dereference_args<S: Store>(
             .map_err(IndexerError::from)?
             .ok_or_else(|| GatewayUserError::RecordNotFound {
                 record_id,
-                collection_id: collection.collection.id().to_string(),
+                collection_id: collection.id().to_string(),
             })?;
 
         dereferenced_args.push(RecordValue::Map(record));
@@ -216,7 +215,7 @@ async fn dereference_fields<S: Store>(
                 return Err(GatewayUserError::RecordCollectionIdNotFound)?;
             };
 
-            let foreign_collection_id = collection.collection.namespace().to_string() + "/" + &fr.collection;
+            let foreign_collection_id = collection.namespace().to_string() + "/" + &fr.collection;
 
             if collection_id != &foreign_collection_id {
                 return Err(GatewayUserError::CollectionMismatch {
@@ -241,7 +240,7 @@ async fn dereference_fields<S: Store>(
             .map_err(IndexerError::from)?
             .ok_or(GatewayUserError::RecordNotFound {
                 record_id: value.to_string(),
-                collection_id: collection.collection.id().to_string(),
+                collection_id: collection.id().to_string(),
             })?;
 
         *map = record;
@@ -362,7 +361,7 @@ fn reference_records<S: Store>(
         }
     }
 
-    let record = visitor(collection.collection.namespace(), collection_ast, &mut vec![], record)?;
+    let record = visitor(collection.namespace(), collection_ast, &mut vec![], record)?;
 
     Ok(record)
 }
@@ -427,7 +426,7 @@ async fn has_permission_to_call<S: Store>(
     Ok(false)
 }
 
-#[async_recursion]
+#[async_recursion::async_recursion]
 async fn can_call<S: Store>(
     indexer: &Indexer<S>,
     collection: &Collection<'_, S>,
@@ -445,7 +444,7 @@ async fn can_call<S: Store>(
                 .map_err(IndexerError::from)?
                 .ok_or_else(|| GatewayUserError::RecordNotFound {
                     record_id: r.id.clone(),
-                    collection_id: collection.collection.id().to_string(),
+                    collection_id: collection.id().to_string(),
                 })?;
 
             if collection
@@ -463,12 +462,12 @@ async fn can_call<S: Store>(
                 .map_err(IndexerError::from)?;
 
             let record = collection
-                .get(fr.id.clone(), Some(auth))
+                .get(&fr.id.clone(), Some(auth))
                 .await
                 .map_err(IndexerError::from)?
                 .ok_or_else(|| GatewayUserError::RecordNotFound {
                     record_id: fr.id.clone(),
-                    collection_id: collection.collection.id().to_string(),
+                    collection_id: collection.id().to_string(),
                 })?;
 
             if collection
@@ -579,15 +578,15 @@ impl Gateway {
             .await
             .map_err(IndexerError::from)?;
 
-        let Some(meta) = collection_collection.get(collection.collection.id().to_string(), None).await.map_err(IndexerError::from)? else {
+        let Some(meta) = collection_collection.get(&collection.id().to_string(), None).await.map_err(IndexerError::from)? else {
             return Err(GatewayUserError::RecordNotFound {
-                record_id: collection.collection.id().to_string(),
-                collection_id: collection_collection.collection.id().to_string()
+                record_id: collection.id().to_string(),
+                collection_id: collection_collection.id().to_string()
             })?;
         };
 
         let (collection_ast_json, collection_ast) =
-            get_collection_ast(collection.collection.name().as_str(), &meta)?;
+            get_collection_ast(collection.name().as_str(), &meta)?;
         let collection_polylang_code = meta.get("code").and_then(|v| match v {
             RecordValue::String(s) => Some(s),
             _ => None,
@@ -604,7 +603,7 @@ impl Gateway {
         }) else {
             return Err(GatewayUserError::FunctionNotFound {
                 method_name: function_name.to_owned(),
-                collection_id: collection.collection.id().to_string()
+                collection_id: collection.id().to_string()
             })?;
         };
 
@@ -617,7 +616,7 @@ impl Gateway {
                 .map_err(IndexerError::from)?
                 .ok_or_else(|| GatewayUserError::RecordNotFound {
                     record_id,
-                    collection_id: collection.collection.id().to_string(),
+                    collection_id: collection.id().to_string(),
                 })?
         };
 
@@ -788,7 +787,7 @@ impl Gateway {
                             return Err(GatewayUserError::RecordIDModified)?;
                         }
 
-                        Some((collection.collection.id().to_owned(), json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
+                        Some((collection.id().to_owned(), json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
                     },
                     polylang::stableast::Type::ForeignRecord(fr) => {
                         let Some(output_id) = output_arg.get("id") else {
@@ -799,9 +798,9 @@ impl Gateway {
                             return Err(GatewayUserError::RecordIDModified)?;
                         }
 
-                        let collection_id = collection.collection.namespace().to_string() + "/" + &fr.collection;
+                        let collection_id = collection.namespace().to_string() + "/" + &fr.collection;
 
-                        let Some(collection_meta) = collection_collection.get(collection_id.clone(), auth).await.map_err(IndexerError::from)? else {
+                        let Some(collection_meta) = collection_collection.get(&collection_id.clone(), auth).await.map_err(IndexerError::from)? else {
                             return Err(GatewayUserError::CollectionNotFound {
                                 collection_id: collection_id.clone(),
                             })?;
@@ -824,7 +823,7 @@ impl Gateway {
 
         if function_name == "constructor" {
             if collection
-                .get_without_auth_check(output_instance_id.to_string())
+                .get_without_auth_check(&output_instance_id.to_string())
                 .await
                 .map_err(IndexerError::from)?
                 .is_some()
@@ -1210,6 +1209,7 @@ impl Gateway {
 #[cfg(test)]
 mod tests {
     use std::ops::{Deref, DerefMut};
+    use indexer_db_adaptor::memory::MemoryStore;
 
     use super::*;
 
@@ -1217,20 +1217,14 @@ mod tests {
 
     impl Default for TestIndexer {
         fn default() -> Self {
-            let temp_dir = std::env::temp_dir();
-            let path = temp_dir.join(format!(
-                "test-gateway-rocksdb-store-{}",
-                rand::random::<u32>()
-            ));
-
-            Self(Some(Indexer::new(path).unwrap()))
+            Self(Some(Indexer::new(MemoryStore::new()).unwrap()))
         }
     }
 
     impl Drop for TestIndexer {
         fn drop(&mut self) {
             if let Some(indexer) = self.0.take() {
-                indexer.destroy().unwrap();
+                indexer.destroy();
             }
         }
     }
@@ -1300,7 +1294,7 @@ mod tests {
 
         indexer.commit().await.unwrap();
 
-        let gateway = initialize();
+        let gateway = initialize::<MemoryStore>();
         let changes = gateway
             .call(
                 &indexer,

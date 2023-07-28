@@ -10,6 +10,9 @@ pub enum IndexerError {
     #[error("collection error")]
     Collection(#[from] collection::CollectionError),
 
+    #[error("record error")]
+    Record(#[from] collection::record::RecordError),
+
     #[error("store error")]
     Store(#[from] store::Error),
 }
