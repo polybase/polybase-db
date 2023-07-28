@@ -468,6 +468,18 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         Ok(Some(value))
     }
 
+
+    // todo - remove this
+    pub async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
+        todo!()
+    }
+
+    // todo - remove this
+    pub async fn get_record_metadata(&self, _record_id: &str) -> Result<Option<RecordMetadata>> {
+        todo!()
+    }
+
+
     #[tracing::instrument(skip(self))]
     pub async fn delete(&self, record_id: &str) -> Result<()> {
         self.store.delete(self.id(), record_id).await?;
@@ -783,13 +795,13 @@ mod tests {
             ("id".to_string(), RecordValue::String("1".into())),
             ("name".to_string(), RecordValue::String("test".into())),
         ]);
-        collection.set("1".into(), &value_1).await.unwrap();
+        collection.set("1", &value_1).await.unwrap();
 
         let value_2 = HashMap::from([
             ("id".to_string(), RecordValue::String("2".into())),
             ("name".to_string(), RecordValue::String("test".into())),
         ]);
-        collection.set("2".into(), &value_2).await.unwrap();
+        collection.set("2", &value_2).await.unwrap();
 
         store.commit().await.unwrap();
 

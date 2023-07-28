@@ -457,18 +457,21 @@ impl<S: Store> Db<S> {
 
     /// Reset all data in the database
     pub fn reset(&self) -> Result<()> {
-        Ok(self.indexer.reset()?)
+        todo!()
+        //Ok(self.indexer.reset()?)
     }
 
     /// Create a snapshot iterator, that can be used to iterate over the
     /// entire database in chunks
     pub fn snapshot_iter(&self, chunk_size: usize) -> SnapshotIterator {
-        self.indexer.snapshot(chunk_size)
+        todo!()
+        //self.indexer.snapshot(chunk_size)
     }
 
     pub fn restore_chunk(&self, chunk: SnapshotChunk) -> Result<()> {
-        self.indexer.restore(chunk)?;
-        Ok(())
+        todo!()
+        //self.indexer.restore(chunk)?;
+        //Ok(())
     }
 
     #[tracing::instrument(skip(self))]

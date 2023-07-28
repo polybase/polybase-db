@@ -30,4 +30,9 @@ impl<'a> Cursor<'a> {
         // encode to base64
         Ok(STANDARD.encode(buf))
     }
+
+    // todo - handle or remove this
+    pub fn immediate_successor(&self) -> Result<Self> {
+        todo!()
+    }
 }
