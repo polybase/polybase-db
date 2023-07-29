@@ -5,6 +5,7 @@ use super::{
 };
 use crate::collection::index::IndexDirection;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
@@ -84,25 +85,79 @@ impl<'a> WhereQuery<'a> {
         for (key, value) in &mut self.0 {
             // We only care about inequality filters
             if let WhereNode::Inequality(node) = value {
-                // Get the sort_order direction for where query
-                let order_for_key = order_by
-                    .iter()
-                    .find(|field| field.path == key.0)
-                    .map(|field| field.direction)
-                    .unwrap_or(IndexDirection::Ascending);
+                // Determine which direction we want to continue in (which determines
+                // the inequality filter to update)
+                let forward = is_inequality_forwards(key, order_by, &dir);
 
-                if order_for_key == IndexDirection::Ascending
-                    && (node.gt.is_some() || node.gte.is_some())
-                {
-                    // Only update if the cursor has the value for the field
-                    if let Some(cursor_field_value) = cursor.values.get(&key) {
+                // TODO: Only add fields in the cursor, or should we add these as Null?
+                if let Some(cursor_field_value) = cursor.values.get(key) {
+                    if forward && (node.gt.is_some() || node.gte.is_some()) {
+                        // Only update if the cursor has the value for the field
                         node.gte = Some(WhereValue(cursor_field_value.clone().with_static()));
                         node.gt = None;
+                    }
+
+                    if !forward && (node.lt.is_some() || node.lte.is_some()) {
+                        // Only update if the cursor has the value for the field
+                        node.lte = Some(WhereValue(cursor_field_value.clone().with_static()));
+                        node.lt = None;
                     }
                 }
             }
         }
+
+        // If id field not present, we should add it to the query so we don't end up
+        // sending the last record in the previous query back to the user
+        let id = FieldPath::id();
+        if let std::collections::hash_map::Entry::Vacant(e) = self.0.entry(id.clone()) {
+            let forward = is_inequality_forwards(&id, order_by, &dir);
+            let where_value = Some(WhereValue(IndexValue::String(Cow::Owned(
+                cursor.record_id.clone(),
+            ))));
+
+            e.insert(match forward {
+                true => WhereNode::Inequality(WhereInequality {
+                    gt: where_value,
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+                false => WhereNode::Inequality(WhereInequality {
+                    gt: None,
+                    gte: None,
+                    lt: where_value,
+                    lte: None,
+                }),
+            });
+        }
     }
+
+    // Check if we have
+}
+
+/// Determines if the inequality projection should be forwards (gt/gte) or backwards (lt/lte)
+fn is_inequality_forwards(
+    key: &FieldPath,
+    order_by: &[super::index::IndexField<'_>],
+    dir: &CursorDirection,
+) -> bool {
+    // Find the sort order direction for a key
+    let order_for_key = order_by
+        .iter()
+        .find(|field| field.path == key.0)
+        .map(|field| field.direction)
+        .unwrap_or(IndexDirection::Ascending);
+
+    // Determine which direction we want to continue in (which determines
+    // the inequality filter to update)
+    let forward = match (order_for_key, &dir) {
+        (IndexDirection::Ascending, CursorDirection::After) => false,
+        (IndexDirection::Ascending, CursorDirection::Before) => true,
+        (IndexDirection::Descending, CursorDirection::After) => true,
+        (IndexDirection::Descending, CursorDirection::Before) => false,
+    };
+
+    forward
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

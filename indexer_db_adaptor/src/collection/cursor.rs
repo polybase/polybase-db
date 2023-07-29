@@ -24,6 +24,7 @@ pub struct Cursor<'a> {
 // #[serde(transparent)]
 // pub struct CursorValues<'a>(pub HashMap<FieldPath, IndexValue<'a>>);
 
+#[derive(Debug, PartialEq, Eq)]
 pub enum CursorDirection {
     Before,
     After,

@@ -4,6 +4,12 @@ use std::borrow::Cow;
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct FieldPath(pub(crate) Vec<String>);
 
+impl FieldPath {
+    pub fn id() -> Self {
+        Self(vec!["id".to_string()])
+    }
+}
+
 impl From<Vec<Cow<'_, str>>> for FieldPath {
     fn from(v: Vec<Cow<'_, str>>) -> Self {
         Self(v.into_iter().map(|s| s.into_owned()).collect())
