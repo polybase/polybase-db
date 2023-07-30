@@ -35,6 +35,8 @@ persistence:
    storageClass: ""
    size: 20Gi
 
+# externalServiceAccount: "prenet"
+
 extraEnvVars:
    - name: LOG_LEVEL
      value: "DEBUG"
