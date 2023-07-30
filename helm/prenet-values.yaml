@@ -64,6 +64,13 @@ deployments:
   containerPorts:
     public_api: 80
     p2p: 8080
+  cloudsql:
+    usePrivateIP: true
+    project: prenet
+    region: us-central1
+    db_instance: polybase 
+    image: sql_proxy
+    tag: 1.0.0
 - name: indexer
   labels: 
     app: polybase
