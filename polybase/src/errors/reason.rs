@@ -180,7 +180,9 @@ impl ReasonCode {
         }
     }
 
-    pub fn from_where_query_error(err: &indexer_db_adaptor::collection::where_query::WhereQueryUserError) -> Self {
+    pub fn from_where_query_error(
+        err: &indexer_db_adaptor::collection::where_query::WhereQueryUserError,
+    ) -> Self {
         match err {
             indexer_db_adaptor::collection::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
                 ..
@@ -194,7 +196,9 @@ impl ReasonCode {
         }
     }
 
-    pub fn from_collection_error(err: &indexer_db_adaptor::collection::CollectionUserError) -> Self {
+    pub fn from_collection_error(
+        err: &indexer_db_adaptor::collection::CollectionUserError,
+    ) -> Self {
         match err {
             indexer_db_adaptor::collection::CollectionUserError::CollectionNotFound { .. } => {
                 ReasonCode::CollectionNotFound
@@ -206,6 +210,9 @@ impl ReasonCode {
                 ReasonCode::Unauthorized
             }
             indexer_db_adaptor::collection::CollectionUserError::InvalidCursorKey => {
+                ReasonCode::IndexerInvalidCursorKey
+            }
+            indexer_db_adaptor::collection::CollectionUserError::InvalidCursorBeforeAndAfterSpecified => {
                 ReasonCode::IndexerInvalidCursorKey
             }
             indexer_db_adaptor::collection::CollectionUserError::CollectionIdMissingNamespace => {
@@ -246,11 +253,17 @@ impl ReasonCode {
             } => ReasonCode::CollectionInvalidSchema,
             indexer_db_adaptor::collection::CollectionUserError::UnknownCollectionDirectives { .. } => {
                 ReasonCode::CollectionInvalidSchema
+            },
+            indexer_db_adaptor::collection::CollectionUserError::RecordUserError(_) => {
+                ReasonCode::RecordInvalidField
             }
+
         }
     }
 
-    pub fn from_record_user_error(err: &indexer_db_adaptor::collection::record::RecordUserError) -> Self {
+    pub fn from_record_user_error(
+        err: &indexer_db_adaptor::collection::record::RecordUserError,
+    ) -> Self {
         match err {
             indexer_db_adaptor::collection::record::RecordUserError::RecordRootShouldBeAnObject { .. } => {
                 ReasonCode::RecordNotObject

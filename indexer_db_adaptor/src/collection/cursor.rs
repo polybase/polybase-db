@@ -1,4 +1,8 @@
-use super::{field_path::FieldPath, record::IndexValue};
+use super::{
+    field_path::FieldPath,
+    record::{IndexValue, IndexValueError, RecordRoot},
+    where_query::{WhereNode, WhereQuery},
+};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,17 +16,19 @@ pub enum Error {
 
     #[error("bincode error")]
     BincodeError(#[from] bincode::Error),
+
+    #[error("record missing id")]
+    RecordMissingID,
+
+    #[error("index value error")]
+    IndexValueError(#[from] IndexValueError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Cursor<'a> {
-    pub record_id: String,
+    pub record_id: IndexValue<'a>,
     pub values: HashMap<FieldPath, IndexValue<'a>>,
 }
-
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// #[serde(transparent)]
-// pub struct CursorValues<'a>(pub HashMap<FieldPath, IndexValue<'a>>);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CursorDirection {
@@ -38,21 +44,26 @@ impl<'a> Cursor<'a> {
         Ok(STANDARD.encode(buf))
     }
 
-    // pub fn
+    pub fn from_record(record: &RecordRoot, query: &WhereQuery) -> Result<Self> {
+        let mut values = HashMap::new();
 
-    // todo - handle or remove this
-    pub fn immediate_successor(&self) -> Result<Self> {
-        todo!()
+        for (key, node) in query.0.iter() {
+            if let WhereNode::Inequality(_) = node {
+                if let Some(value) = record.get(&key.to_string()) {
+                    values.insert(key.clone(), value.clone().try_into()?);
+                } else {
+                    values.insert(key.clone(), IndexValue::Null);
+                }
+            }
+        }
+
+        Ok(Cursor {
+            record_id: record
+                .get("id")
+                .ok_or(Error::RecordMissingID)?
+                .clone()
+                .try_into()?,
+            values,
+        })
     }
 }
-
-// impl CursorValues<'_> {
-//     pub fn with_static(self) -> CursorValues<'static> {
-//         CursorValues(
-//             self.0
-//                 .into_iter()
-//                 .map(|(k, v)| (k, v.with_static()))
-//                 .collect(),
-//         )
-//     }
-// }

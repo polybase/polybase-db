@@ -13,6 +13,7 @@ use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
+use indexer_db_adaptor::collection::where_query;
 use indexer_db_adaptor::{
     collection::{collection::AuthUser, cursor},
     indexer::IndexerError,
@@ -188,9 +189,7 @@ impl<'de> Deserialize<'de> for OptionalCursor<'_> {
 
         let cursor = Option::<String>::deserialize(deserializer)?
             .filter(|s| !s.is_empty())
-            .map(|s| {
-                indexer_db_adaptor::collection::cursor::Cursor::deserialize(s.into_deserializer())
-            })
+            .map(|s| cursor::Cursor::deserialize(s.into_deserializer()))
             .transpose()?;
 
         Ok(OptionalCursor(cursor))
@@ -288,8 +287,14 @@ async fn get_records<'a>(
         Ok(ListResponse {
             cursor: Cursors {
                 // TODO: implement cursor
-                before: None, //records.first().map(|r| None),
-                after: None,  // records.last().map(|r| None),
+                before: records
+                    .first()
+                    .map(|r| cursor::Cursor::from_record(r, &query.where_query))
+                    .transpose()?,
+                after: records
+                    .last()
+                    .map(|r| cursor::Cursor::from_record(r, &query.where_query))
+                    .transpose()?, // records.last().map(|r| None),
             },
             data: records
                 .into_iter()

@@ -54,6 +54,12 @@ pub enum RecordError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum IndexValueError {
+    #[error("record value cannnot be indexed")]
+    TryFromRecordValue,
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum RecordUserError {
     #[error("record is missing field {field:?}")]
     MissingField { field: String },
@@ -975,6 +981,7 @@ impl PathFinder for RecordValue {
     }
 }
 
+// TODO: refactor this into own module
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum IndexValue<'a> {
     Number(f64),
@@ -1025,9 +1032,9 @@ impl IndexValue<'_> {
 }
 
 impl TryFrom<RecordValue> for IndexValue<'_> {
-    type Error = ();
+    type Error = IndexValueError;
 
-    fn try_from(value: RecordValue) -> std::result::Result<Self, ()> {
+    fn try_from(value: RecordValue) -> std::result::Result<Self, IndexValueError> {
         match value {
             RecordValue::Null => Ok(IndexValue::Null),
             RecordValue::Boolean(b) => Ok(IndexValue::Boolean(b)),
@@ -1037,10 +1044,10 @@ impl TryFrom<RecordValue> for IndexValue<'_> {
             RecordValue::ForeignRecordReference(fr) => {
                 Ok(IndexValue::ForeignRecordReference(Cow::Owned(fr)))
             }
-            RecordValue::Bytes(_) => Err(()),
-            RecordValue::RecordReference(_) => Err(()),
-            RecordValue::Map(_) => Err(()),
-            RecordValue::Array(_) => Err(()),
+            RecordValue::Bytes(_) => Err(IndexValueError::TryFromRecordValue),
+            RecordValue::RecordReference(_) => Err(IndexValueError::TryFromRecordValue),
+            RecordValue::Map(_) => Err(IndexValueError::TryFromRecordValue),
+            RecordValue::Array(_) => Err(IndexValueError::TryFromRecordValue),
         }
     }
 }

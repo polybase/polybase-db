@@ -39,18 +39,22 @@ impl<'a> WhereQuery<'a> {
     ///
     /// # Example
     ///
+    /// ## Cursor (ASC / After)
+    ///
     /// Given the original query:
     /// ```sql
     /// WHERE
     ///     name == calum && group > 0 and group <= 3 && age > 10
-    /// ORDER BY name, group, age
+    /// ORDER BY name, group, age ASC
     /// ```
+    ///
     /// After applying the cursor, it would look like:
     /// ```sql
     /// WHERE
     ///     name == calum && group >= 2 and group <= 3 && age >= 30
-    /// ORDER BY name, group, age
+    /// ORDER BY name, group, age ASC
     /// ```
+    ///
     /// The record list (before applying the cursor) would look like this:
     /// ```
     /// calum, 1, 20, 4  <- lower bound
@@ -61,6 +65,34 @@ impl<'a> WhereQuery<'a> {
     /// ---
     /// john, 1, 20, 5
     /// ```
+    ///
+    /// ## Cursor (DESC / After)
+    ///
+    /// Given the original query:
+    /// ```sql
+    /// WHERE
+    ///     name == calum && group > 0 and group <= 3 && age > 10
+    /// ORDER BY name, group, age DESC
+    /// ```
+    ///
+    /// After applying the cursor, it would look like:
+    /// ```sql
+    /// WHERE
+    ///     name == calum && group >= 2 and group <= 3 && age > 10 && age <= 30
+    /// ORDER BY name, group, age DESC
+    /// ```
+    ///
+    /// The record list (DESC) (before applying the cursor) would look like this:
+    /// ```
+    /// calum, 2, 40, 7  <- lower bound
+    /// calum, 2, 30, 1  <- this is the cursor
+    /// calum, 1, 20, 4
+    /// calum, 2, 20, 2
+    /// calum, 3, 10, 3  <- upper bound
+    /// ---
+    /// john, 1, 20, 5
+    /// ```
+    ///
     /// ## Filter Conditions
     /// * If equality filter, leave as is
     /// * If range filter (>, >=, <, <=):
@@ -74,7 +106,7 @@ impl<'a> WhereQuery<'a> {
     /// `lower bound` - Determined by `cursor`
     ///
     /// `upper bound` - Determined by `where_query`
-    fn apply_cursor(
+    pub fn apply_cursor(
         &mut self,
         cursor: Cursor,
         dir: CursorDirection,
@@ -111,9 +143,7 @@ impl<'a> WhereQuery<'a> {
         let id = FieldPath::id();
         if let std::collections::hash_map::Entry::Vacant(e) = self.0.entry(id.clone()) {
             let forward = is_inequality_forwards(&id, order_by, &dir);
-            let where_value = Some(WhereValue(IndexValue::String(Cow::Owned(
-                cursor.record_id.clone(),
-            ))));
+            let where_value = Some(WhereValue(cursor.record_id.with_static()));
 
             e.insert(match forward {
                 true => WhereNode::Inequality(WhereInequality {
@@ -131,8 +161,6 @@ impl<'a> WhereQuery<'a> {
             });
         }
     }
-
-    // Check if we have
 }
 
 /// Determines if the inequality projection should be forwards (gt/gte) or backwards (lt/lte)
@@ -150,14 +178,12 @@ fn is_inequality_forwards(
 
     // Determine which direction we want to continue in (which determines
     // the inequality filter to update)
-    let forward = match (order_for_key, &dir) {
+    match (order_for_key, &dir) {
         (IndexDirection::Ascending, CursorDirection::After) => false,
         (IndexDirection::Ascending, CursorDirection::Before) => true,
         (IndexDirection::Descending, CursorDirection::After) => true,
         (IndexDirection::Descending, CursorDirection::Before) => false,
-    };
-
-    forward
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

@@ -118,6 +118,12 @@ impl From<indexer_db_adaptor::collection::CollectionUserError> for HTTPError {
     }
 }
 
+impl From<indexer_db_adaptor::collection::cursor::Error> for HTTPError {
+    fn from(err: indexer_db_adaptor::collection::cursor::Error) -> Self {
+        HTTPError::new(ReasonCode::Internal, Some(Box::new(err)))
+    }
+}
+
 impl From<indexer_db_adaptor::collection::where_query::WhereQueryError> for HTTPError {
     fn from(err: indexer_db_adaptor::collection::where_query::WhereQueryError) -> Self {
         match err {

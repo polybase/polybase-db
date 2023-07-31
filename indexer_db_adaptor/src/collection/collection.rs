@@ -2,7 +2,7 @@ use super::{
     ast::{collection_ast_from_json, collection_ast_from_record, indexes_from_ast},
     authorization::Authorization,
     collection_record::COLLECTION_COLLECTION_RECORD,
-    cursor::Cursor,
+    cursor::{Cursor, CursorDirection},
     error::{CollectionError, CollectionUserError, Result},
     field_path::FieldPath,
     index::{self, Index, IndexDirection},
@@ -496,20 +496,32 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         }: ListQuery<'_>,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<impl futures::Stream<Item = Result<RecordRoot>> + '_> {
-        let Some(index) = self.indexes.iter().find(|index| index.matches(&where_query, order_by)) else {
+        if self
+            .indexes
+            .iter()
+            .any(|index| index.matches(&where_query, order_by))
+        {
             return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
-        };
+        }
 
         let mut ast_holder = None;
         let _ast = self.ast(&mut ast_holder).await?;
 
-        // match (cursor_before, cursor_after) {
-        //     (Some(before), None) => {
-        //         if let Some(before_value) = before.get(index.field()) {
-        //             where_query = where_query.and(index.field(), "<", before_value);
-        //         }
-        //     }
-        // }
+        // TODO: remove clone
+        let mut where_query = where_query.clone();
+
+        match (cursor_before, cursor_after) {
+            (Some(before), None) => {
+                where_query.apply_cursor(before, CursorDirection::Before, order_by)
+            }
+            (None, Some(after)) => {
+                where_query.apply_cursor(after, CursorDirection::After, order_by)
+            }
+            (Some(_), Some(_)) => {
+                return Err(CollectionUserError::InvalidCursorBeforeAndAfterSpecified)?;
+            }
+            (None, None) => (),
+        };
 
         let stream = self
             .store

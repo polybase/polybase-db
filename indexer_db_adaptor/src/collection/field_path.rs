@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
+use std::{borrow::Cow, fmt::Display};
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct FieldPath(pub(crate) Vec<String>);
@@ -8,11 +8,27 @@ impl FieldPath {
     pub fn id() -> Self {
         Self(vec!["id".to_string()])
     }
+
+    // pub fn to_string(&self) -> String {
+    //     self.0.join(".")
+    // }
 }
 
 impl From<Vec<Cow<'_, str>>> for FieldPath {
     fn from(v: Vec<Cow<'_, str>>) -> Self {
         Self(v.into_iter().map(|s| s.into_owned()).collect())
+    }
+}
+
+impl Display for FieldPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.join(".").fmt(f)
+    }
+}
+
+impl From<FieldPath> for String {
+    fn from(path: FieldPath) -> Self {
+        path.0.join(".")
     }
 }
 

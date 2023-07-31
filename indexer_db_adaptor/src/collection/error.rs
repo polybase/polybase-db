@@ -1,5 +1,5 @@
-use super::record;
-use super::where_query;
+use super::record::{self, IndexValueError};
+use super::{cursor, where_query};
 use crate::store;
 
 pub type Result<T> = std::result::Result<T, CollectionError>;
@@ -62,6 +62,12 @@ pub enum CollectionError {
 
     #[error("store error")]
     Store(#[from] store::Error),
+
+    #[error("index value error")]
+    IndexValue(#[from] IndexValueError),
+
+    #[error("cursor error")]
+    CursorError(#[from] cursor::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -77,6 +83,9 @@ pub enum CollectionUserError {
 
     #[error("invalid index key")]
     InvalidCursorKey,
+
+    #[error("invalid cursor, before and after cannot be used together")]
+    InvalidCursorBeforeAndAfterSpecified,
 
     #[error("collection id is missing namespace")]
     CollectionIdMissingNamespace,
@@ -116,4 +125,7 @@ pub enum CollectionUserError {
 
     #[error("unknown collection directives {directives:?}")]
     UnknownCollectionDirectives { directives: Vec<String> },
+
+    #[error("record user error")]
+    RecordUserError(#[from] record::RecordUserError),
 }
