@@ -1,11 +1,10 @@
 use crate::collection::{
-    cursor::Cursor,
     index::{Index, IndexField},
     record::RecordRoot,
     where_query::WhereQuery,
 };
 use crate::store::{Result, Store};
-use std::{collections::HashMap, path::Path, pin::Pin, sync::Arc, time::SystemTime};
+use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
 
 #[derive(Clone)]
@@ -59,7 +58,23 @@ impl Store for MemoryStore {
         let collection = match state.data.get_mut(collection_id) {
             Some(collection) => collection,
             // TODO: we should implement Store trait error for missing collection
-            None => return Ok(()),
+            None => {
+                state.data.insert(
+                    collection_id.to_string(),
+                    Collection {
+                        data: HashMap::from([(
+                            record_id.to_string(),
+                            Record {
+                                data: value.clone(),
+                                last_updated: SystemTime::now(),
+                            },
+                        )]),
+                        last_updated: SystemTime::now(),
+                    },
+                );
+
+                state.data.get_mut(collection_id).unwrap()
+            }
         };
 
         collection.data.insert(

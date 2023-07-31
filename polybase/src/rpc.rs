@@ -13,10 +13,10 @@ use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
-use indexer_db_adaptor::collection::where_query;
 use indexer_db_adaptor::{
     collection::{collection::AuthUser, cursor},
     indexer::IndexerError,
+    memory,
     store::Store,
 };
 use indexer_rocksdb::adaptor::RocksDBAdaptor;
@@ -77,7 +77,7 @@ struct GetRecordResponse {
 
 #[get("/{collection}/records/{id}")]
 async fn get_record(
-    state: web::Data<RouteState<RocksDBAdaptor>>,
+    state: web::Data<RouteState<memory::MemoryStore>>,
     path: web::Path<(String, String)>,
     query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
@@ -230,7 +230,7 @@ struct ListResponse<'a> {
 #[get("/{collection}/records")]
 async fn get_records<'a>(
     req: HttpRequest,
-    state: web::Data<RouteState<RocksDBAdaptor>>,
+    state: web::Data<RouteState<memory::MemoryStore>>,
     path: web::Path<String>,
     query: web::Query<ListQuery<'a>>,
     body: auth::SignedJSON<()>,
@@ -337,7 +337,7 @@ struct FunctionResponse {
 #[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records")]
 async fn post_record(
-    state: web::Data<RouteState<RocksDBAdaptor>>,
+    state: web::Data<RouteState<memory::MemoryStore>>,
     path: web::Path<String>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
@@ -383,7 +383,7 @@ async fn post_record(
 #[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records/{record}/call/{function}")]
 async fn call_function(
-    state: web::Data<RouteState<RocksDBAdaptor>>,
+    state: web::Data<RouteState<memory::MemoryStore>>,
     path: web::Path<(String, String, String)>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
@@ -525,7 +525,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
 }
 
 #[get("/v0/health")]
-async fn health(state: web::Data<RouteState<RocksDBAdaptor>>) -> impl Responder {
+async fn health(state: web::Data<RouteState<memory::MemoryStore>>) -> impl Responder {
     if state.db.is_healthy() {
         HttpResponse::Ok()
     } else {
@@ -544,7 +544,7 @@ struct StatusResponse {
 #[tracing::instrument(skip(state))]
 #[get("/v0/status")]
 async fn status(
-    state: web::Data<RouteState<RocksDBAdaptor>>,
+    state: web::Data<RouteState<memory::MemoryStore>>,
 ) -> Result<web::Json<StatusResponse>, HTTPError> {
     let manifest = state.db.get_manifest().await?;
     let height = manifest.as_ref().map(|m| m.height).unwrap_or(0);
@@ -563,7 +563,7 @@ async fn status(
 #[tracing::instrument(skip(db))]
 pub fn create_rpc_server(
     rpc_laddr: String,
-    db: Arc<Db<RocksDBAdaptor>>,
+    db: Arc<Db<memory::MemoryStore>>,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
 ) -> Result<Server, std::io::Error> {

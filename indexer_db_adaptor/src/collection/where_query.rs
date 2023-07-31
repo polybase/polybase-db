@@ -5,7 +5,6 @@ use super::{
 };
 use crate::collection::index::IndexDirection;
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::collections::HashMap;
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
@@ -84,6 +83,7 @@ impl<'a> WhereQuery<'a> {
     ///
     /// The record list (DESC) (before applying the cursor) would look like this:
     /// ```
+    ///
     /// calum, 2, 40, 7  <- lower bound
     /// calum, 2, 30, 1  <- this is the cursor
     /// calum, 1, 20, 4
@@ -92,7 +92,6 @@ impl<'a> WhereQuery<'a> {
     /// ---
     /// john, 1, 20, 5
     /// ```
-    ///
     /// ## Filter Conditions
     /// * If equality filter, leave as is
     /// * If range filter (>, >=, <, <=):

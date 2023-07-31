@@ -496,7 +496,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         }: ListQuery<'_>,
         user: &'a Option<&'a AuthUser>,
     ) -> Result<impl futures::Stream<Item = Result<RecordRoot>> + '_> {
-        if self
+        if !self
             .indexes
             .iter()
             .any(|index| index.matches(&where_query, order_by))
@@ -724,10 +724,10 @@ mod tests {
             ("name".to_string(), RecordValue::String("test".into())),
         ]);
 
-        collection.set("1".into(), &value).await.unwrap();
+        collection.set("1", &value).await.unwrap();
         store.commit().await.unwrap();
 
-        let record = collection.get("1".into(), None).await.unwrap().unwrap();
+        let record = collection.get("1", None).await.unwrap().unwrap();
         assert_eq!(record.get("id").unwrap(), &RecordValue::String("1".into()));
         assert_eq!(
             record.get("name").unwrap(),

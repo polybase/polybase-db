@@ -1,13 +1,11 @@
 use crate::hash;
 use crate::mempool::Mempool;
 use crate::txn::{self, CallTxn};
-use crate::util;
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
 use indexer_db_adaptor::{
     collection::{
         collection::{AuthUser, ListQuery},
-        cursor::Cursor,
         record::{RecordRoot, RecordValue},
         validation::{validate_collection_record, validate_schema_change},
     },
@@ -456,12 +454,12 @@ impl<S: Store> Db<S> {
 
     /// Create a snapshot iterator, that can be used to iterate over the
     /// entire database in chunks
-    pub fn snapshot_iter(&self, chunk_size: usize) -> SnapshotIterator {
+    pub fn snapshot_iter(&self, _chunk_size: usize) -> SnapshotIterator {
         todo!()
         //self.indexer.snapshot(chunk_size)
     }
 
-    pub fn restore_chunk(&self, chunk: SnapshotChunk) -> Result<()> {
+    pub fn restore_chunk(&self, _chunk: SnapshotChunk) -> Result<()> {
         todo!()
         //self.indexer.restore(chunk)?;
         //Ok(())

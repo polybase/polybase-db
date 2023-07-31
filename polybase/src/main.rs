@@ -18,6 +18,7 @@ use crate::rpc::create_rpc_server;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
+use indexer_db_adaptor::memory;
 use indexer_rocksdb::adaptor::RocksDBAdaptor;
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
@@ -132,14 +133,15 @@ async fn main() -> Result<()> {
 
     // Create the underlying store
     let indexer_dir = util::get_indexer_dir(&config.root_dir).unwrap();
-    let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+    //let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+    let memory_store = memory::MemoryStore::new();
 
     // Database combines various components into a single interface
     // that is thread safe
     #[allow(clippy::unwrap_used)]
-    let db: Arc<Db<RocksDBAdaptor>> = Arc::new(
+    let db: Arc<Db<memory::MemoryStore>> = Arc::new(
         Db::new(
-            rocksdb_adaptor,
+            memory_store,
             DbConfig {
                 migration_batch_size: config.migration_batch_size,
                 ..Default::default()

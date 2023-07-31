@@ -1,7 +1,6 @@
 use crate::{error, store::Store};
 use indexer_db_adaptor::{
     collection::{
-        cursor::Cursor,
         index::{Index, IndexField},
         record::RecordRoot,
         where_query::WhereQuery,
