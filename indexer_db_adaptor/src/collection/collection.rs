@@ -857,4 +857,105 @@ mod tests {
         assert_eq!(first, value_2);
         assert_eq!(second, value_1);
     }
+
+    #[tokio::test]
+    async fn test_collection_set_list_default_query() {
+        let store = MemoryStore::new();
+
+        {
+            let collection = Collection::load(&store, "Collection").await.unwrap();
+            collection
+                .set(
+                    "test/test",
+                    &RecordRoot::from([
+                        ("id".to_owned(), RecordValue::String("test/test".to_owned())),
+                        (
+                            "ast".to_owned(),
+                            RecordValue::String(
+                                serde_json::to_string_pretty(&stableast::Root(vec![
+                                    stableast::RootNode::Collection(stableast::Collection {
+                                        namespace: stableast::Namespace {
+                                            value: "test".into(),
+                                        },
+                                        name: "test".into(),
+                                        attributes: vec![
+                                            stableast::CollectionAttribute::Directive(
+                                                polylang::stableast::Directive {
+                                                    name: "public".into(),
+                                                    arguments: vec![],
+                                                },
+                                            ),
+                                            stableast::CollectionAttribute::Property(
+                                                stableast::Property {
+                                                    name: "id".into(),
+                                                    type_: stableast::Type::Primitive(
+                                                        stableast::Primitive {
+                                                            value: stableast::PrimitiveType::String,
+                                                        },
+                                                    ),
+                                                    directives: vec![],
+                                                    required: true,
+                                                },
+                                            ),
+                                            stableast::CollectionAttribute::Property(
+                                                stableast::Property {
+                                                    name: "name".into(),
+                                                    type_: stableast::Type::Primitive(
+                                                        stableast::Primitive {
+                                                            value: stableast::PrimitiveType::String,
+                                                        },
+                                                    ),
+                                                    directives: vec![],
+                                                    required: true,
+                                                },
+                                            ),
+                                        ],
+                                    }),
+                                ]))
+                                .unwrap(),
+                            ),
+                        ),
+                    ]),
+                )
+                .await
+                .unwrap();
+        }
+
+        store.commit().await.unwrap();
+
+        let collection = Collection::load(&store, "test/test").await.unwrap();
+
+        let value_1 = HashMap::from([
+            ("id".to_string(), RecordValue::String("1".into())),
+            ("name".to_string(), RecordValue::String("test".into())),
+        ]);
+        collection.set("1", &value_1).await.unwrap();
+
+        let value_2 = HashMap::from([
+            ("id".to_string(), RecordValue::String("2".into())),
+            ("name".to_string(), RecordValue::String("test".into())),
+        ]);
+        collection.set("2", &value_2).await.unwrap();
+
+        store.commit().await.unwrap();
+
+        let results = collection
+            .list(
+                ListQuery {
+                    limit: None,
+                    where_query: where_query::WhereQuery([].into()),
+                    order_by: &[],
+                    cursor_before: None,
+                    cursor_after: None,
+                },
+                &None,
+            )
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+    }
 }

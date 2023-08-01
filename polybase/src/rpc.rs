@@ -19,7 +19,6 @@ use indexer_db_adaptor::{
     memory,
     store::Store,
 };
-use indexer_rocksdb::adaptor::RocksDBAdaptor;
 use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
@@ -216,8 +215,8 @@ struct ListQuery<'a> {
 
 #[derive(Debug, Serialize)]
 struct Cursors<'a> {
-    before: Option<cursor::Cursor<'a>>,
-    after: Option<cursor::Cursor<'a>>,
+    before: Option<cursor::WrappedCursor<'a>>,
+    after: Option<cursor::WrappedCursor<'a>>,
 }
 
 #[derive(Serialize)]
@@ -289,11 +288,11 @@ async fn get_records<'a>(
                 // TODO: implement cursor
                 before: records
                     .first()
-                    .map(|r| cursor::Cursor::from_record(r, &query.where_query))
+                    .map(|r| cursor::WrappedCursor::from_record(r, &query.where_query))
                     .transpose()?,
                 after: records
                     .last()
-                    .map(|r| cursor::Cursor::from_record(r, &query.where_query))
+                    .map(|r| cursor::WrappedCursor::from_record(r, &query.where_query))
                     .transpose()?, // records.last().map(|r| None),
             },
             data: records

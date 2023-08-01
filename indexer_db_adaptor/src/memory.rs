@@ -115,7 +115,7 @@ impl Store for MemoryStore {
 
         let collection = match state.data.get(collection_id) {
             Some(collection) => collection,
-            None => return Ok(Box::pin(futures::stream::empty())),
+            None => return Ok(Box::pin(futures::stream::iter(vec![]))),
         };
 
         // Loop through every record and filter based on the where query

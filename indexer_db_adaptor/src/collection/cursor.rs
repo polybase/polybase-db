@@ -24,8 +24,36 @@ pub enum Error {
     IndexValueError(#[from] IndexValueError),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Cursor<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct Cursor<'a>(pub WrappedCursor<'a>);
+
+impl<'a> Serialize for Cursor<'a> {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let buf = bincode::serialize(&self.0).unwrap();
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(&buf))
+    }
+}
+
+impl<'de, 'a> Deserialize<'de> for Cursor<'a> {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let buf = base64::engine::general_purpose::STANDARD
+            .decode(s.as_bytes())
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self(
+            bincode::deserialize(&buf).map_err(serde::de::Error::custom)?,
+        ))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WrappedCursor<'a> {
     pub record_id: IndexValue<'a>,
     pub values: HashMap<FieldPath, IndexValue<'a>>,
 }
@@ -36,7 +64,7 @@ pub enum CursorDirection {
     After,
 }
 
-impl<'a> Cursor<'a> {
+impl<'a> WrappedCursor<'a> {
     pub fn as_base64(&self) -> Result<String> {
         // serialize the cursor to bytes
         let buf = bincode::serialize(&self)?;
@@ -57,7 +85,7 @@ impl<'a> Cursor<'a> {
             }
         }
 
-        Ok(Cursor {
+        Ok(WrappedCursor {
             record_id: record
                 .get("id")
                 .ok_or(Error::RecordMissingID)?
@@ -65,5 +93,26 @@ impl<'a> Cursor<'a> {
                 .try_into()?,
             values,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    #[test]
+    fn test_cursor_serialization_deserialization() {
+        let cursor = Cursor(WrappedCursor {
+            record_id: IndexValue::String(Cow::Owned("1".to_string())),
+            values: HashMap::new(),
+        });
+
+        let serialized = serde_json::to_string(&cursor).unwrap();
+        //println!("serialized = {serialized:?}");
+        let deserialized: Cursor = serde_json::from_str(&serialized).unwrap();
+        //println!("{deserialized:?}");
+
+        assert_eq!(cursor, deserialized);
     }
 }

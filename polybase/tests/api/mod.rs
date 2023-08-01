@@ -604,7 +604,8 @@ impl Signature {
         let sig = secp256k1::global::SECP256K1.sign_ecdsa_recoverable(&message, key);
 
         let public_key = key.public_key(secp256k1::global::SECP256K1);
-        let public_key = indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+        let public_key =
+            indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
 
         Self {
             public_key: Some(public_key),

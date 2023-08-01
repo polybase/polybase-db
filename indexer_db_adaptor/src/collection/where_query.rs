@@ -121,7 +121,7 @@ impl<'a> WhereQuery<'a> {
                 let forward = is_inequality_forwards(key, order_by, &dir);
 
                 // TODO: Only add fields in the cursor, or should we add these as Null?
-                if let Some(cursor_field_value) = cursor.values.get(key) {
+                if let Some(cursor_field_value) = cursor.0.values.get(key) {
                     if forward && (node.gt.is_some() || node.gte.is_some()) {
                         // Only update if the cursor has the value for the field
                         node.gte = Some(WhereValue(cursor_field_value.clone().with_static()));
@@ -142,7 +142,7 @@ impl<'a> WhereQuery<'a> {
         let id = FieldPath::id();
         if let std::collections::hash_map::Entry::Vacant(e) = self.0.entry(id.clone()) {
             let forward = is_inequality_forwards(&id, order_by, &dir);
-            let where_value = Some(WhereValue(cursor.record_id.with_static()));
+            let where_value = Some(WhereValue(cursor.0.record_id.with_static()));
 
             e.insert(match forward {
                 true => WhereNode::Inequality(WhereInequality {
