@@ -133,7 +133,6 @@ impl Store for MemoryStore {
             //         None
             //     }
             // })
-            .take(limit.unwrap_or(usize::MAX))
             .collect();
 
         // sorting
@@ -166,7 +165,9 @@ impl Store for MemoryStore {
             });
         }
 
-        Ok(Box::pin(futures::stream::iter(records)))
+        Ok(Box::pin(futures::stream::iter(
+            records.into_iter().take(limit.unwrap_or(usize::MAX)),
+        )))
     }
 
     async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {

@@ -215,8 +215,8 @@ struct ListQuery<'a> {
 
 #[derive(Debug, Serialize)]
 struct Cursors<'a> {
-    before: Option<cursor::WrappedCursor<'a>>,
-    after: Option<cursor::WrappedCursor<'a>>,
+    before: Option<cursor::Cursor<'a>>,
+    after: Option<cursor::Cursor<'a>>,
 }
 
 #[derive(Serialize)]
@@ -286,14 +286,16 @@ async fn get_records<'a>(
         Ok(ListResponse {
             cursor: Cursors {
                 // TODO: implement cursor
-                before: records
-                    .first()
-                    .map(|r| cursor::WrappedCursor::from_record(r, &query.where_query))
-                    .transpose()?,
-                after: records
-                    .last()
-                    .map(|r| cursor::WrappedCursor::from_record(r, &query.where_query))
-                    .transpose()?, // records.last().map(|r| None),
+                before: records.first().map(|r| {
+                    cursor::Cursor(
+                        cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
+                    )
+                }),
+                after: records.last().map(|r| {
+                    cursor::Cursor(
+                        cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
+                    )
+                }),
             },
             data: records
                 .into_iter()
