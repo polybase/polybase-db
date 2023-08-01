@@ -1,6 +1,6 @@
 use crate::collection::{
-    index::{Index, IndexField},
-    record::RecordRoot,
+    index::{Index, IndexDirection, IndexField},
+    record::{IndexValue, RecordRoot, RecordValue},
     where_query::WhereQuery,
 };
 use crate::store::{Result, Store};
@@ -119,7 +119,7 @@ impl Store for MemoryStore {
         };
 
         // Loop through every record and filter based on the where query
-        let records: Vec<RecordRoot> = collection
+        let mut records: Vec<RecordRoot> = collection
             .data
             .values()
             .map(|value| value.data.clone())
@@ -135,6 +135,36 @@ impl Store for MemoryStore {
             // })
             .take(limit.unwrap_or(usize::MAX))
             .collect();
+
+        // sorting
+        for IndexField { path, direction } in order_by {
+            records.sort_by(|a, b| {
+                if let Some(rec_a) = a.get(path[0].as_ref()) {
+                    if let Some(rec_b) = b.get(path[0].as_ref()) {
+                        match (rec_a, rec_b) {
+                            (RecordValue::Number(na), RecordValue::Number(nb)) => match direction {
+                                IndexDirection::Ascending => na.partial_cmp(nb).unwrap(),
+                                IndexDirection::Descending => nb.partial_cmp(na).unwrap(),
+                            },
+                            (RecordValue::String(sa), RecordValue::String(sb)) => match direction {
+                                IndexDirection::Ascending => sa.cmp(sb),
+                                IndexDirection::Descending => sb.cmp(sa),
+                            },
+                            (RecordValue::Boolean(ba), RecordValue::Boolean(bb)) => match direction
+                            {
+                                IndexDirection::Ascending => ba.cmp(bb),
+                                IndexDirection::Descending => bb.cmp(ba),
+                            },
+                            _ => std::cmp::Ordering::Equal,
+                        }
+                    } else {
+                        std::cmp::Ordering::Equal
+                    }
+                } else {
+                    std::cmp::Ordering::Equal
+                }
+            });
+        }
 
         Ok(Box::pin(futures::stream::iter(records)))
     }
