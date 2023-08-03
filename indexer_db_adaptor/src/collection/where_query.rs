@@ -1,11 +1,13 @@
 use super::{
     cursor::{Cursor, CursorDirection},
-    field_path::FieldPath,
     record::{self, IndexValue},
 };
-use crate::collection::index::IndexDirection;
+use schema::{
+    field_path::FieldPath,
+    index::{EitherIndexField, Index, IndexDirection, IndexField},
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{borrow::Cow, cmp::Ordering, collections::HashMap};
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
@@ -16,6 +18,9 @@ pub enum WhereQueryError {
 
     #[error("record error")]
     RecordError(#[from] record::RecordError),
+
+    #[error("can only sort by inequality if it's the same direction")]
+    InequalitySortDirectionMismatch,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -34,6 +39,51 @@ pub enum WhereQueryUserError {
 pub struct WhereQuery<'a>(pub(crate) HashMap<FieldPath, WhereNode<'a>>);
 
 impl<'a> WhereQuery<'a> {
+    // Determines if the query matches the given index
+    pub fn matches(&self, index: &Index, sort: &[IndexField]) -> bool {
+        let Ok(mut requirements) = index_requirements(self, sort) else { return false; };
+
+        if requirements.len() > index.fields.len() {
+            return false;
+        }
+
+        // equality requirements should be first
+        requirements.sort_by(|a, b| match b.equality.cmp(&a.equality) {
+            Ordering::Equal => {
+                let matching_fields_b = index
+                    .fields
+                    .iter()
+                    .map(|f| b.matches(Some(f)))
+                    .take_while(|m| *m)
+                    .count();
+                let matching_fields_a: usize = index
+                    .fields
+                    .iter()
+                    .map(|f| a.matches(Some(f)))
+                    .take_while(|m| *m)
+                    .count();
+
+                matching_fields_b.cmp(&matching_fields_a)
+            }
+            ord => ord,
+        });
+
+        let mut ignore_rights = false;
+        for (field, requirement) in index.fields.iter().zip(requirements.iter()) {
+            match ignore_rights {
+                false if !requirement.matches(Some(field)) => return false,
+                true if requirement.left != *field => return false,
+                _ => {}
+            }
+
+            if (requirement.left != *field || requirement.inequality) && !requirement.equality {
+                ignore_rights = true;
+            }
+        }
+
+        true
+    }
+
     /// Applies a cursor to the query, updating the query to only return records after the cursor.
     ///
     /// # Example
@@ -110,7 +160,7 @@ impl<'a> WhereQuery<'a> {
         cursor: Cursor,
         dir: CursorDirection,
         // TODO: does this include ID?
-        order_by: &[super::index::IndexField<'_>],
+        order_by: &[IndexField],
     ) {
         // let values = cursor.values.with_static();
         for (key, value) in &mut self.0 {
@@ -163,15 +213,11 @@ impl<'a> WhereQuery<'a> {
 }
 
 /// Determines if the inequality projection should be forwards (gt/gte) or backwards (lt/lte)
-fn is_inequality_forwards(
-    key: &FieldPath,
-    order_by: &[super::index::IndexField<'_>],
-    dir: &CursorDirection,
-) -> bool {
+fn is_inequality_forwards(key: &FieldPath, order_by: &[IndexField], dir: &CursorDirection) -> bool {
     // Find the sort order direction for a key
     let order_for_key = order_by
         .iter()
-        .find(|field| field.path == key.0)
+        .find(|field| &field.path == key)
         .map(|field| field.direction)
         .unwrap_or(IndexDirection::Ascending);
 
@@ -250,6 +296,143 @@ impl<'de, 'a> Deserialize<'de> for WhereInequality<'a> {
 
         Ok(inequality)
     }
+}
+
+fn index_requirements(
+    where_query: &WhereQuery,
+    sorts: &[IndexField],
+) -> Result<Vec<EitherIndexField>> {
+    let mut requirements = vec![];
+
+    for (field, node) in &where_query.0 {
+        match node {
+            WhereNode::Equality(_) => {
+                let path: Vec<String> = field.0.iter().map(|x| x.to_string()).collect();
+
+                requirements.push(EitherIndexField {
+                    equality: true,
+                    inequality: false,
+                    left: IndexField {
+                        path: path.clone().into(),
+                        direction: IndexDirection::Ascending,
+                    },
+                    right: Some(IndexField {
+                        path: path.into(),
+                        direction: IndexDirection::Descending,
+                    }),
+                });
+            }
+            WhereNode::Inequality(_) => {}
+        }
+    }
+
+    for (field, node) in &where_query.0 {
+        match node {
+            WhereNode::Equality(_) => {}
+            WhereNode::Inequality(ineq) => {
+                let direction = if ineq.lt.is_some() || ineq.lte.is_some() {
+                    IndexDirection::Descending
+                } else {
+                    IndexDirection::Ascending
+                };
+
+                requirements.push(EitherIndexField {
+                    equality: false,
+                    inequality: true,
+                    left: IndexField {
+                        path: field
+                            .0
+                            .iter()
+                            .map(|x| x.to_string())
+                            .collect::<Vec<String>>()
+                            .into(),
+                        direction,
+                    },
+                    right: None,
+                });
+            }
+        }
+    }
+
+    for (i, sort) in sorts.iter().enumerate() {
+        let mut requirement = EitherIndexField {
+            inequality: false,
+            equality: false,
+            left: IndexField {
+                path: sort.path.clone(),
+                direction: sort.direction,
+            },
+            right: None,
+        };
+
+        let is_last = i == sorts.len() - 1;
+        if is_last {
+            let opposite_direction = match sort.direction {
+                IndexDirection::Ascending => IndexDirection::Descending,
+                IndexDirection::Descending => IndexDirection::Ascending,
+            };
+
+            requirement.right = Some(IndexField {
+                path: sort.path.clone(),
+                direction: opposite_direction,
+            });
+        } else if requirements
+            .last()
+            .map(|r| r.inequality && r.left.path == sort.path && r.left.direction != sort.direction)
+            .unwrap_or(false)
+        {
+            return Err(WhereQueryError::InequalitySortDirectionMismatch);
+        }
+
+        if let Some(last_req) = requirements.last_mut() {
+            if last_req.matches(Some(&requirement.left))
+                || last_req.matches(requirement.right.as_ref())
+            {
+                last_req.left = requirement.left;
+                last_req.right = requirement.right;
+                continue;
+            }
+        }
+
+        requirements.push(requirement);
+    }
+
+    if let Some(last) = requirements.last_mut() {
+        if last.inequality {
+            let opposite_direction = match last.left.direction {
+                IndexDirection::Ascending => IndexDirection::Descending,
+                IndexDirection::Descending => IndexDirection::Ascending,
+            };
+
+            last.right = Some(IndexField {
+                path: last.left.path.clone(),
+                direction: opposite_direction,
+            });
+        }
+    }
+
+    Ok(requirements)
+}
+
+#[allow(dead_code)]
+fn index_recommendation<'a>(where_query: &'a WhereQuery, sorts: &[IndexField]) -> Result<Index> {
+    let mut index_fields = vec![];
+    let requirements = index_requirements(where_query, sorts)?;
+
+    for requirement in requirements {
+        if requirement.equality {
+            index_fields.push(IndexField {
+                path: requirement.left.path,
+                direction: IndexDirection::Ascending,
+            });
+        } else {
+            index_fields.push(requirement.left);
+        }
+    }
+
+    Ok(Index {
+        fields: index_fields,
+    })
 }
 
 // #[cfg(test)]

@@ -256,8 +256,10 @@ impl ReasonCode {
             },
             indexer_db_adaptor::collection::CollectionUserError::RecordUserError(_) => {
                 ReasonCode::RecordInvalidField
-            }
-
+            },
+            indexer_db_adaptor::collection::CollectionUserError::Schema(_) => {
+                ReasonCode::CollectionInvalidSchema
+            },
         }
     }
 

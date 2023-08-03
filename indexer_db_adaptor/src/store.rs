@@ -1,12 +1,10 @@
-use crate::collection::{
-    index::{Index, IndexField},
-    record::RecordRoot,
-    where_query::WhereQuery,
-};
+use crate::collection::{record::RecordRoot, where_query::WhereQuery};
 use std::pin::Pin;
 use std::time::SystemTime;
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub use schema::index::{Index, IndexDirection, IndexField};
 
 #[derive(Debug, thiserror::Error)]
 pub struct Error(#[source] pub Box<dyn std::error::Error>);
@@ -20,9 +18,6 @@ impl std::fmt::Display for Error {
 /// The Store trait
 #[async_trait::async_trait]
 pub trait Store: Send + Sync + Clone {
-    // type Error: std::error::Error + Send + Sync + 'static;
-    type Config;
-
     async fn commit(&self) -> Result<()>;
 
     async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()>;
@@ -34,16 +29,16 @@ pub trait Store: Send + Sync + Clone {
         collection_id: &str,
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
-        order_by: &[IndexField<'_>],
+        order_by: &[IndexField],
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>>;
 
     async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()>;
 
-    async fn apply_indexes<'a>(
-        &self,
-        indexes: Vec<Index<'a>>,
-        previous: Vec<Index<'a>>,
-    ) -> Result<()>;
+    // async fn apply_indexes<'a>(
+    //     &self,
+    //     indexes: Vec<Index<'a>>,
+    //     previous: Vec<Index<'a>>,
+    // ) -> Result<()>;
 
     async fn last_record_update(
         &self,

@@ -1,0 +1,23 @@
+[package]
+name = "indexer_pg"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.7", features = [
+    "runtime-tokio",
+    "postgres",
+    "tls-native-tls",
+] }
+indexer_db_adaptor = { path = "../indexer_db_adaptor" }
+polylang = { git = "https://github.com/polybase/polylang", branch = "main", version = "0.1.0" }
+async-trait = "0.1.72"
+base64 = "0.21.2"
+miden-crypto = "0.6.0"
+futures = "0.3"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["raw_value"] }

@@ -10,6 +10,7 @@ tokio = { version = "1", features = ["full"] }
 prost = "0.11"
 actix-web = "4"
 actix-server = "2.2"
+schema = { path = "../schema" }
 indexer_rocksdb = { path = "../indexer_rocksdb" }
 indexer_db_adaptor = { path = "../indexer_db_adaptor" }
 gateway = { path = "../gateway" }

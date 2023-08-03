@@ -211,7 +211,7 @@ pub(crate) struct Authorization {
     pub(crate) delegate_fields: Vec<where_query::FieldPath>,
 }
 
-#[derive(Clone)]
+// #[derive(Clone)]
 pub struct Collection<'a> {
     store: &'a store::Store,
     collection_id: String,

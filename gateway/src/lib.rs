@@ -166,7 +166,7 @@ async fn dereference_args<S: Store>(
             .map_err(IndexerError::from)?
             .ok_or_else(|| GatewayUserError::RecordNotFound {
                 record_id,
-                collection_id: collection.id().to_string(),
+                collection_id: collection.schema.id().to_string(),
             })?;
 
         dereferenced_args.push(RecordValue::Map(record));
@@ -216,7 +216,7 @@ async fn dereference_fields<S: Store>(
                 return Err(GatewayUserError::RecordCollectionIdNotFound)?;
             };
 
-            let foreign_collection_id = collection.namespace().to_string() + "/" + &fr.collection;
+            let foreign_collection_id = collection.schema.namespace().to_string() + "/" + &fr.collection;
 
             if collection_id != &foreign_collection_id {
                 return Err(GatewayUserError::CollectionMismatch {
@@ -241,7 +241,7 @@ async fn dereference_fields<S: Store>(
             .map_err(IndexerError::from)?
             .ok_or(GatewayUserError::RecordNotFound {
                 record_id: value.to_string(),
-                collection_id: collection.id().to_string(),
+                collection_id: collection.schema.id().to_string(),
             })?;
 
         *map = record;
@@ -362,7 +362,7 @@ fn reference_records<S: Store>(
         }
     }
 
-    let record = visitor(collection.namespace(), collection_ast, &mut vec![], record)?;
+    let record = visitor(collection.schema.namespace(), collection_ast, &mut vec![], record)?;
 
     Ok(record)
 }
@@ -445,7 +445,7 @@ async fn can_call<S: Store>(
                 .map_err(IndexerError::from)?
                 .ok_or_else(|| GatewayUserError::RecordNotFound {
                     record_id: r.id.clone(),
-                    collection_id: collection.id().to_string(),
+                    collection_id: collection.schema.id().to_string(),
                 })?;
 
             if collection
@@ -468,7 +468,7 @@ async fn can_call<S: Store>(
                 .map_err(IndexerError::from)?
                 .ok_or_else(|| GatewayUserError::RecordNotFound {
                     record_id: fr.id.clone(),
-                    collection_id: collection.id().to_string(),
+                    collection_id: collection.schema.id().to_string(),
                 })?;
 
             if collection
@@ -579,15 +579,15 @@ impl Gateway {
             .await
             .map_err(IndexerError::from)?;
 
-        let Some(meta) = collection_collection.get(collection.id(), None).await.map_err(IndexerError::from)? else {
+        let Some(meta) = collection_collection.get(collection.schema.id(), None).await.map_err(IndexerError::from)? else {
             return Err(GatewayUserError::RecordNotFound {
-                record_id: collection.id().to_string(),
-                collection_id: collection_collection.id().to_string()
+                record_id: collection.schema.id().to_string(),
+                collection_id: collection_collection.schema.id().to_string()
             })?;
         };
 
         let (collection_ast_json, collection_ast) =
-            get_collection_ast(collection.name().as_str(), &meta)?;
+            get_collection_ast(collection.schema.name().as_str(), &meta)?;
         let collection_polylang_code = meta.get("code").and_then(|v| match v {
             RecordValue::String(s) => Some(s),
             _ => None,
@@ -604,7 +604,7 @@ impl Gateway {
         }) else {
             return Err(GatewayUserError::FunctionNotFound {
                 method_name: function_name.to_owned(),
-                collection_id: collection.id().to_string()
+                collection_id: collection.schema.id().to_string()
             })?;
         };
 
@@ -617,7 +617,7 @@ impl Gateway {
                 .map_err(IndexerError::from)?
                 .ok_or_else(|| GatewayUserError::RecordNotFound {
                     record_id,
-                    collection_id: collection.id().to_string(),
+                    collection_id: collection.schema.id().to_string(),
                 })?
         };
 
@@ -788,7 +788,7 @@ impl Gateway {
                             return Err(GatewayUserError::RecordIDModified)?;
                         }
 
-                        Some((collection.id().to_owned(), json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
+                        Some((collection.schema.id().to_owned(), json_to_record(&collection_ast, output_arg, false).map_err(IndexerError::from)?))
                     },
                     polylang::stableast::Type::ForeignRecord(fr) => {
                         let Some(output_id) = output_arg.get("id") else {
@@ -799,7 +799,7 @@ impl Gateway {
                             return Err(GatewayUserError::RecordIDModified)?;
                         }
 
-                        let collection_id = collection.namespace().to_string() + "/" + &fr.collection;
+                        let collection_id = collection.schema.namespace().to_string() + "/" + &fr.collection;
 
                         let Some(collection_meta) = collection_collection.get(&collection_id.clone(), auth).await.map_err(IndexerError::from)? else {
                             return Err(GatewayUserError::CollectionNotFound {

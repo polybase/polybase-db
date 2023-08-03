@@ -8,6 +8,9 @@ use super::{
 use polylang::stableast;
 use tracing::warn;
 
+// TODO: we need to do more checks than this - e.g. we need to check if a field is changing type
+// which we should not allow
+
 #[tracing::instrument]
 pub fn validate_schema_change(
     collection_name: &str,
@@ -23,6 +26,9 @@ pub fn validate_schema_change(
 
     Ok(())
 }
+
+// TODO: we need to check this before allowing a change to a schema record, technically this should
+// be in the
 
 #[tracing::instrument(skip(record))]
 pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
@@ -58,6 +64,8 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
     let Some(collection) = collection_ast_from_root(ast, &util::normalize_name(name)) else {
         return Err(CollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
     };
+
+    // TODO: these checks should be moved to the schema
 
     let properties = collection
         .attributes
@@ -152,6 +160,8 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
             );
         }
     }
+
+    // TODO: we should prevent this from parsing
     if let Some(read_directive) = directives.iter().find(|d| d.name == "read") {
         if !read_directive.arguments.is_empty() {
             return Err(
@@ -160,6 +170,8 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
             );
         }
     }
+
+    // TODO: we should prevent this from parsing
     if let Some(call_directive) = directives.iter().find(|d| d.name == "call") {
         if !call_directive.arguments.is_empty() {
             return Err(

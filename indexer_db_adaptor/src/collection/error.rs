@@ -68,6 +68,9 @@ pub enum CollectionError {
 
     #[error("cursor error")]
     CursorError(#[from] cursor::Error),
+
+    #[error("schema error")]
+    Schema(#[from] schema::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,4 +131,7 @@ pub enum CollectionUserError {
 
     #[error("record user error")]
     RecordUserError(#[from] record::RecordUserError),
+
+    #[error("schema user error")]
+    Schema(#[from] schema::UserError),
 }

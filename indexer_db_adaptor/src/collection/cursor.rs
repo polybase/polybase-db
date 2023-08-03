@@ -1,9 +1,9 @@
 use super::{
-    field_path::FieldPath,
     record::{IndexValue, IndexValueError, RecordRoot},
     where_query::{WhereNode, WhereQuery},
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use schema::field_path::FieldPath;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

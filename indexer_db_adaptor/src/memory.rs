@@ -1,9 +1,9 @@
 use crate::collection::{
-    index::{Index, IndexDirection, IndexField},
     record::{IndexValue, RecordRoot, RecordValue},
     where_query::WhereQuery,
 };
 use crate::store::{Result, Store};
+use schema::index::{IndexDirection, IndexField};
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
 
@@ -46,8 +46,6 @@ impl Default for MemoryStore {
 
 #[async_trait::async_trait]
 impl Store for MemoryStore {
-    type Config = ();
-
     async fn commit(&self) -> Result<()> {
         Ok(())
     }
@@ -109,7 +107,7 @@ impl Store for MemoryStore {
         collection_id: &str,
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
-        order_by: &[IndexField<'_>],
+        order_by: &[IndexField],
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         let state = self.state.lock().await;
 
@@ -139,8 +137,8 @@ impl Store for MemoryStore {
         // sorting
         for IndexField { path, direction } in order_by {
             records.sort_by(|a, b| {
-                if let Some(rec_a) = a.get(path[0].as_ref()) {
-                    if let Some(rec_b) = b.get(path[0].as_ref()) {
+                if let Some(rec_a) = a.get(&path.0[0]) {
+                    if let Some(rec_b) = b.get(&path.0[0]) {
                         match (rec_a, rec_b) {
                             (RecordValue::Number(na), RecordValue::Number(nb)) => match direction {
                                 IndexDirection::Ascending => na.partial_cmp(nb).unwrap(),
@@ -180,10 +178,6 @@ impl Store for MemoryStore {
 
         collection.data.remove(record_id);
 
-        Ok(())
-    }
-
-    async fn apply_indexes<'a>(&self, _indexes: Vec<Index<'a>>, _: Vec<Index<'a>>) -> Result<()> {
         Ok(())
     }
 

@@ -131,15 +131,11 @@ enum Direction {
     Descending,
 }
 
-impl From<Direction> for indexer_db_adaptor::collection::index::IndexDirection {
+impl From<Direction> for schema::index::IndexDirection {
     fn from(dir: Direction) -> Self {
         match dir {
-            Direction::Ascending => {
-                indexer_db_adaptor::collection::index::IndexDirection::Ascending
-            }
-            Direction::Descending => {
-                indexer_db_adaptor::collection::index::IndexDirection::Descending
-            }
+            Direction::Ascending => schema::index::IndexDirection::Ascending,
+            Direction::Descending => schema::index::IndexDirection::Descending,
         }
     }
 }
@@ -243,8 +239,8 @@ async fn get_records<'a>(
         .sort
         .iter()
         .map(|(path, dir)| {
-            indexer_db_adaptor::collection::index::IndexField::new(
-                path.split('.').map(|p| Cow::Owned(p.to_string())).collect(),
+            schema::index::IndexField::new(
+                path.split('.').map(|p| p.to_string()).collect(),
                 (*dir).into(),
             )
         })

@@ -1,11 +1,7 @@
 use crate::{error, store::Store};
 use indexer_db_adaptor::{
-    collection::{
-        index::{Index, IndexField},
-        record::RecordRoot,
-        where_query::WhereQuery,
-    },
-    store::{Result, Store as StoreAdaptor},
+    collection::{record::RecordRoot, where_query::WhereQuery},
+    store::{IndexField, Result, Store as StoreAdaptor},
 };
 use std::{path::Path, pin::Pin, time::SystemTime};
 
@@ -24,8 +20,6 @@ impl RocksDBAdaptor {
 
 #[async_trait::async_trait]
 impl StoreAdaptor for RocksDBAdaptor {
-    type Config = String;
-
     async fn commit(&self) -> Result<()> {
         self.store.commit().await?;
         Ok(())
@@ -45,7 +39,7 @@ impl StoreAdaptor for RocksDBAdaptor {
         collection_id: &str,
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
-        order_by: &[IndexField<'_>],
+        order_by: &[IndexField],
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         todo!()
     }
@@ -54,13 +48,13 @@ impl StoreAdaptor for RocksDBAdaptor {
         todo!()
     }
 
-    async fn apply_indexes<'a>(
-        &self,
-        indexes: Vec<Index<'a>>,
-        previous: Vec<Index<'a>>,
-    ) -> Result<()> {
-        todo!()
-    }
+    // async fn apply_indexes<'a>(
+    //     &self,
+    //     indexes: Vec<Index<'a>>,
+    //     previous: Vec<Index<'a>>,
+    // ) -> Result<()> {
+    //     todo!()
+    // }
 
     async fn last_record_update(
         &self,

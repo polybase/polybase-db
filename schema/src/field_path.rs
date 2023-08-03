@@ -1,22 +1,59 @@
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, fmt::Display};
 
+// TODO: rename to PropertyPath
+// TODO: Make turple private
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
-pub struct FieldPath(pub(crate) Vec<String>);
+pub struct FieldPath(pub Vec<String>);
 
 impl FieldPath {
+    pub fn new(path: Vec<String>) -> Self {
+        Self(path)
+    }
+
     pub fn id() -> Self {
         Self(vec!["id".to_string()])
     }
 
-    // pub fn to_string(&self) -> String {
-    //     self.0.join(".")
-    // }
+    pub fn name(&self) -> &str {
+        self.0.last().expect("FieldPath is empty")
+    }
+
+    /// Extends the path with the given path
+    pub fn append(&self, path: String) -> Self {
+        let mut new_path = self.0.clone();
+        new_path.push(path);
+        Self(new_path)
+    }
+}
+
+impl FromIterator<String> for FieldPath {
+    fn from_iter<I: IntoIterator<Item = String>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
+    }
 }
 
 impl From<Vec<Cow<'_, str>>> for FieldPath {
     fn from(v: Vec<Cow<'_, str>>) -> Self {
         Self(v.into_iter().map(|s| s.into_owned()).collect())
+    }
+}
+
+impl From<Vec<String>> for FieldPath {
+    fn from(v: Vec<String>) -> Self {
+        Self(v)
+    }
+}
+
+impl From<Vec<&String>> for FieldPath {
+    fn from(v: Vec<&String>) -> Self {
+        Self(v.iter().map(|s| s.to_string()).collect())
+    }
+}
+
+impl From<Vec<&str>> for FieldPath {
+    fn from(v: Vec<&str>) -> Self {
+        Self(v.iter().map(|s| s.to_string()).collect())
     }
 }
 
@@ -57,13 +94,6 @@ impl Serialize for FieldPath {
     where
         S: serde::Serializer,
     {
-        let mut s = String::new();
-        for (i, part) in self.0.iter().enumerate() {
-            if i > 0 {
-                s.push('.');
-            }
-            s.push_str(part);
-        }
-        serializer.serialize_str(&s)
+        serializer.serialize_str(&self.to_string())
     }
 }
