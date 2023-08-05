@@ -1,11 +1,11 @@
-use polylang::stableast;
-
 use super::field_path::FieldPath;
+use polylang::stableast;
+use std::fmt::Display;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Directive {
     // TODO: this should be an enum: e.g. Delegate, Read, Call, etc.
-    pub name: String,
+    pub kind: DirectiveKind,
     pub arguments: Vec<FieldPath>,
 }
 
@@ -23,8 +23,44 @@ impl Directive {
             })
             .collect();
         Self {
-            name: name.to_string(),
+            kind: match name.as_ref() {
+                "delegate" => DirectiveKind::Delegate,
+                "read" => DirectiveKind::Read,
+                "call" => DirectiveKind::Call,
+                "public" => DirectiveKind::Public,
+                _ => DirectiveKind::Unknown,
+            },
             arguments,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum DirectiveKind {
+    Delegate,
+    Read,
+    Call,
+    Public,
+    Unknown,
+}
+
+impl DirectiveKind {
+    pub fn allow_root(&self) -> bool {
+        matches!(
+            self,
+            DirectiveKind::Read | DirectiveKind::Call | DirectiveKind::Public
+        )
+    }
+}
+
+impl Display for DirectiveKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DirectiveKind::Delegate => write!(f, "delegate"),
+            DirectiveKind::Read => write!(f, "read"),
+            DirectiveKind::Call => write!(f, "call"),
+            DirectiveKind::Public => write!(f, "public"),
+            DirectiveKind::Unknown => write!(f, "unknown"),
         }
     }
 }

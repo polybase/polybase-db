@@ -1,4 +1,6 @@
-use crate::{field_path::FieldPath, stableast_ext::FieldWalker};
+use std::fmt::Display;
+
+use crate::field_path::FieldPath;
 use polylang::stableast;
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +9,20 @@ use serde::{Deserialize, Serialize};
 pub struct IndexField {
     pub path: FieldPath,
     pub direction: IndexDirection,
+}
+
+impl IndexField {
+    pub fn new(path: FieldPath, direction: IndexDirection) -> Self {
+        Self { path, direction }
+    }
+
+    pub fn new_asc(path: FieldPath) -> Self {
+        Self::new(path, IndexDirection::Ascending)
+    }
+
+    pub fn new_desc(path: FieldPath) -> Self {
+        Self::new(path, IndexDirection::Descending)
+    }
 }
 
 impl From<IndexField> for Vec<String> {
@@ -24,15 +40,24 @@ impl From<Vec<String>> for IndexField {
     }
 }
 
+impl Display for IndexField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.path, self.direction)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum IndexDirection {
     Ascending,
     Descending,
 }
 
-impl IndexField {
-    pub fn new(path: FieldPath, direction: IndexDirection) -> Self {
-        Self { path, direction }
+impl Display for IndexDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IndexDirection::Ascending => write!(f, "ASC"),
+            IndexDirection::Descending => write!(f, "DESC"),
+        }
     }
 }
 
@@ -53,59 +78,8 @@ impl Index {
         Self { fields }
     }
 
-    pub fn from_ast(collection_ast: &stableast::Collection<'_>) -> Vec<Index> {
-        // Extract manually defined indexes
-        let mut indexes = collection_ast
-            .attributes
-            .iter()
-            .filter_map(|attr| match attr {
-                stableast::CollectionAttribute::Index(index) => Some(Index::new(
-                    index
-                        .fields
-                        .iter()
-                        .map(|field| {
-                            IndexField::new(
-                                field.field_path.iter().map(|p| p.to_string()).collect(),
-                                match field.direction {
-                                    stableast::Direction::Asc => IndexDirection::Ascending,
-                                    stableast::Direction::Desc => IndexDirection::Descending,
-                                },
-                            )
-                        })
-                        .collect(),
-                )),
-                _ => None,
-            })
-            .chain([Index::new(vec![])].into_iter())
-            .collect::<Vec<_>>();
-
-        // Add all automatically indexed fields in a collection to the list of Indexes
-        collection_ast.walk_fields(&mut vec![], &mut |path, field| {
-            let indexable = matches!(
-                field.type_(),
-                stableast::Type::Primitive(_) | stableast::Type::PublicKey(_)
-            );
-
-            if indexable {
-                let new_index = |direction| {
-                    Index::new(vec![IndexField::new(
-                        path.iter().map(|p| p.to_string()).collect(),
-                        direction,
-                    )])
-                };
-                let new_index_asc = new_index(IndexDirection::Ascending);
-                let new_index_desc = new_index(IndexDirection::Descending);
-
-                if !indexes.contains(&new_index_asc) && !indexes.contains(&new_index_desc) {
-                    indexes.push(new_index_asc);
-                }
-            }
-        });
-
-        // Sort indexes by number of fields, so that we use the most specific index first
-        indexes.sort_by(|a, b| a.fields.len().cmp(&b.fields.len()));
-
-        indexes
+    pub fn iter(&self) -> impl Iterator<Item = &IndexField> {
+        self.fields.iter()
     }
 
     pub fn should_list_in_reverse(&self, sort: &[IndexField]) -> bool {
@@ -137,6 +111,32 @@ impl EitherIndexField {
             None => false,
         }
     }
+}
+
+pub fn custom_indexes_from_ast(collection_ast: &stableast::Collection) -> Vec<Index> {
+    collection_ast
+        .attributes
+        .iter()
+        .filter_map(|attr| match attr {
+            stableast::CollectionAttribute::Index(index) => Some(Index::new(
+                index
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        IndexField::new(
+                            field.field_path.iter().map(|p| p.to_string()).collect(),
+                            match field.direction {
+                                stableast::Direction::Asc => IndexDirection::Ascending,
+                                stableast::Direction::Desc => IndexDirection::Descending,
+                            },
+                        )
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        })
+        // .chain([Index::new(vec![])].into_iter())
+        .collect::<Vec<_>>()
 }
 
 // #[cfg(test)]

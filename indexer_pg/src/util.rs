@@ -1,7 +1,7 @@
 pub fn strip_invalid_chars(input: &str) -> String {
     let mut result = String::new();
     for c in input.chars() {
-        if c.is_ascii_alphanumeric() || c == '_' {
+        if c.is_ascii_alphanumeric() || c == '_' || c == '.' {
             result.push(c);
         }
     }

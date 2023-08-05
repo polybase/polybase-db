@@ -16,8 +16,8 @@ use base64::Engine;
 use indexer_db_adaptor::{
     collection::{collection::AuthUser, cursor},
     indexer::IndexerError,
+    indexer::Store,
     memory,
-    store::Store,
 };
 use indexer_rocksdb::adaptor::RocksDBAdaptor;
 use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};

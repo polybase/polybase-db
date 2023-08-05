@@ -1,12 +1,18 @@
-use super::{directive::Directive, field_path::FieldPath, types::Type};
+use crate::index::Index;
+
+use super::{directive::Directive, field_path::FieldPath, index::IndexField, types::Type};
 use polylang::stableast;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct PropertyList {
     properties: Vec<Property>,
 }
 
 impl PropertyList {
+    pub fn new(properties: Vec<Property>) -> Self {
+        Self { properties }
+    }
+
     pub fn from_ast_collection(ast: &stableast::Collection) -> Self {
         let properties = properties_from_ast(ast)
             .map(Property::from_ast_property)
@@ -21,6 +27,10 @@ impl PropertyList {
             .map(|p| Property::from_ast_object_field(p, parent))
             .collect();
         Self { properties }
+    }
+
+    pub fn get_path(&self, path: &FieldPath) -> Option<&Property> {
+        self.properties.iter().find(|p| p.path == *path)
     }
 
     /// Iterate through the top-level fields of a PropertyList
@@ -71,6 +81,8 @@ pub struct Property {
     pub path: FieldPath,
     pub type_: Type,
     pub required: bool,
+    // TODO: remove this prop, we can do this once we allow object_fields to be indexed
+    // as we can then just defer to the type as to wheter we can index the property
     pub index: bool,
     pub directives: Vec<Directive>,
 }
@@ -113,6 +125,18 @@ impl Property {
             type_,
             directives: vec![],
         }
+    }
+
+    pub fn name(&self) -> &str {
+        self.path.name()
+    }
+
+    pub fn is_indexable(&self) -> bool {
+        self.index
+    }
+
+    pub fn auto_index(&self) -> Index {
+        Index::new(vec![IndexField::new_asc(self.path.clone())])
     }
 }
 

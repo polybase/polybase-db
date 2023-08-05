@@ -4,16 +4,15 @@ use crate::txn::{self, CallTxn};
 use futures::TryStreamExt;
 use gateway::{Change, Gateway};
 use indexer_db_adaptor::{
-    collection::{
-        collection::{AuthUser, ListQuery},
-        record::{RecordRoot, RecordValue},
-        validation::{validate_collection_record, validate_schema_change},
-    },
+    auth_user::AuthUser,
     indexer::{Indexer, IndexerError},
-    store::Store,
+    list_query::ListQuery,
+    validation::{validate_collection_record, validate_schema_change},
+    Indexer,
 };
 use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
 use parking_lot::Mutex;
+use schema::record::{RecordRoot, RecordValue};
 use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
 use std::cmp::min;
@@ -89,7 +88,7 @@ impl Default for DbConfig {
     }
 }
 
-pub struct Db<S: Store> {
+pub struct Db<S: Indexer> {
     mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
     indexer: Indexer<S>,
@@ -166,10 +165,10 @@ impl<S: Store> Db<S> {
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
         // updated within the given time.
         let updated = wait_for_update(since, wait_for, || async {
-            Ok(collection
-                .get_record_metadata(&record_id)
-                .await?
-                .map(|m| m.updated_at))
+            Ok(self
+                .indexer
+                .last_record_update(&collection_id, &record_id)
+                .await?)
         })
         .await?;
 
@@ -208,15 +207,10 @@ impl<S: Store> Db<S> {
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Vec<RecordRoot>>> {
-        let collection = self.indexer.collection(&collection_id).await?;
-
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
         // updated within the given time.
         let updated = wait_for_update(since, wait_for, || async {
-            Ok(collection
-                .get_metadata()
-                .await?
-                .map(|m| m.last_record_updated_at))
+            Ok(self.indexer.last_collection_update(&collection_id).await?)
         })
         .await?;
 
@@ -264,6 +258,8 @@ impl<S: Store> Db<S> {
         // let indexer = Arc::clone(&self.indexer);
         let mut output_record_id = record_id.clone();
         let mut output_records = HashSet::new();
+
+        // Move validation here
 
         // Get changes
         let changes = self
@@ -550,7 +546,7 @@ impl<S: Store> Db<S> {
         validate_schema_change(
             #[allow(clippy::unwrap_used)] // split always returns at least one element
             record_id.split('/').last().unwrap(),
-            serde_json::from_str(old_ast)?,
+            serde_json::from_str(&old_ast)?,
             serde_json::from_str(new_ast)?,
         )
         .map_err(IndexerError::from)?;

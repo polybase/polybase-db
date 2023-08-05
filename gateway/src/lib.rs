@@ -4,16 +4,16 @@ use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, collections::HashMap};
 use tracing::debug;
 use indexer_db_adaptor::{
-    store::Store,
-    indexer::{Indexer, IndexerError},
-    publickey::PublicKey,
-    collection::{
-        stableast_ext::FieldWalker,
-        collection::{Collection, AuthUser},
-        record::{RecordError, RecordUserError, RecordValue, RecordRoot, Converter, PathFinder, json_to_record, record_to_json},
-        validation::validate_collection_record
-    },
+    Indexer,
+    
+    auth_user::AuthUser,
+    // collection::{Collection},
+    validation::validate_collection_record
 };
+use schema::{self, record::{RecordError, RecordUserError, RecordValue, RecordRoot, Converter, PathFinder, json_to_record, record_to_json}, publickey::PublicKey};
+use crate::stableast_ext::FieldWalker;
+
+mod stableast_ext;
 
 pub type Result<T> = std::result::Result<T, GatewayError>;
 
@@ -38,8 +38,8 @@ pub enum GatewayError {
     #[error("failed to compile script")]
     FailedToCompileScript,
 
-    #[error("indexer error")]
-    IndexerError(#[from] IndexerError),
+    #[error("indexer error: {0}")]
+    Schema(#[from] schema::Error),
 
     #[error("serde_json error")]
     SerdeJsonError(#[from] serde_json::Error),
@@ -126,7 +126,7 @@ pub struct Gateway{
     _x: (),
 }
 
-pub fn initialize<S: Store>() -> Gateway {
+pub fn initialize<S: Indexer>() -> Gateway {
     let platform = v8::new_default_platform(0, false).make_shared();
     v8::V8::initialize_platform(platform);
     v8::V8::initialize();
@@ -134,7 +134,7 @@ pub fn initialize<S: Store>() -> Gateway {
     Gateway { _x: () }
 }
 
-async fn dereference_args<S: Store>(
+async fn dereference_args<S: Indexer>(
     indexer: &Indexer<S>,
     collection: &Collection<'_, S>,
     args: Vec<RecordValue>,
@@ -367,7 +367,7 @@ fn reference_records<S: Store>(
     Ok(record)
 }
 
-async fn has_permission_to_call<S: Store>(
+async fn has_permission_to_call<S: Indexer>(
     indexer: &Indexer<S>,
     collection: &Collection<'_, S>,
     collection_ast: &polylang::stableast::Collection<'_>,
@@ -560,9 +560,9 @@ fn get_collection_ast<'a>(
 
 impl Gateway {
     #[tracing::instrument(skip(self, indexer))]
-    pub async fn call<S: Store>(
+    pub async fn call<S: Indexer>(
         &self,
-        indexer: &Indexer<S>,
+        // indexer: &Indexer<S>,
         collection_id: String,
         function_name: &str,
         record_id: String,
@@ -673,6 +673,7 @@ impl Gateway {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let dereferenced_args = dereference_args(indexer, &collection, args, auth).await?;
+        
         let instance_record =
             dereference_fields(indexer, &collection, &collection_ast, instance_record, auth)
                 .await?;

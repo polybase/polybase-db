@@ -1,13 +1,12 @@
-use super::{
-    cursor::{Cursor, CursorDirection},
-    record::{self, IndexValue},
-};
+use super::cursor::{Cursor, CursorDirection};
 use schema::{
     field_path::FieldPath,
     index::{EitherIndexField, Index, IndexDirection, IndexField},
+    index_value::IndexValue,
+    record,
 };
 use serde::{Deserialize, Serialize};
-use std::{borrow::Cow, cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap};
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
@@ -415,7 +414,7 @@ fn index_requirements(
 }
 
 #[allow(dead_code)]
-fn index_recommendation<'a>(where_query: &'a WhereQuery, sorts: &[IndexField]) -> Result<Index> {
+fn index_recommendation(where_query: &WhereQuery, sorts: &[IndexField]) -> Result<Index> {
     let mut index_fields = vec![];
     let requirements = index_requirements(where_query, sorts)?;
 

@@ -1,87 +1,292 @@
-use super::{error::Result, field_path::FieldPath, index::Index, property::PropertyList, util};
+use crate::{
+    ast::{collection_ast_from_json_str, collection_ast_from_record},
+    directive::{Directive, DirectiveKind},
+    error::{Error, Result, UserError},
+    index::{custom_indexes_from_ast, Index, IndexField},
+    methods::Method,
+    property::{Property, PropertyList},
+    publickey::{self, PublicKey},
+    record::{RecordRoot, RecordValue, Reference},
+    types::{PrimitiveType, Type},
+    util,
+};
 use polylang::stableast;
+use std::collections::HashMap;
 
 // TODO: can we remove Clone
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Schema {
-    id: String,
-    /// List of indexes in the Collection
-    /// Does this include custom AND field indexes?
+    pub name: String,
+    /// List of indexes in the Collection, includes both automatic field indexes and custom
+    /// indexes defined by the user. Indexes are sorted by more specific to less specific.
     pub indexes: Vec<Index>,
+    // TODO: should we include all directives here? Or at least create an iterator for them?
+    /// List of collection Directives (e.g. @public, @call, @read)
+    pub root_directives: Vec<Directive>,
     /// List of properties in the Collection
     pub properties: PropertyList,
-    /// Anyone can read the collection.
+    /// List of methods in the Collection
+    pub methods: HashMap<String, Method>,
+    /// Anyone can read the collection
     pub read_all: bool,
-    /// Anyone can call the collection functions.
+    /// Anyone can call the collection functions
     pub call_all: bool,
 }
 
 impl Schema {
-    pub fn new(id: &str, collection_ast: stableast::Collection) -> Result<Self> {
-        let indexes = Index::from_ast(&collection_ast);
+    pub fn new(collection_ast: &stableast::Collection) -> Self {
+        let properties = PropertyList::from_ast_collection(collection_ast);
+
+        // Get a vec of all indexes
+        let mut indexes = custom_indexes_from_ast(collection_ast);
+        properties
+            .iter()
+            .filter(|p| p.type_.is_indexable())
+            .for_each(|p| {
+                let new_index_asc = Index::new(vec![IndexField::new_asc(p.path.clone())]);
+                let new_index_desc = Index::new(vec![IndexField::new_desc(p.path.clone())]);
+                if !indexes.contains(&new_index_asc) && !indexes.contains(&new_index_desc) {
+                    indexes.push(new_index_asc);
+                }
+            });
+
+        // Sort indexes by number of fields, so that we use the most specific index first
+        indexes.sort_by(|a, b| a.fields.len().cmp(&b.fields.len()));
+
+        // Get a list of root directives (e.g. @public, @call, @read that apply to the whole collection)
+        let root_directives = collection_ast
+            .attributes
+            .iter()
+            .filter_map(|a| match a {
+                stableast::CollectionAttribute::Directive(d) => {
+                    Some(Directive::from_ast_directive(d))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        // Get a list of methods
+        let mut methods = HashMap::new();
+        collection_ast.attributes.iter().for_each(|a| {
+            if let stableast::CollectionAttribute::Method(d) = a {
+                let method = Method::from_ast_method(d);
+                methods.insert(method.name.clone(), method);
+            }
+        });
 
         let is_public = collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "public"));
         let read_all = is_public || collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "read" && d.arguments.is_empty()));
         let call_all = is_public || collection_ast.attributes.iter().any(|attr| matches!(attr, stableast::CollectionAttribute::Directive(d) if d.name == "call" && d.arguments.is_empty()));
 
-        Ok(Self {
-            id: id.to_string(),
+        Self {
+            name: collection_ast.name.to_string(),
+            root_directives,
+            methods,
             indexes,
             read_all,
             call_all,
-            properties: PropertyList::from_ast_collection(&collection_ast),
-        })
+            properties: PropertyList::from_ast_collection(collection_ast),
+        }
     }
 
-    pub fn id(&self) -> &str {
-        &self.id
-    }
-
-    pub fn name(&self) -> String {
-        util::normalize_name(&self.id)
-    }
-
-    pub fn namespace(&self) -> &str {
-        let Some(slash_index) = self.id.rfind('/') else {
-            return "";
+    pub fn from_record(record: &RecordRoot) -> Result<Self> {
+        let name = match record.get("id") {
+            Some(RecordValue::String(id)) => util::normalize_name(id),
+            _ => return Err(Error::CollectionRecordIDIsNotAString),
         };
+        Ok(Self::new(&collection_ast_from_record(&name, record)?))
+    }
 
-        &self.id[0..slash_index]
+    pub fn from_json_str(name: &str, ast_as_json_str: &str) -> Result<Self> {
+        Ok(Self::new(&collection_ast_from_json_str(
+            name,
+            ast_as_json_str,
+        )?))
+    }
+
+    /// Checks if a public key property with required directive exists, and public
+    /// key matches the provided public key
+    pub fn authorise_directives_with_public_key(
+        &self,
+        directives: &[DirectiveKind],
+        record: &RecordRoot,
+        public_key: &publickey::PublicKey,
+    ) -> bool {
+        // Find any public key properties, matching provided public key
+        return self
+            .fields_auth(directives)
+            .any(match_public_key(record, public_key));
+    }
+
+    /// Checks both field properties and method directives for public key properties
+    /// that match the provided public key
+    pub fn authorise_method_with_public_key(
+        &self,
+        method: &str,
+        record: &RecordRoot,
+        public_key: &publickey::PublicKey,
+    ) -> bool {
+        // Check fields AND methods for public key
+        self.fields_auth(&[DirectiveKind::Call])
+            .chain(self.method_auth(method))
+            .any(match_public_key(record, public_key))
+    }
+
+    /// Finds all fields that are references with the provided directives attached
+    pub fn find_directive_references<'a>(
+        &'a self,
+        directives: &'a [DirectiveKind],
+        record: &'a RecordRoot,
+    ) -> impl Iterator<Item = Reference<'a>> {
+        // Find any auth references
+        self.fields_auth(directives)
+            .filter_map(map_to_reference(record))
+    }
+
+    /// Finds all fields including fields referenced in method directives arguments
+    pub fn find_method_references<'a>(
+        &'a self,
+        method: &str,
+        record: &'a RecordRoot,
+    ) -> impl Iterator<Item = Reference<'a>> {
+        // Find any auth references
+        self.fields_auth(&[DirectiveKind::Call])
+            .chain(self.method_auth(method))
+            .filter_map(map_to_reference(record))
+    }
+
+    /// Get all properties from @call directives on a method, e.g @call(publicKey, anotherField)
+    pub fn method_auth(&self, method: &str) -> impl Iterator<Item = &Property> {
+        self.methods
+            .get(method)
+            .map(|m| {
+                let mut properties = vec![];
+                m.directives
+                    .iter()
+                    .filter(|d| d.kind == DirectiveKind::Call)
+                    .for_each(|d| {
+                        d.arguments
+                            .iter()
+                            .filter_map(|arg| self.properties.get_path(arg))
+                            .filter(|p| p.type_.is_authenticable())
+                            .for_each(|p| properties.push(p));
+                    });
+                properties.into_iter()
+            })
+            .unwrap_or(vec![].into_iter())
+    }
+
+    /// Finds all properties/fields with a type that can be authenticated and a directive is used
+    pub fn fields_auth<'a>(
+        &'a self,
+        directives: &'a [DirectiveKind],
+    ) -> impl Iterator<Item = &Property> {
+        self.properties.iter_all().filter(|p| {
+            p.directives
+                .iter()
+                .any(|directive| directives.contains(&directive.kind))
+                && p.type_.is_authenticable()
+        })
     }
 
     pub fn validate(&self) -> Result<()> {
         // We don't need to validate the in-built collection as we know this will be valid
-        if self.id() == "Collection" {
+        if self.name == "Collection" {
             return Ok(());
         }
 
-        // TODO: move to here from validation in indexer_db_adaptor
+        // Ensure we have an ID field
+        let Some(id_property) = self.properties.iter().find(|p| p.name() == "id") else {
+            return Err(UserError::CollectionMissingIdField.into());
+        };
+
+        // Ensure ID field is a string
+        // TODO: this will be removed soon, as we will allow other types for ID field
+        if id_property.type_ != Type::Primitive(PrimitiveType::String) {
+            return Err(UserError::CollectionIdFieldMustBeString.into());
+        }
+
+        // Ensure ID field is required
+        if !id_property.required {
+            return Err(UserError::CollectionIdFieldCannotBeOptional.into());
+        }
+
+        // Validate indexes
+        for index in self.indexes.iter() {
+            for index_field in &index.fields {
+                let Some(prop) = self.properties.iter_all().find(|p| p.path == index_field.path) else {
+                    return Err(UserError::IndexFieldNotFoundInSchema {
+                        field: index_field.path.to_string(),
+                    }
+                    .into());
+                };
+
+                if !prop.type_.is_indexable() {
+                    return Err(UserError::FieldTypeCannotBeIndexed {
+                        field: index_field.path.to_string(),
+                        field_type: prop.type_.to_string(),
+                    }
+                    .into());
+                }
+            }
+        }
+
+        // Validate collection directives
+        let invalid_root_directives: Vec<String> = self
+            .root_directives
+            .iter()
+            .filter(|d| !d.kind.allow_root())
+            .map(|d| d.kind.to_string())
+            .collect();
+
+        // Validate that we don't have any unknown directives
+        if !invalid_root_directives.is_empty() {
+            return Err(UserError::UnknownCollectionDirectives {
+                directives: invalid_root_directives,
+            }
+            .into());
+        }
+
+        // Validate that we don't have any arguments on collection directives
+        if let Some(directive) = self
+            .root_directives
+            .iter()
+            .find(|d| !d.arguments.is_empty())
+        {
+            return Err(UserError::CollectionDirectiveCannotHaveArguments {
+                directive: directive.kind.to_string(),
+            }
+            .into());
+        }
 
         Ok(())
     }
+}
 
-    /// PublicKeys/Delegates in this list can read the collection
-    // TODO: only PublicKey and RecordRefs are allowed here, do we need to check this?
-    pub fn read_fields(&self) -> impl Iterator<Item = &FieldPath> {
-        self.properties.iter().filter_map(|prop| {
-            match prop.directives.iter().any(|dir| dir.name == "read") {
-                true => Some(&prop.path),
-                false => None,
+/// Performs a match on a property to determine if it is a public key and matches the provided
+/// public key
+fn match_public_key<'a>(
+    record: &'a RecordRoot,
+    public_key: &'a PublicKey,
+) -> impl Fn(&'a Property) -> bool {
+    move |p| {
+        matches!(p.type_, Type::PublicKey)
+            && match record.get_path(&p.path) {
+                Some(RecordValue::PublicKey(pk)) => pk == public_key,
+                _ => false,
             }
-        })
     }
+}
 
-    /// PublicKeys/Delegates in this list have delegate permissions,
-    /// i.e. if someone @read's a field with a record from this collection,
-    /// anyone in the delegate list can read that record.
-    // TODO: only PublicKey and RecordRefs are allowed here, do we need to check this?
-    pub fn delegate_fields(&self) -> impl Iterator<Item = &FieldPath> {
-        self.properties.iter().filter_map(|prop| {
-            match prop.directives.iter().any(|dir| dir.name == "delegate") {
-                true => Some(&prop.path),
-                false => None,
-            }
-        })
+/// Performs a match on a property to determine if it is a public key and matches the provided
+/// public key
+fn map_to_reference<'a>(record: &'a RecordRoot) -> impl Fn(&Property) -> Option<Reference<'a>> {
+    move |p| match record.get_path(&p.path)? {
+        RecordValue::ForeignRecordReference(record_ref) => {
+            Some(Reference::ForeignRecord(record_ref))
+        }
+        RecordValue::RecordReference(record) => Some(Reference::Record(record)),
+        _ => None,
     }
 }
 
@@ -93,6 +298,7 @@ mod test {
     fn create_schema(collection_id: &str, code: &str) -> Schema {
         let mut program = None;
         let (_, ast) = parse(code, collection_id, &mut program).unwrap();
+        #[allow(clippy::expect_used)]
         let collection_ast = ast
             .0
             .into_iter()
@@ -101,7 +307,7 @@ mod test {
                 _ => None,
             })
             .expect("No collection found");
-        Schema::new(collection_id, collection_ast).unwrap()
+        Schema::new(&collection_ast)
     }
 
     #[test]
@@ -144,42 +350,55 @@ mod test {
     }
 
     #[test]
-    fn test_property_read_directive() {
+    fn test_fields_auth() {
         let code = r#"
             collection Test {
                 id: string;
                 @read
                 name: PublicKey;
+                @read
+                ignored: string;
+                @delegate
+                delegate: Test;
             }
         "#;
 
         let schema = create_schema("Test", code);
         assert_eq!(
             schema
-                .read_fields()
-                .map(|f| f.to_string())
+                .fields_auth(&[DirectiveKind::Read, DirectiveKind::Delegate])
+                .map(|p| p.path.to_string())
                 .collect::<Vec<_>>(),
-            vec!["name"]
+            vec!["name", "delegate"]
         );
     }
 
     #[test]
-    fn test_property_delegate_directive() {
+    fn test_method_auth() {
         let code = r#"
             collection Test {
                 id: string;
-                @delegate
                 name: PublicKey;
+                ignored: string;
+                @delegate
+                delegate: Test;
+                @call
+                call_prop: Test;
+
+                @call(name)
+                @call(call_prop)
+                @call(ignored)
+                function test() {}
             }
         "#;
 
         let schema = create_schema("Test", code);
         assert_eq!(
             schema
-                .delegate_fields()
-                .map(|f| f.to_string())
+                .method_auth("test")
+                .map(|p| p.path.to_string())
                 .collect::<Vec<_>>(),
-            vec!["name"]
+            vec!["name", "call_prop"]
         );
     }
 }

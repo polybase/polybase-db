@@ -1,8 +1,9 @@
 use crate::{error, store::Store};
 use indexer_db_adaptor::{
-    collection::{record::RecordRoot, where_query::WhereQuery},
-    store::{IndexField, Result, Store as StoreAdaptor},
+    indexer::{IndexField, Result, Store as StoreAdaptor},
+    where_query::WhereQuery,
 };
+use schema::record::RecordRoot;
 use std::{path::Path, pin::Pin, time::SystemTime};
 
 #[derive(Clone)]
@@ -81,8 +82,8 @@ impl StoreAdaptor for RocksDBAdaptor {
     }
 }
 
-impl From<error::Error> for indexer_db_adaptor::store::Error {
+impl From<error::Error> for indexer_db_adaptor::indexer::Error {
     fn from(err: error::Error) -> Self {
-        Self(Box::new(err))
+        Self::Store(Box::new(err))
     }
 }

@@ -1,9 +1,8 @@
+use crate::{field_path::FieldPath, property::PropertyList};
 use polylang::stableast;
-use std::boxed::Box;
+use std::{boxed::Box, fmt::Display};
 
 pub use stableast::PrimitiveType;
-
-use crate::{field_path::FieldPath, property::PropertyList};
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
@@ -45,6 +44,42 @@ impl Type {
             self,
             Type::Primitive(_) | Type::Record | Type::ForeignRecord(_) | Type::PublicKey
         )
+    }
+
+    pub fn is_authenticable(&self) -> bool {
+        matches!(
+            self,
+            Type::PublicKey | Type::Record | Type::ForeignRecord(_)
+        )
+    }
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Primitive(p) => write!(f, "{}", p),
+            Type::Array(a) => write!(f, "{}[]", a.value),
+            Type::Map(m) => write!(f, "map<{}, {}>", m.key, m.value),
+            Type::Object(o) => {
+                write!(f, "{{ ")?;
+                for (_, field) in o.fields.iter().enumerate() {
+                    write!(
+                        f,
+                        "{}{}: {}",
+                        field.path,
+                        if field.required { "" } else { "?" },
+                        field.type_
+                    )?;
+                    write!(f, ";")?;
+                    write!(f, " ")?;
+                }
+                write!(f, "}}")
+            }
+            Type::Record => write!(f, "record"),
+            Type::ForeignRecord(fr) => write!(f, "{}", fr.collection),
+            Type::PublicKey => write!(f, "PublicKey"),
+            Type::Unknown => write!(f, "UNKNOWN"),
+        }
     }
 }
 

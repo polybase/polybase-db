@@ -1,8 +1,6 @@
-use super::{
-    error::{CollectionError, Result},
-    record::{RecordRoot, RecordValue},
-};
+use super::error::{CollectionError, Result};
 use polylang::stableast;
+use schema::record::{RecordRoot, RecordValue};
 
 pub fn collection_ast_from_root<'a>(
     ast: stableast::Root<'a>,

@@ -1,7 +1,8 @@
 use crate::keys;
-use indexer_db_adaptor::{
-    collection::record::{self, ForeignRecordReference, IndexValue},
+use schema::{
+    index_value::IndexValue,
     publickey,
+    record::{self, ForeignRecordReference},
 };
 use std::borrow::Cow;
 
@@ -19,7 +20,7 @@ pub enum Error {
     Record(#[from] record::RecordError),
 
     #[error("public key error")]
-    PublicKey(#[from] indexer_db_adaptor::publickey::PublicKeyError),
+    PublicKey(#[from] publickey::PublicKeyError),
 
     #[error("try from int error")]
     TryFromIntError(#[from] std::num::TryFromIntError),

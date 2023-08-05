@@ -1,9 +1,9 @@
-use crate::collection::{
-    record::{IndexValue, RecordRoot, RecordValue},
-    where_query::WhereQuery,
+use crate::indexer::{Indexer, Result};
+use crate::where_query::WhereQuery;
+use schema::{
+    index::{IndexDirection, IndexField},
+    record::{RecordRoot, RecordValue},
 };
-use crate::store::{Result, Store};
-use schema::index::{IndexDirection, IndexField};
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
 
@@ -45,7 +45,7 @@ impl Default for MemoryStore {
 }
 
 #[async_trait::async_trait]
-impl Store for MemoryStore {
+impl Indexer for MemoryStore {
     async fn commit(&self) -> Result<()> {
         Ok(())
     }

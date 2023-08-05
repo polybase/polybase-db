@@ -11,12 +11,31 @@ impl FieldPath {
         Self(path)
     }
 
+    pub fn new_single(path: String) -> Self {
+        Self(vec![path])
+    }
+
+    /// Path to the id field, same for all records
     pub fn id() -> Self {
         Self(vec!["id".to_string()])
     }
 
+    pub fn is_id(&self) -> bool {
+        self.0.len() == 1 && self.0[0] == "id"
+    }
+
+    /// Name of the field, i.e. the last part of the path
     pub fn name(&self) -> &str {
+        #[allow(clippy::expect_used)]
         self.0.last().expect("FieldPath is empty")
+    }
+
+    pub fn path(&self) -> String {
+        self.0.join(".")
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &str> {
+        self.0.iter().map(|s| s.as_str())
     }
 
     /// Extends the path with the given path
@@ -65,7 +84,7 @@ impl Display for FieldPath {
 
 impl From<FieldPath> for String {
     fn from(path: FieldPath) -> Self {
-        path.0.join(".")
+        path.path()
     }
 }
 

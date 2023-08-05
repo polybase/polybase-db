@@ -5,6 +5,12 @@ pub enum Error {
     #[error(transparent)]
     User(#[from] UserError),
 
+    #[error("serde_json error")]
+    SerdeJSON(#[from] serde_json::Error),
+
+    #[error("collection record missing AST")]
+    CollectionRecordMissingAST,
+
     #[error("collection {name} not found in AST")]
     CollectionNotFoundInAST { name: String },
 
@@ -39,19 +45,10 @@ pub enum UserError {
     IndexFieldNotFoundInSchema { field: String },
 
     #[error("cannot index field {field:?} of type array")]
-    IndexFieldCannotBeAnArray { field: String },
-
-    #[error("cannot index field {field:?} of type map")]
-    IndexFieldCannotBeAMap { field: String },
-
-    #[error("cannot index field {field:?} of type object")]
-    IndexFieldCannotBeAnObject { field: String },
-
-    #[error("cannot index field {field:?} of type bytes")]
-    IndexFieldCannotBeBytes { field: String },
+    FieldTypeCannotBeIndexed { field: String, field_type: String },
 
     #[error("collection directive {directive:?} cannot have arguments")]
-    CollectionDirectiveCannotHaveArguments { directive: &'static str },
+    CollectionDirectiveCannotHaveArguments { directive: String },
 
     #[error("unknown collection directives {directives:?}")]
     UnknownCollectionDirectives { directives: Vec<String> },

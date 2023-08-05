@@ -1,18 +1,28 @@
-use indexer_db_adaptor::{
-    collection::{
-        ast::fields_from_ast,
-        record::{ForeignRecordReference, RecordReference, RecordRoot, RecordValue},
-    },
+use crate::error::Result;
+use polylang::stableast;
+use schema::{
     publickey,
+    record::{ForeignRecordReference, RecordReference, RecordRoot, RecordValue},
+    types::{Array, Map, PrimitiveType, Type},
+    util::normalize_name,
+    Schema,
 };
-use polylang::stableast::{self, Array, Map, Primitive, PrimitiveType, Property, Type};
 use sqlx::{postgres::PgRow, Column, Row};
 use std::collections::HashMap;
 
-pub fn pg_row_to_record_value(row: PgRow, ast: &stableast::Collection) -> RecordRoot {
+#[derive(Debug, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
+pub struct CollectionRecordRow {
+    pub id: String,
+    pub name: String,
+    pub ast: String,
+    pub code: String,
+    pub public_key: Option<serde_json::Value>,
+}
+
+pub fn pg_row_to_record_value(row: PgRow, schema: &Schema) -> RecordRoot {
     let mut record: HashMap<String, RecordValue> = HashMap::new();
 
-    let fields = fields_from_ast(ast);
+    let fields = schema.properties.iter();
 
     let columns = row.columns();
     let mut name_to_index = std::collections::HashMap::new();
@@ -21,8 +31,8 @@ pub fn pg_row_to_record_value(row: PgRow, ast: &stableast::Collection) -> Record
         name_to_index.insert(column.name().to_string(), index);
     }
 
-    for Property { name, type_, .. } in fields {
-        let name = name.to_string();
+    for prop in fields {
+        let name = prop.name().to_string();
         let index = match name_to_index.get(&name) {
             Some(index) => index,
             None => {
@@ -32,25 +42,23 @@ pub fn pg_row_to_record_value(row: PgRow, ast: &stableast::Collection) -> Record
             }
         };
 
-        let record_value: Option<RecordValue> = match type_ {
-            Type::Primitive(Primitive { value: primitive }) => match primitive {
-                PrimitiveType::String => row
-                    .try_get::<Option<String>, _>(&index)
-                    .unwrap_or(None)
-                    .map(RecordValue::String),
-                PrimitiveType::Number => row
-                    .try_get::<Option<f64>, _>(&index)
-                    .unwrap_or(None)
-                    .map(RecordValue::Number),
-                PrimitiveType::Boolean => row
-                    .try_get::<Option<bool>, _>(&index)
-                    .unwrap_or(None)
-                    .map(RecordValue::Boolean),
-                PrimitiveType::Bytes => row
-                    .try_get::<Option<Vec<u8>>, _>(&index)
-                    .unwrap_or(None)
-                    .map(RecordValue::Bytes),
-            },
+        let record_value: Option<RecordValue> = match prop.type_ {
+            Type::Primitive(PrimitiveType::String) => row
+                .try_get::<Option<String>, _>(&index)
+                .unwrap_or(None)
+                .map(RecordValue::String),
+            Type::Primitive(PrimitiveType::Number) => row
+                .try_get::<Option<f64>, _>(&index)
+                .unwrap_or(None)
+                .map(RecordValue::Number),
+            Type::Primitive(PrimitiveType::Boolean) => row
+                .try_get::<Option<bool>, _>(&index)
+                .unwrap_or(None)
+                .map(RecordValue::Boolean),
+            Type::Primitive(PrimitiveType::Bytes) => row
+                .try_get::<Option<Vec<u8>>, _>(&index)
+                .unwrap_or(None)
+                .map(RecordValue::Bytes),
             Type::Array(Array { .. }) => row
                 .try_get::<Option<serde_json::Value>, _>(&index)
                 .unwrap_or(None)
@@ -59,11 +67,11 @@ pub fn pg_row_to_record_value(row: PgRow, ast: &stableast::Collection) -> Record
                 .try_get::<Option<serde_json::Value>, _>(&index)
                 .unwrap_or(None)
                 .map(convert_serde_json_value_to_record_value),
-            Type::PublicKey(_) => row
+            Type::PublicKey => row
                 .try_get::<Option<serde_json::Value>, _>(&index)
                 .unwrap_or(None)
                 .and_then(convert_serde_json_value_to_public_key),
-            Type::Record(_) => row
+            Type::Record => row
                 .try_get::<Option<serde_json::Value>, _>(&index)
                 .unwrap_or(None)
                 .and_then(convert_serde_json_value_to_record_ref),

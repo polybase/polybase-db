@@ -1,8 +1,6 @@
-use super::{
-    ast::collection_ast_from_record,
-    record::{RecordRoot, RecordValue},
-};
+use super::ast::collection_ast_from_record;
 use once_cell::sync::Lazy;
+use schema::record::{RecordRoot, RecordValue};
 use schema::Schema;
 use std::collections::HashMap;
 
@@ -24,7 +22,7 @@ pub fn get_collection_collection_schema() -> Schema {
     let collection_ast: polylang::stableast::Collection<'_> =
         collection_ast_from_record(&COLLECTION_COLLECTION_RECORD, "Collection").unwrap();
     #[allow(clippy::unwrap_used)]
-    Schema::new("Collection", collection_ast).unwrap()
+    Schema::new(&collection_ast)
 }
 
 pub static COLLECTION_CODE: Lazy<&'static str> = Lazy::new(|| {
@@ -60,7 +58,7 @@ pub static COLLECTION_CODE: Lazy<&'static str> = Lazy::new(|| {
 });
 
 pub static COLLECTION_COLLECTION_RECORD: Lazy<RecordRoot> = Lazy::new(|| {
-    let mut hm = HashMap::new();
+    let mut hm = RecordRoot::new();
 
     hm.insert(
         "id".to_string(),

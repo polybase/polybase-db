@@ -13,6 +13,7 @@ sqlx = { version = "0.7", features = [
     "tls-native-tls",
 ] }
 indexer_db_adaptor = { path = "../indexer_db_adaptor" }
+schema = { path = "../schema" }
 polylang = { git = "https://github.com/polybase/polylang", branch = "main", version = "0.1.0" }
 async-trait = "0.1.72"
 base64 = "0.21.2"

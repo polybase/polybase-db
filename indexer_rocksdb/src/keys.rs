@@ -1,7 +1,10 @@
 use crate::{index, proto};
 use cid::multihash::{Hasher, MultihashDigest};
-use indexer_db_adaptor::collection::record::{self, IndexValue, RecordRoot};
 use prost::Message;
+use schema::{
+    index_value::IndexValue,
+    record::{self, RecordRoot},
+};
 use std::{borrow::Cow, cmp::Ordering, fmt};
 
 pub type Result<T> = std::result::Result<T, KeysError>;

@@ -1,17 +1,20 @@
 use super::{
-    ast::{collection_ast_from_json, collection_ast_from_record},
+    ast::collection_ast_from_record,
     collection_collection::{get_collection_collection_schema, COLLECTION_COLLECTION_RECORD},
     cursor::{Cursor, CursorDirection},
     error::{CollectionError, CollectionUserError, Result},
-    record::{PathFinder, RecordRoot, RecordValue},
-    util::normalize_name,
     where_query,
 };
-use crate::{publickey::PublicKey, store::Store};
+use crate::store::Store;
 use async_recursion::async_recursion;
 use futures::StreamExt;
-use polylang::stableast;
-use schema::{index, Schema};
+use schema::{
+    index,
+    publickey::PublicKey,
+    record::{PathFinder, RecordRoot, RecordValue},
+    util::normalize_name,
+    Schema,
+};
 use serde::{Deserialize, Serialize};
 use std::{borrow::Cow, time::SystemTime};
 use tracing::warn;
@@ -40,21 +43,6 @@ pub struct ListQuery<'a> {
     pub cursor_after: Option<Cursor<'a>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuthUser {
-    public_key: PublicKey,
-}
-
-impl AuthUser {
-    pub fn new(public_key: PublicKey) -> Self {
-        Self { public_key }
-    }
-
-    pub fn public_key(&self) -> &PublicKey {
-        &self.public_key
-    }
-}
-
 impl<'a, S: Store + 'a> Collection<'a, S> {
     fn new(store: &'a S, schema: Schema) -> Self {
         Self { store, schema }
@@ -66,12 +54,13 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
 
     #[tracing::instrument(skip(store))]
     pub(crate) async fn load(store: &'a S, id: &str) -> Result<Collection<'a, S>> {
+        let collection_collection = Self::collection_collection(store);
+
         if id == "Collection" {
-            return Ok(Self::collection_collection(store));
+            return Ok(collection_collection);
         }
 
-        let collection_collection = Self::collection_collection(store);
-        let Some(record) = collection_collection.get(id, None).await? else {
+        let Some(record) = collection_collection.get_without_auth_check(id).await? else {
             return Err(CollectionUserError::CollectionNotFound { name: id.to_string() })?;
         };
 
@@ -82,40 +71,17 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
         };
 
         let short_collection_name = normalize_name(id.as_str());
-
         let collection_ast = collection_ast_from_record(&record, &short_collection_name)?;
 
         Ok(Self {
             store,
-            schema: Schema::new(id, collection_ast)?,
+            schema: Schema::new(&collection_ast),
         })
     }
 
-    async fn ast<'ast>(
-        &self,
-        ast_json_holder: &'ast mut Option<String>,
-    ) -> Result<stableast::Collection<'ast>> {
-        let Some(record) = Self::load(self.store, "Collection")
-            .await?
-            .get(self.schema.id(), None)
-            .await? else {
-            return Err(CollectionError::CollectionCollectionRecordNotFound {
-                id: self.schema.id().to_string(),
-            });
-        };
-
-        let ast_json = match record.get("ast") {
-            Some(RecordValue::String(ast_json)) => ast_json,
-            Some(_) => return Err(CollectionError::CollectionRecordASTIsNotAString),
-            None => return Err(CollectionError::CollectionRecordMissingAST),
-        };
-
-        *ast_json_holder = Some(ast_json.clone());
-        #[allow(clippy::unwrap_used)]
-        let ast_json = ast_json_holder.as_ref().unwrap();
-
-        collection_ast_from_json(ast_json, self.schema.name().as_str())
-    }
+    // fn id(&self) -> &str {
+    //     self.schema.id()
+    // }
 
     #[tracing::instrument(skip(self))]
     #[async_recursion]
@@ -182,6 +148,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
                 )
                 .unwrap();
 
+            // Get records from this collection
             for record_reference in record_references {
                 let Some(record) = self.get(record_reference.id.as_str(), Some(user)).await? else {
                     continue;
@@ -196,6 +163,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
                 }
             }
 
+            // Get records from another collection
             for foreign_record_reference in foreign_record_references {
                 let collection =
                     Collection::load(self.store, foreign_record_reference.collection_id.as_str())
@@ -357,25 +325,15 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
 
     #[tracing::instrument(skip(self))]
     pub async fn get_without_auth_check(&self, record_id: &str) -> Result<Option<RecordRoot>> {
-        if self.schema.id() == "Collection" && record_id == "Collection" {
+        if self.id() == "Collection" && record_id == "Collection" {
             return Ok(Some(COLLECTION_COLLECTION_RECORD.clone()));
         }
 
-        let Some(value) = self.store.get(self.schema.id(), record_id).await? else {
+        let Some(value) = self.store.get(&self.id(), record_id).await? else {
             return Ok(None);
         };
 
         Ok(Some(value))
-    }
-
-    // todo - remove this
-    pub async fn get_metadata(&self) -> Result<Option<CollectionMetadata>> {
-        todo!()
-    }
-
-    // todo - remove this
-    pub async fn get_record_metadata(&self, _record_id: &str) -> Result<Option<RecordMetadata>> {
-        todo!()
     }
 
     #[tracing::instrument(skip(self))]
@@ -405,9 +363,6 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
             return Err(CollectionUserError::NoIndexFoundMatchingTheQuery)?;
         }
 
-        let mut ast_holder = None;
-        let _ast = self.ast(&mut ast_holder).await?;
-
         // TODO: remove clone
         let mut where_query = where_query.clone();
 
@@ -426,7 +381,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
 
         let stream = self
             .store
-            .list(self.schema.id(), limit, where_query, order_by)
+            .list(&self.id(), limit, where_query, order_by)
             .await?;
 
         Ok(stream
@@ -449,6 +404,7 @@ impl<'a, S: Store + 'a> Collection<'a, S> {
 mod tests {
     use crate::memory::MemoryStore;
     use futures::TryStreamExt;
+    use polylang::stableast;
     use schema::{field_path::FieldPath, index::IndexDirection};
     use std::collections::HashMap;
 

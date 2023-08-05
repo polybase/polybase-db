@@ -1,58 +1,51 @@
-#![warn(clippy::unwrap_used, clippy::expect_used)]
+use crate::where_query::WhereQuery;
+use schema::record::RecordRoot;
+use std::{pin::Pin, time::SystemTime};
 
-use crate::collection::{self, collection::Collection, record::RecordRoot};
-use crate::store::{self, Store};
+pub type Result<T> = std::result::Result<T, Error>;
 
-pub type Result<T> = std::result::Result<T, IndexerError>;
+pub use schema::index::{Index, IndexDirection, IndexField};
 
 #[derive(Debug, thiserror::Error)]
-pub enum IndexerError {
-    #[error("collection error")]
-    Collection(#[from] collection::CollectionError),
+pub enum Error {
+    // Custom errors for the store
+    #[error("store error: {0}")]
+    Store(#[from] Box<dyn std::error::Error + Send + Sync>),
 
-    #[error("record error")]
-    Record(#[from] collection::record::RecordError),
-
-    #[error("store error")]
-    Store(#[from] store::Error),
+    #[error("Collection collection record not found for collection {id:?}")]
+    CollectionCollectionRecordNotFound { id: String },
 }
 
-pub struct Indexer<S: Store> {
-    store: S,
-}
+/// The Store trait
+#[async_trait::async_trait]
+pub trait Indexer: Send + Sync + Clone {
+    async fn commit(&self) -> Result<()>;
 
-impl<S: Store> Indexer<S> {
-    pub fn new(db: S) -> Result<Self> {
-        Ok(Self { store: db })
-    }
+    async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()>;
 
-    #[tracing::instrument(skip(self))]
-    pub async fn check_for_migration(&self, migration_batch_size: usize) -> Result<()> {
-        todo!()
-    }
+    async fn get(&self, collection_id: &str, record_id: &str) -> Result<Option<RecordRoot>>;
 
-    #[tracing::instrument(skip(self))]
-    pub async fn destroy(&self) -> Result<()> {
-        Ok(self.store.destroy().await?)
-    }
+    async fn list(
+        &self,
+        collection_id: &str,
+        limit: Option<usize>,
+        where_query: WhereQuery<'_>,
+        order_by: &[IndexField],
+    ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>>;
 
-    #[tracing::instrument(skip(self))]
-    pub async fn collection(&self, id: &str) -> Result<Collection<S>> {
-        Ok(Collection::load(&self.store, id).await?)
-    }
+    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()>;
 
-    #[tracing::instrument(skip(self))]
-    pub async fn commit(&self) -> Result<()> {
-        Ok(self.store.commit().await?)
-    }
+    async fn last_record_update(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+    ) -> Result<Option<SystemTime>>;
 
-    #[tracing::instrument(skip(self))]
-    pub async fn set_system_key(&self, key: &str, data: &RecordRoot) -> Result<()> {
-        Ok(self.store.set_system_key(key, data).await?)
-    }
+    async fn last_collection_update(&self, collection_id: &str) -> Result<Option<SystemTime>>;
 
-    #[tracing::instrument(skip(self))]
-    pub async fn get_system_key(&self, key: &str) -> Result<Option<RecordRoot>> {
-        Ok(self.store.get_system_key(key).await?)
-    }
+    async fn set_system_key(&self, key: &str, data: &RecordRoot) -> Result<()>;
+
+    async fn get_system_key(&self, key: &str) -> Result<Option<RecordRoot>>;
+
+    async fn destroy(&self) -> Result<()>;
 }
