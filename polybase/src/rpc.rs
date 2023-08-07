@@ -8,13 +8,12 @@ use crate::errors::reason::ReasonCode;
 use crate::errors::AppError;
 use crate::txn::CallTxn;
 use crate::{auth, util::hash};
-use abi::Parser;
 use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
 use indexer::AuthUser;
-use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
+use polylang_prover::{compile_program, Inputs, ProgramExt};
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::collections::HashMap;
@@ -421,8 +420,9 @@ struct ProveRequest {
     abi: abi::Abi,
     ctx_public_key: Option<abi::publickey::Key>,
     this: Option<serde_json::Value>,
+    this_salts: Vec<u32>,
     args: Vec<serde_json::Value>,
-    other_records: HashMap<String, Vec<serde_json::Value>>,
+    other_records: HashMap<String, Vec<(serde_json::Value, Vec<u32>)>>,
 }
 
 #[tracing::instrument(skip_all, fields(
@@ -459,29 +459,13 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
             })?,
     );
 
-    let this_hash = hash_this(
-        req.abi.this_type.clone().ok_or_else(|| {
-            HTTPError::new(
-                ReasonCode::Internal,
-                Some(Box::new(AppError::ABIIsMissingThisType)),
-            )
-        })?,
-        &req.abi
-            .this_type
-            .as_ref()
-            .ok_or_else(|| {
-                HTTPError::new(
-                    ReasonCode::Internal,
-                    Some(Box::new(AppError::ABIIsMissingThisType)),
-                )
-            })?
-            .parse(&this)
-            .map_err(|err| {
-                HTTPError::new(
-                    ReasonCode::Internal,
-                    Some(Box::new(AppError::ABIError(Box::new(err)))),
-                )
-            })?,
+    let inputs = Inputs::new(
+        req.abi.clone(),
+        req.ctx_public_key.clone(),
+        req.this_salts.clone(),
+        this.clone(),
+        req.args.clone(),
+        req.other_records.clone(),
     )
     .map_err(|err| {
         HTTPError::new(
@@ -489,15 +473,6 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
             Some(Box::new(AppError::ProveError(Box::new(err)))),
         )
     })?;
-
-    let inputs = Inputs {
-        abi: req.abi.clone(),
-        ctx_public_key: req.ctx_public_key.clone(),
-        this: this.clone(),
-        this_hash,
-        args: req.args.clone(),
-        other_records: req.other_records.clone(),
-    };
 
     let output = polylang_prover::prove(&program, &inputs).map_err(|err| {
         HTTPError::new(
@@ -517,12 +492,12 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "old": {
             "this": this,
-            "hash": inputs.this_hash,
+            "hashes": inputs.this_field_hashes,
         },
         "new": {
             "selfDestructed": output.self_destructed,
             "this": new_this,
-            "hash": output.new_hash,
+            "hashes": output.new_hashes,
         },
         "stack": {
             "input": output.input_stack,

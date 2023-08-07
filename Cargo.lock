@@ -15,7 +15,7 @@ dependencies = [
 [[package]]
 name = "abi"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=91996dea0efa572666e6f82cbc9a1d2641082ebe#91996dea0efa572666e6f82cbc9a1d2641082ebe"
+source = "git+https://github.com/polybase/polylang?rev=1d5205250ca3f7203ecc097fb9cc29655a9fd174#1d5205250ca3f7203ecc097fb9cc29655a9fd174"
 dependencies = [
  "base64 0.21.0",
  "error",
@@ -1732,7 +1732,7 @@ dependencies = [
 [[package]]
 name = "error"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=91996dea0efa572666e6f82cbc9a1d2641082ebe#91996dea0efa572666e6f82cbc9a1d2641082ebe"
+source = "git+https://github.com/polybase/polylang?rev=1d5205250ca3f7203ecc097fb9cc29655a9fd174#1d5205250ca3f7203ecc097fb9cc29655a9fd174"
 dependencies = [
  "derive_more",
  "parking_lot",
@@ -3783,7 +3783,7 @@ dependencies = [
 [[package]]
 name = "polylang"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=91996dea0efa572666e6f82cbc9a1d2641082ebe#91996dea0efa572666e6f82cbc9a1d2641082ebe"
+source = "git+https://github.com/polybase/polylang?rev=1d5205250ca3f7203ecc097fb9cc29655a9fd174#1d5205250ca3f7203ecc097fb9cc29655a9fd174"
 dependencies = [
  "abi",
  "base64 0.21.0",
@@ -3795,7 +3795,7 @@ dependencies = [
  "miden-stdlib",
  "miden-vm",
  "parking_lot",
- "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=91996dea0efa572666e6f82cbc9a1d2641082ebe)",
+ "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=1d5205250ca3f7203ecc097fb9cc29655a9fd174)",
  "quickcheck",
  "quickcheck_macros",
  "regex",
@@ -3808,14 +3808,14 @@ dependencies = [
 [[package]]
 name = "polylang-prover"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=91996dea0efa572666e6f82cbc9a1d2641082ebe#91996dea0efa572666e6f82cbc9a1d2641082ebe"
+source = "git+https://github.com/polybase/polylang?rev=1d5205250ca3f7203ecc097fb9cc29655a9fd174#1d5205250ca3f7203ecc097fb9cc29655a9fd174"
 dependencies = [
  "abi",
  "error",
  "miden-processor",
  "miden-stdlib",
  "miden-vm",
- "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=91996dea0efa572666e6f82cbc9a1d2641082ebe)",
+ "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=1d5205250ca3f7203ecc097fb9cc29655a9fd174)",
  "serde_json",
 ]
 
@@ -3834,7 +3834,7 @@ dependencies = [
 [[package]]
 name = "polylang_parser"
 version = "0.1.0"
-source = "git+https://github.com/polybase/polylang?rev=91996dea0efa572666e6f82cbc9a1d2641082ebe#91996dea0efa572666e6f82cbc9a1d2641082ebe"
+source = "git+https://github.com/polybase/polylang?rev=1d5205250ca3f7203ecc097fb9cc29655a9fd174#1d5205250ca3f7203ecc097fb9cc29655a9fd174"
 dependencies = [
  "derive_more",
  "error",
