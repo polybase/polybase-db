@@ -33,7 +33,7 @@ impl<'a> Serialize for Cursor<'a> {
         S: serde::Serializer,
     {
         let buf = bincode::serialize(&self.0).unwrap();
-        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(&buf))
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(buf))
     }
 }
 
@@ -109,9 +109,7 @@ mod tests {
         });
 
         let serialized = serde_json::to_string(&cursor).unwrap();
-        //println!("serialized = {serialized:?}");
         let deserialized: Cursor = serde_json::from_str(&serialized).unwrap();
-        //println!("{deserialized:?}");
 
         assert_eq!(cursor, deserialized);
     }

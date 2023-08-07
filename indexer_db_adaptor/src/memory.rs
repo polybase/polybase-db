@@ -1,7 +1,8 @@
 use crate::collection::{
+    field_path::FieldPath,
     index::{Index, IndexDirection, IndexField},
-    record::{RecordRoot, RecordValue},
-    where_query::WhereQuery,
+    record::{IndexValue, RecordRoot, RecordValue},
+    where_query::{WhereNode, WhereQuery},
 };
 use crate::store::{Error, Result, Store};
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
@@ -50,6 +51,24 @@ impl Default for MemoryStore {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> bool {
+    println!("where_query = {where_query:?}");
+
+    for (rec_key, rec_val) in record.iter() {
+        println!("rec_key = {rec_key:?}, rec_val = {rec_val:?}");
+        if let Some(where_val) = where_query.0.get(&FieldPath(vec![rec_key.clone()])) {
+            match where_val {
+                WhereNode::Equality(ref eq_val) => {
+                    return eq_val.0.clone() == IndexValue::try_from(rec_val.clone()).unwrap();
+                }
+                WhereNode::Inequality(ref ineq_val) => todo!(), // todo,
+            }
+        }
+    }
+
+    true // TODO
 }
 
 #[async_trait::async_trait]
@@ -135,16 +154,14 @@ impl Store for MemoryStore {
             .data
             .values()
             .map(|value| value.data.clone())
-            // TODO: implement the filter/sort/cursor, we'll just loop through
-            // every record to find the match
-            // .filter_map(|(key, value)| {
-            //     let record = RecordRoot::from(value.clone());
-            //     if where_query.matches(&record) {
-            //         Some(record)
-            //     } else {
-            //         None
-            //     }
-            // })
+            .filter_map(|record| {
+                let record = RecordRoot::from(record.clone());
+                if matches(&where_query, &record) {
+                    Some(record)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         // sorting
@@ -324,9 +341,69 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore]
-    async fn test_memory_store_list_where_query() {
-        todo!();
+    async fn test_memory_store_list_where_query_single_equality() {
+        use crate::collection::{
+            field_path::FieldPath,
+            record::IndexValue,
+            where_query::{WhereNode, WhereValue},
+        };
+        use std::borrow::Cow;
+
+        let store = MemoryStore::new();
+
+        let collection_id = "test_collection";
+
+        let record1_data = [
+            ("id".into(), RecordValue::String("id1".into())),
+            ("name".into(), RecordValue::String("Bob".into())),
+            ("age".into(), RecordValue::Number(42.0)),
+        ]
+        .into();
+
+        let record2_data = [
+            ("id".into(), RecordValue::String("id2".into())),
+            ("name".into(), RecordValue::String("Dave".into())),
+            ("age".into(), RecordValue::Number(23.0)),
+        ]
+        .into();
+
+        let record3_data = [
+            ("id".into(), RecordValue::String("id3".into())),
+            ("name".into(), RecordValue::String("Wanda".into())),
+            ("age".into(), RecordValue::Number(19.0)),
+        ]
+        .into();
+
+        store
+            .set(collection_id, "record1", &record1_data)
+            .await
+            .unwrap();
+        store
+            .set(collection_id, "record2", &record2_data)
+            .await
+            .unwrap();
+        store
+            .set(collection_id, "record3", &record3_data)
+            .await
+            .unwrap();
+
+        let where_query = WhereQuery(
+            [(
+                FieldPath(["id".to_string()].into()),
+                WhereNode::Equality(WhereValue(IndexValue::String(Cow::Owned("id2".into())))),
+            )]
+            .into(),
+        );
+
+        let records = store
+            .list(collection_id, None, where_query, &[])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 1);
+        assert_eq!(records[0], record2_data);
     }
 
     #[tokio::test]
