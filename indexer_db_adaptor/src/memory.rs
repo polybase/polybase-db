@@ -1,11 +1,19 @@
 use crate::collection::{
     index::{Index, IndexDirection, IndexField},
-    record::{IndexValue, RecordRoot, RecordValue},
+    record::{RecordRoot, RecordValue},
     where_query::WhereQuery,
 };
-use crate::store::{Result, Store};
+use crate::store::{Error, Result, Store};
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
+
+#[derive(Debug, thiserror::Error)]
+pub enum MemoryStoreError {
+    #[error("error during `get`")]
+    Get,
+    #[error("error during `list`")]
+    List,
+}
 
 #[derive(Clone)]
 pub struct MemoryStore {
@@ -73,7 +81,10 @@ impl Store for MemoryStore {
                     },
                 );
 
-                state.data.get_mut(collection_id).unwrap()
+                state
+                    .data
+                    .get_mut(collection_id)
+                    .ok_or(Error(Box::new(MemoryStoreError::Get)))?
             }
         };
 
@@ -119,6 +130,7 @@ impl Store for MemoryStore {
         };
 
         // Loop through every record and filter based on the where query
+        // TODO
         let mut records: Vec<RecordRoot> = collection
             .data
             .values()
@@ -136,6 +148,7 @@ impl Store for MemoryStore {
             .collect();
 
         // sorting
+        // TODO
         for IndexField { path, direction } in order_by {
             records.sort_by(|a, b| {
                 if let Some(rec_a) = a.get(path[0].as_ref()) {
@@ -242,5 +255,166 @@ impl Store for MemoryStore {
         state.system_data.clear();
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use tokio::time::Duration;
+
+    #[tokio::test]
+    async fn test_memory_store_set_and_get() {
+        let store = MemoryStore::new();
+
+        let collection_id = "test_collection";
+        let record_id = "test_record";
+        let record_data = [
+            ("id".into(), RecordValue::String("id1".into())),
+            ("name".into(), RecordValue::String("Bob".into())),
+        ]
+        .into();
+
+        store
+            .set(collection_id, record_id, &record_data)
+            .await
+            .unwrap();
+
+        let retrieved_data = store.get(collection_id, record_id).await.unwrap().unwrap();
+        assert_eq!(retrieved_data, record_data);
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_list() {
+        let store = MemoryStore::new();
+
+        let collection_id = "test_collection";
+        let record1_data = [
+            ("id".into(), RecordValue::String("id1".into())),
+            ("name".into(), RecordValue::String("Bob".into())),
+            ("age".into(), RecordValue::Number(42.0)),
+        ]
+        .into();
+
+        let record2_data = [
+            ("id".into(), RecordValue::String("id2".into())),
+            ("name".into(), RecordValue::String("Dave".into())),
+            ("age".into(), RecordValue::Number(23.0)),
+        ]
+        .into();
+
+        store
+            .set(collection_id, "record1", &record1_data)
+            .await
+            .unwrap();
+        store
+            .set(collection_id, "record2", &record2_data)
+            .await
+            .unwrap();
+
+        let records = store
+            .list(collection_id, None, WhereQuery::default(), &[])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(2, records.len());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_memory_store_list_where_query() {
+        todo!();
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_delete() {
+        let store = MemoryStore::new();
+        let collection_id = "test_collection";
+        let record_id = "test_record";
+        let record_data = [
+            ("id".into(), RecordValue::String("id1".into())),
+            ("name".into(), RecordValue::String("Bob".into())),
+        ]
+        .into();
+
+        store
+            .set(collection_id, record_id, &record_data)
+            .await
+            .unwrap();
+
+        let retrieved_data = store.get(collection_id, record_id).await.unwrap().unwrap();
+        assert_eq!(retrieved_data, record_data);
+
+        store.delete(collection_id, record_id).await.unwrap();
+        let deleted_data = store.get(collection_id, record_id).await.unwrap();
+        assert!(deleted_data.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_last_update() {
+        let store = MemoryStore::new();
+        let collection_id = "test_collection";
+        let record_id = "test_record";
+        let record_data = [
+            ("id".into(), RecordValue::String("id1".into())),
+            ("name".into(), RecordValue::String("Bob".into())),
+        ]
+        .into();
+
+        store
+            .set(collection_id, record_id, &record_data)
+            .await
+            .unwrap();
+
+        let last_update = store
+            .last_record_update(collection_id, record_id)
+            .await
+            .unwrap()
+            .unwrap();
+
+        let now = SystemTime::now();
+        assert!(last_update >= now - Duration::from_secs(5) && last_update <= now);
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_system_key() {
+        let store = MemoryStore::new();
+        let key = "system_key";
+        let record_data = RecordRoot::new();
+
+        store.set_system_key(key, &record_data).await.unwrap();
+        let retrieved_data = store.get_system_key(key).await.unwrap().unwrap();
+
+        assert_eq!(retrieved_data, record_data);
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_destroy() {
+        let store = MemoryStore::new();
+
+        let collection_id = "test_collection";
+        let record_id = "test_record";
+        let record_data = RecordRoot::new();
+        store
+            .set(collection_id, record_id, &record_data)
+            .await
+            .unwrap();
+
+        let system_data = RecordRoot::new();
+        store
+            .set_system_key("some_system_key", &system_data)
+            .await
+            .unwrap();
+
+        store.destroy().await.unwrap();
+
+        let retrieved_data = store.get(collection_id, record_id).await.unwrap();
+        let system_data = store.get_system_key("some_system_key").await.unwrap();
+
+        assert!(retrieved_data.is_none());
+        assert!(system_data.is_none());
     }
 }
