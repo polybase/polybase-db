@@ -20,7 +20,7 @@ pub struct CollectionRecordRow {
 }
 
 pub fn pg_row_to_record_value(row: PgRow, schema: &Schema) -> RecordRoot {
-    let mut record: HashMap<String, RecordValue> = HashMap::new();
+    let mut record = RecordRoot::new();
 
     let fields = schema.properties.iter();
 

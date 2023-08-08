@@ -1,7 +1,9 @@
-use crate::indexer::{Indexer, Result};
+use crate::adaptor::{Error, IndexerAdaptor, Result};
 use crate::where_query::WhereQuery;
+use schema::Schema;
 use schema::{
     index::{IndexDirection, IndexField},
+    publickey::PublicKey,
     record::{RecordRoot, RecordValue},
 };
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
@@ -44,12 +46,7 @@ impl Default for MemoryStore {
     }
 }
 
-#[async_trait::async_trait]
-impl Indexer for MemoryStore {
-    async fn commit(&self) -> Result<()> {
-        Ok(())
-    }
-
+impl MemoryStore {
     async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()> {
         let mut state = self.state.lock().await;
 
@@ -84,6 +81,35 @@ impl Indexer for MemoryStore {
         );
 
         Ok(())
+    }
+
+    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
+        let mut state = self.state.lock().await;
+
+        let collection = match state.data.get_mut(collection_id) {
+            Some(collection) => collection,
+            // TODO: we should implement Store trait error for missing collection
+            None => return Ok(()),
+        };
+
+        collection.data.remove(record_id);
+
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl IndexerAdaptor for MemoryStore {
+    async fn commit(&self) -> Result<()> {
+        Ok(())
+    }
+
+    async fn get_schema(&self, collection_id: &str) -> Result<Option<Schema>> {
+        let record = match self.get("Collection", collection_id).await? {
+            Some(record) => record,
+            None => return Ok(None),
+        };
+        Ok(Some(Schema::from_record(&record)?))
     }
 
     async fn get(&self, collection_id: &str, record_id: &str) -> Result<Option<RecordRoot>> {
@@ -165,20 +191,6 @@ impl Indexer for MemoryStore {
         }
 
         Ok(Box::pin(futures::stream::iter(records)))
-    }
-
-    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
-        let mut state = self.state.lock().await;
-
-        let collection = match state.data.get_mut(collection_id) {
-            Some(collection) => collection,
-            // TODO: we should implement Store trait error for missing collection
-            None => return Ok(()),
-        };
-
-        collection.data.remove(record_id);
-
-        Ok(())
     }
 
     async fn last_record_update(

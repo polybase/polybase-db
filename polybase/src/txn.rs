@@ -1,8 +1,8 @@
 // use bincode::{deserialize, serialize};
+use indexer_db_adaptor::auth_user::AuthUser;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice as deserialize, to_vec as serialize};
 use sha3::{Digest, Sha3_256};
-use indexer_db_adaptor::collection::collection::AuthUser;
 
 pub type Result<T> = std::result::Result<T, CallTxnError>;
 

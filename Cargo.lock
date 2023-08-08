@@ -2476,10 +2476,12 @@ dependencies = [
 name = "indexer_pg"
 version = "0.1.0"
 dependencies = [
+ "async-recursion",
  "async-trait",
  "base64 0.21.2",
  "futures",
  "indexer_db_adaptor",
+ "lru",
  "miden-crypto 0.6.0",
  "polylang 0.1.0 (git+https://github.com/polybase/polylang?branch=main)",
  "schema",
@@ -3130,6 +3132,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "abb12e687cfb44aa40f41fc3978ef76448f9b6038cad6aef4259d3c095a2382e"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "lru"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eedb2bdbad7e0634f83989bf596f497b070130daaa398ab22d84c39e266deec5"
+dependencies = [
+ "hashbrown 0.14.0",
 ]
 
 [[package]]

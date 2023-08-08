@@ -1,5 +1,29 @@
-use crate::{directive::Directive, field_path::FieldPath, types::Type};
+use crate::{
+    directive::Directive,
+    field_path::FieldPath,
+    record::{Converter, RecordError, RecordValue},
+    types::Type,
+};
 use polylang::stableast;
+use std::borrow::Cow;
+
+pub type Result<T> = std::result::Result<T, UserError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum UserError {
+    #[error("method {method_name} args invalid, expected {expected} got {actual}")]
+    MethodIncorrectNumberOfArguments {
+        method_name: String,
+        expected: usize,
+        actual: usize,
+    },
+
+    #[error("invalid argument type for parameter {parameter_name:?}: {source}")]
+    MethodInvalidArgumentType {
+        parameter_name: String,
+        source: RecordError,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub struct Method {
@@ -7,6 +31,7 @@ pub struct Method {
     pub directives: Vec<Directive>,
     pub parameters: Vec<Parameter>,
     pub returns: Option<ReturnValue>,
+    pub code: String,
 }
 
 impl Method {
@@ -39,7 +64,67 @@ impl Method {
             directives,
             parameters,
             returns,
+            code: method.code.to_string(),
         }
+    }
+
+    pub fn validate_args(&self, args: Vec<RecordValue>) -> Result<()> {
+        let required_args_len = self.parameters.iter().filter(|p| p.required).count();
+        if args.len() < required_args_len {
+            return Err(UserError::MethodIncorrectNumberOfArguments {
+                method_name: self.name.clone(),
+                expected: required_args_len,
+                actual: args.len(),
+            })?;
+        }
+
+        if args.len() > self.parameters.len() {
+            return Err(UserError::MethodIncorrectNumberOfArguments {
+                method_name: self.name.clone(),
+                expected: self.parameters.len(),
+                actual: args.len(),
+            })?;
+        }
+
+        // TODO: validate the arg values against the schema
+
+        Ok(())
+    }
+
+    pub fn args_from_json(&self, args: &[serde_json::Value]) -> Result<Vec<RecordValue>> {
+        self.parameters
+            .iter()
+            .zip(args.iter())
+            .map(|(param, arg)| {
+                if !param.required & arg.is_null() {
+                    return Ok(RecordValue::Null);
+                }
+
+                Converter::convert(
+                    (&param.type_, arg.clone()),
+                    &mut vec![Cow::Borrowed(&param.name)],
+                    false,
+                )
+                .map_err(|e| UserError::MethodInvalidArgumentType {
+                    parameter_name: param.name.to_string(),
+                    source: e,
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()
+    }
+
+    pub fn generate_js(&self) -> String {
+        let parameters = self
+            .parameters
+            .iter()
+            .map(|p| p.name.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+
+        format!(
+            "function {} ({}) {{\n{}\n}}",
+            self.name, parameters, &self.code,
+        )
     }
 }
 

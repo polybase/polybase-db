@@ -1,3 +1,5 @@
+use crate::methods;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -23,6 +25,9 @@ pub enum Error {
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserError {
+    #[error("methods error: {0}")]
+    Method(#[from] methods::UserError),
+
     #[error("collection id is missing namespace")]
     CollectionIdMissingNamespace,
 

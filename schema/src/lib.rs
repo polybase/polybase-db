@@ -2,12 +2,12 @@
 
 mod ast;
 mod collection_schema;
-mod directive;
+pub mod directive;
 mod error;
 pub mod field_path;
 pub mod index;
 pub mod index_value;
-mod methods;
+pub mod methods;
 pub mod property;
 pub mod publickey;
 pub mod record;

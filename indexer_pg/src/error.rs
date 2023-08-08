@@ -1,3 +1,5 @@
+use indexer_db_adaptor::adaptor;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
@@ -9,16 +11,16 @@ pub enum Error {
     Schema(#[from] schema::Error),
     // #[error("Collection collection record not found for collection {id:?}")]
     // CollectionCollectionRecordNotFound { id: String },
-    #[error("indexer error")]
-    Indexer(#[from] indexer_db_adaptor::Error),
+    #[error("adaptor error")]
+    Adaptor(#[from] adaptor::Error),
 }
 
-impl From<Error> for indexer_db_adaptor::Error {
+impl From<Error> for adaptor::Error {
     fn from(err: Error) -> Self {
         match err {
-            Error::Sqlx(e) => indexer_db_adaptor::Error::Store(Box::new(e)),
-            Error::Schema(e) => indexer_db_adaptor::Error::Store(Box::new(e)),
-            Error::Indexer(e) => e,
+            Error::Sqlx(e) => adaptor::Error::Store(Box::new(e)),
+            Error::Schema(e) => adaptor::Error::Store(Box::new(e)),
+            Error::Adaptor(e) => e,
         }
     }
 }

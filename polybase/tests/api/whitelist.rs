@@ -19,7 +19,7 @@ collection Account {
     "#;
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key = indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
     let whitelist = Some(vec![public_key.to_hex().unwrap()]);
 
     let signer = Signer::from(move |body: &str| {
@@ -53,11 +53,11 @@ collection Account {
 
     // Key signing the request
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key = indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
 
     // Key to be used in whitelist
     let (_, alt_public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let alt_public_key = indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&alt_public_key).unwrap();
+    let alt_public_key = schema::publickey::PublicKey::from_secp256k1_key(&alt_public_key).unwrap();
     let whitelist = Some(vec![alt_public_key.to_hex().unwrap()]);
 
     let signer = Signer::from(move |body: &str| {
@@ -100,7 +100,7 @@ collection Account {
 
     // Key signing the request
     let (_, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key = indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
     let whitelist = Some(vec![public_key.to_hex().unwrap()]);
 
     let server = Server::setup_and_wait(Some(ServerConfig {

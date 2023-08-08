@@ -1,4 +1,4 @@
-use crate::{cursor, indexer, where_query};
+use crate::{adaptor, cursor, where_query};
 use schema::{index_value::IndexValueError, record};
 
 pub type Result<T> = std::result::Result<T, CollectionError>;

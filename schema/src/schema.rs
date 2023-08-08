@@ -2,11 +2,12 @@ use crate::{
     ast::{collection_ast_from_json_str, collection_ast_from_record},
     directive::{Directive, DirectiveKind},
     error::{Error, Result, UserError},
+    field_path::FieldPath,
     index::{custom_indexes_from_ast, Index, IndexField},
     methods::Method,
     property::{Property, PropertyList},
     publickey::{self, PublicKey},
-    record::{RecordRoot, RecordValue, Reference},
+    record::{json_to_record, RecordRoot, RecordValue, Reference},
     types::{PrimitiveType, Type},
     util,
 };
@@ -113,9 +114,8 @@ impl Schema {
         public_key: &publickey::PublicKey,
     ) -> bool {
         // Find any public key properties, matching provided public key
-        return self
-            .fields_auth(directives)
-            .any(match_public_key(record, public_key));
+        self.fields_auth(directives)
+            .any(match_public_key(record, public_key))
     }
 
     /// Checks both field properties and method directives for public key properties
@@ -137,7 +137,7 @@ impl Schema {
         &'a self,
         directives: &'a [DirectiveKind],
         record: &'a RecordRoot,
-    ) -> impl Iterator<Item = Reference<'a>> {
+    ) -> impl Iterator<Item = (FieldPath, Reference<'a>)> {
         // Find any auth references
         self.fields_auth(directives)
             .filter_map(map_to_reference(record))
@@ -148,7 +148,7 @@ impl Schema {
         &'a self,
         method: &str,
         record: &'a RecordRoot,
-    ) -> impl Iterator<Item = Reference<'a>> {
+    ) -> impl Iterator<Item = (FieldPath, Reference<'a>)> {
         // Find any auth references
         self.fields_auth(&[DirectiveKind::Call])
             .chain(self.method_auth(method))
@@ -187,6 +187,34 @@ impl Schema {
                 .any(|directive| directives.contains(&directive.kind))
                 && p.type_.is_authenticable()
         })
+    }
+
+    pub fn get_method(&self, method: &str) -> Option<&Method> {
+        self.methods.get(method)
+    }
+
+    pub fn generate_js(&self) -> String {
+        let fns = self
+            .methods
+            .values()
+            .map(|method| format!("instance.{} = {}", method.name, method.generate_js()))
+            .collect::<Vec<String>>()
+            .join(";");
+
+        format!(
+            "function error(str) {{
+                return new Error(str);
+            }}
+            
+            const instance = $$__instance;
+            {};",
+            fns,
+        )
+    }
+
+    // TODO: validate that we can change to the new schema
+    pub fn validate_schema_change(&self, new_schema: Schema) -> Result<()> {
+        todo!()
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -280,12 +308,14 @@ fn match_public_key<'a>(
 
 /// Performs a match on a property to determine if it is a public key and matches the provided
 /// public key
-fn map_to_reference<'a>(record: &'a RecordRoot) -> impl Fn(&Property) -> Option<Reference<'a>> {
+fn map_to_reference<'a>(
+    record: &'a RecordRoot,
+) -> impl Fn(&Property) -> Option<(FieldPath, Reference<'a>)> {
     move |p| match record.get_path(&p.path)? {
         RecordValue::ForeignRecordReference(record_ref) => {
-            Some(Reference::ForeignRecord(record_ref))
+            Some((p.path.clone(), Reference::ForeignRecord(record_ref)))
         }
-        RecordValue::RecordReference(record) => Some(Reference::Record(record)),
+        RecordValue::RecordReference(record) => Some((p.path.clone(), Reference::Record(record))),
         _ => None,
     }
 }

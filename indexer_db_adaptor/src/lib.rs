@@ -4,6 +4,7 @@ pub use error::{CollectionError, CollectionUserError};
 // TODO: we should export schema from here, so that indexer builders
 // are using the correct schema
 
+pub mod adaptor;
 pub mod ast;
 pub mod auth_user;
 mod collection_collection;
@@ -15,4 +16,4 @@ pub mod memory;
 pub mod validation;
 pub mod where_query;
 
-pub use indexer::{Error, Indexer, Result};
+pub use indexer::{Error, Indexer, Result, UserError};

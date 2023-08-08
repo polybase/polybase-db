@@ -76,6 +76,15 @@ impl<'a> Iterator for PropertyListIterator<'a> {
     }
 }
 
+impl<'a> IntoIterator for &'a PropertyList {
+    type Item = &'a Property;
+    type IntoIter = PropertyListIterator<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        PropertyListIterator::new(self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Property {
     pub path: FieldPath,

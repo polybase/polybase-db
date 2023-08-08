@@ -13,19 +13,14 @@ use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
-use indexer_db_adaptor::{
-    collection::{collection::AuthUser, cursor},
-    indexer::IndexerError,
-    indexer::Store,
-    memory,
-};
-use indexer_rocksdb::adaptor::RocksDBAdaptor;
+use indexer_db_adaptor::{adaptor, auth_user::AuthUser, cursor, list_query, memory, where_query};
 use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
+use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
 
-struct RouteState<S: Store> {
+struct RouteState<S: adaptor::IndexerAdaptor> {
     db: Arc<Db<S>>,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
@@ -90,8 +85,8 @@ async fn get_record(
         match state
             .db
             .get_wait(
-                collection,
-                record_id,
+                &collection,
+                &record_id,
                 auth,
                 since,
                 Duration::from(query.wait_for),
@@ -102,13 +97,12 @@ async fn get_record(
             DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
     } else {
-        state.db.get(collection, record_id, auth).await?
+        state.db.get(&collection, &record_id, auth).await?
     };
 
     match record {
         Some(record) => {
-            let data = indexer_db_adaptor::collection::record::record_to_json(record)
-                .map_err(indexer_db_adaptor::indexer::IndexerError::from)?;
+            let data = schema::record::record_to_json(record);
             if let Some(f) = &query.format {
                 if f == "nft" {
                     return Ok(HttpResponse::Ok().json(data));
@@ -198,7 +192,7 @@ struct ListQuery<'a> {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
-    where_query: indexer_db_adaptor::collection::where_query::WhereQuery<'a>,
+    where_query: where_query::WhereQuery<'a>,
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
@@ -246,7 +240,7 @@ async fn get_records<'a>(
         })
         .collect::<Vec<_>>();
 
-    let list_query = indexer_db_adaptor::collection::collection::ListQuery {
+    let list_query = list_query::ListQuery {
         limit: Some(min(1000, query.limit.unwrap_or(100))),
         where_query: query.where_query.clone(),
         order_by: &sort_indexes,
@@ -258,7 +252,7 @@ async fn get_records<'a>(
         match state
             .db
             .list_wait(
-                collection,
+                &collection,
                 list_query,
                 auth,
                 since,
@@ -270,7 +264,7 @@ async fn get_records<'a>(
             DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
     } else {
-        state.db.list(collection, list_query, auth).await?
+        state.db.list(&collection, list_query, auth).await?
     };
 
     // for metrics data collection
@@ -294,14 +288,11 @@ async fn get_records<'a>(
             },
             data: records
                 .into_iter()
-                .map(|r| {
-                    Ok(GetRecordResponse {
-                        data: indexer_db_adaptor::collection::record::record_to_json(r)?,
-                        block: Default::default(),
-                    })
+                .map(|r| GetRecordResponse {
+                    data: record::record_to_json(r),
+                    block: Default::default(),
                 })
-                .collect::<Result<_, indexer_db_adaptor::collection::record::RecordError>>()
-                .map_err(IndexerError::from)?,
+                .collect(),
         })
     }
     .await;
@@ -363,7 +354,7 @@ async fn post_record(
 
     let record_id = db.call(txn).await?;
 
-    let Some(record) = state.db.get_without_auth_check(collection_id, record_id).await? else {
+    let Some(record) = state.db.get_without_auth_check(&collection_id, &record_id).await? else {
         return Err(HTTPError::new(
             ReasonCode::RecordNotFound,
             None,
@@ -371,8 +362,7 @@ async fn post_record(
     };
 
     Ok(web::Json(FunctionResponse {
-        data: indexer_db_adaptor::collection::record::record_to_json(record)
-            .map_err(IndexerError::from)?,
+        data: record::record_to_json(record),
     }))
 }
 
@@ -399,13 +389,12 @@ async fn call_function(
     let record_id = db.call(txn).await?;
     let record = state
         .db
-        .get_without_auth_check(collection_id, record_id)
+        .get_without_auth_check(&collection_id, &record_id)
         .await?;
 
     Ok(web::Json(FunctionResponse {
         data: match record {
-            Some(record) => indexer_db_adaptor::collection::record::record_to_json(record)
-                .map_err(IndexerError::from)?,
+            Some(record) => record::record_to_json(record),
             None => serde_json::Value::Null,
         },
     }))

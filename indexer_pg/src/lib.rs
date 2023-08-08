@@ -1,5 +1,12 @@
+extern crate lru;
+
 use error::Result;
-use indexer_db_adaptor::{where_query::WhereQuery, Indexer};
+use indexer_db_adaptor::{
+    adaptor::{self, IndexerAdaptor},
+    where_query::WhereQuery,
+};
+use row::CollectionRecordRow;
+// use lru::LruCache;
 use schema::{
     index::IndexField, record::RecordRoot, util::normalize_name, Schema, COLLECTION_SCHEMA,
 };
@@ -13,9 +20,10 @@ mod queries;
 mod row;
 mod util;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PostgresAdaptor {
     pool: PgPool,
+    // schemas: LruCache<String, Schema>,
 }
 
 impl PostgresAdaptor {
@@ -42,7 +50,7 @@ impl PostgresAdaptor {
         Ok(())
     }
 
-    pub async fn get_by_id(&self, table_name: &str, record_id: &str) -> Result<Option<PgRow>> {
+    pub async fn get_row_by_id(&self, table_name: &str, record_id: &str) -> Result<Option<PgRow>> {
         Ok(sqlx::query(&format!(
             "SELECT * FROM {} WHERE id = $1",
             util::strip_invalid_chars(table_name)
@@ -52,54 +60,46 @@ impl PostgresAdaptor {
         .await?)
     }
 
-    // pub async fn get_collection_record(
-    //     &self,
-    //     collection_id: &str,
-    // ) -> Result<Option<row::CollectionRecordRow>> {
-    //     Ok(
-    //         sqlx::query_as::<_, row::CollectionRecordRow>("SELECT * FROM Collection WHERE id = $1")
-    //             .bind(collection_id)
-    //             .fetch_optional(&self.pool)
-    //             .await?,
-    //     )
-    // }
+    pub async fn get_record_by_id(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        schema: &Schema,
+    ) -> Result<Option<RecordRoot>> {
+        let table_name = pg_collection_table_name(collection_id);
+        match self.get_row_by_id(&table_name, record_id).await? {
+            Some(row) => Ok(Some(row::pg_row_to_record_value(row, schema))),
+            None => Ok(None),
+        }
+    }
 
-    pub async fn get_collection_schema(&self, collection_id: &str) -> Result<Option<Schema>> {
+    pub async fn get_collection_record_by_id(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<CollectionRecordRow>> {
         let record =
             sqlx::query_as::<_, row::CollectionRecordRow>("SELECT * FROM Collection WHERE id = $1")
                 .bind(collection_id)
                 .fetch_optional(&self.pool)
-                .await?;
-        match record {
-            Some(record) => Ok(Some(Schema::from_json_str(&record.id, &record.ast)?)),
-            None => Err(
-                indexer_db_adaptor::Error::CollectionCollectionRecordNotFound {
-                    id: collection_id.to_string(),
-                },
-            )?,
-        }
-    }
-}
-
-#[async_trait::async_trait]
-impl Indexer for PostgresAdaptor {
-    async fn commit(&self) -> indexer_db_adaptor::Result<()> {
-        todo!()
+                .await;
+        Ok(record?)
     }
 
-    async fn set(
-        &self,
-        collection_id: &str,
-        record_id: &str,
-        record: &RecordRoot,
-    ) -> indexer_db_adaptor::Result<()> {
+    async fn set(&self, collection_id: &str, record_id: &str, record: &RecordRoot) -> Result<()> {
         if collection_id == "Collection" {
-            let old_schema = self.get_collection_schema(record_id).await?;
+            let old_schema = self.get_schema(record_id).await?;
             let new_schema = Schema::from_record(record);
 
             // return self.update_collection(record_id: &str, value: &RecordRoot).await;
         }
 
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl IndexerAdaptor for PostgresAdaptor {
+    async fn commit(&self) -> adaptor::Result<()> {
         Ok(())
     }
 
@@ -108,19 +108,19 @@ impl Indexer for PostgresAdaptor {
         &self,
         collection_id: &str,
         record_id: &str,
-    ) -> indexer_db_adaptor::Result<Option<RecordRoot>> {
+    ) -> adaptor::Result<Option<RecordRoot>> {
         if collection_id == "Collection" {
-            return match self.get_by_id("Collection", record_id).await? {
+            return match self.get_row_by_id("Collection", record_id).await? {
                 Some(row) => Ok(Some(row::pg_row_to_record_value(row, &COLLECTION_SCHEMA))),
                 None => Ok(None),
             };
         }
 
-        let schema = self.get_collection_schema(collection_id).await?;
+        let schema = self.get_schema(collection_id).await?;
         match schema {
             Some(schema) => {
                 let table_name = pg_collection_table_name(collection_id);
-                match self.get_by_id(&table_name, record_id).await? {
+                match self.get_row_by_id(&table_name, record_id).await? {
                     Some(row) => Ok(Some(row::pg_row_to_record_value(row, &schema))),
                     None => Ok(None),
                 }
@@ -136,39 +136,52 @@ impl Indexer for PostgresAdaptor {
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
         order_by: &[IndexField],
-    ) -> indexer_db_adaptor::Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>>
-    {
+    ) -> adaptor::Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         todo!()
     }
 
-    async fn delete(&self, collection_id: &str, record_id: &str) -> indexer_db_adaptor::Result<()> {
-        todo!()
+    async fn get_schema(&self, collection_id: &str) -> adaptor::Result<Option<Schema>> {
+        // if let Some(schema) = self.schemas.get(collection_id) {
+        //     return Ok(Some(schema));
+        // }
+
+        let record = self.get_collection_record_by_id(collection_id).await?;
+
+        match record {
+            Some(record) => {
+                let schema = Schema::from_json_str(&record.id, &record.ast)?;
+                Ok(Some(schema))
+                // self.schemas.put(collection_id.to_string(), schema);
+                // Ok(self.schemas.get(collection_id))
+            }
+            None => Ok(None),
+        }
     }
 
     async fn last_record_update(
         &self,
         collection_id: &str,
         record_id: &str,
-    ) -> indexer_db_adaptor::Result<Option<SystemTime>> {
+    ) -> adaptor::Result<Option<SystemTime>> {
         todo!()
     }
 
     async fn last_collection_update(
         &self,
         collection_id: &str,
-    ) -> indexer_db_adaptor::Result<Option<SystemTime>> {
+    ) -> adaptor::Result<Option<SystemTime>> {
         todo!()
     }
 
-    async fn set_system_key(&self, key: &str, data: &RecordRoot) -> indexer_db_adaptor::Result<()> {
+    async fn set_system_key(&self, key: &str, data: &RecordRoot) -> adaptor::Result<()> {
         todo!()
     }
 
-    async fn get_system_key(&self, key: &str) -> indexer_db_adaptor::Result<Option<RecordRoot>> {
+    async fn get_system_key(&self, key: &str) -> adaptor::Result<Option<RecordRoot>> {
         todo!()
     }
 
-    async fn destroy(&self) -> indexer_db_adaptor::Result<()> {
+    async fn destroy(&self) -> adaptor::Result<()> {
         todo!()
     }
 }
