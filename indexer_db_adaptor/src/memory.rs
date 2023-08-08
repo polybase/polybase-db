@@ -49,7 +49,12 @@ impl MemoryStore {
         }
     }
 
-    async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()> {
+    pub async fn set(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        value: &RecordRoot,
+    ) -> Result<()> {
         let mut state = self.state.lock().await;
 
         let collection = match state.data.get_mut(collection_id) {
@@ -88,7 +93,7 @@ impl MemoryStore {
         Ok(())
     }
 
-    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
+    pub async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
         let mut state = self.state.lock().await;
 
         let collection = match state.data.get_mut(collection_id) {
@@ -109,7 +114,7 @@ impl Default for MemoryStore {
     }
 }
 
-fn matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> bool {
+fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> bool {
     println!("where_query = {where_query:?}");
 
     for (rec_key, rec_val) in record.iter() {
@@ -178,8 +183,8 @@ impl IndexerAdaptor for MemoryStore {
             .values()
             .map(|value| value.data.clone())
             .filter_map(|record| {
-                let record = RecordRoot::from(record.clone());
-                if matches(&where_query, &record) {
+                let record = record.clone();
+                if record_matches(&where_query, &record) {
                     Some(record)
                 } else {
                     None
@@ -187,7 +192,7 @@ impl IndexerAdaptor for MemoryStore {
             })
             .collect();
 
-        // sorting
+        // sort based on order_by
         // TODO
         for IndexField { path, direction } in order_by {
             records.sort_by(|a, b| {
@@ -290,7 +295,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_store_set_and_get() {
-        let store = MemoryStore::new();
+        let store = MemoryStore::default();
 
         let collection_id = "test_collection";
         let record_id = "test_record";
@@ -310,7 +315,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_store_list() {
-        let store = MemoryStore::new();
+        let store = MemoryStore::default();
 
         let collection_id = "test_collection";
 
@@ -328,6 +333,7 @@ mod tests {
             .set(collection_id, "record1", &record1_data)
             .await
             .unwrap();
+
         store
             .set(collection_id, "record2", &record2_data)
             .await
@@ -347,7 +353,7 @@ mod tests {
     async fn test_memory_store_list_where_query_single_equality() {
         use std::borrow::Cow;
 
-        let store = MemoryStore::new();
+        let store = MemoryStore::default();
 
         let collection_id = "test_collection";
 
@@ -398,6 +404,93 @@ mod tests {
 
         assert!(records.len() == 1);
         assert_eq!(records[0], record2_data);
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_list_order_by() {
+        use std::borrow::Cow;
+
+        let store = MemoryStore::default();
+
+        let collection_id = "test_set_list_collection";
+
+        let mut record1_data = RecordRoot::new();
+        record1_data.insert("id".into(), RecordValue::String("id1".into()));
+        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
+        record1_data.insert("age".into(), RecordValue::Number(42.0));
+
+        let mut record2_data = RecordRoot::new();
+        record2_data.insert("id".into(), RecordValue::String("id2".into()));
+        record2_data.insert("name".into(), RecordValue::String("Bob".into()));
+        record2_data.insert("age".into(), RecordValue::Number(23.0));
+
+        let mut record3_data = RecordRoot::new();
+        record3_data.insert("id".into(), RecordValue::String("id3".into()));
+        record3_data.insert("name".into(), RecordValue::String("Wanda".into()));
+        record3_data.insert("age".into(), RecordValue::Number(23.0));
+
+        let mut record4_data = RecordRoot::new();
+        record4_data.insert("id".into(), RecordValue::String("id4".into()));
+        record4_data.insert("name".into(), RecordValue::String("Bob".into()));
+        record4_data.insert("age".into(), RecordValue::Number(89.0));
+
+        store
+            .set(collection_id, "record1", &record1_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "record2", &record2_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "record3", &record3_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "record4", &record4_data)
+            .await
+            .unwrap();
+
+        store.commit().await.unwrap();
+
+        let where_query = WhereQuery(
+            [(
+                FieldPath(["name".to_string()].into()),
+                WhereNode::Equality(WhereValue(IndexValue::String(Cow::Owned("Bob".into())))),
+            )]
+            .into(),
+        );
+
+        let order_by = vec![
+            IndexField {
+                path: vec!["name".to_string()].into(),
+                direction: IndexDirection::Ascending,
+            },
+            IndexField {
+                path: vec!["id".to_string()].into(),
+                direction: IndexDirection::Descending,
+            },
+        ];
+
+        let mut records = store
+            .list(collection_id, None, where_query, &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(records.len(), 3);
+
+        let third = records.pop().unwrap();
+        let second = records.pop().unwrap();
+        let first = records.pop().unwrap();
+
+        assert_eq!(first, record4_data);
+        assert_eq!(second, record2_data);
+        assert_eq!(third, record1_data);
     }
 
     #[tokio::test]
