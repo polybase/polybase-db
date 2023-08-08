@@ -1,11 +1,10 @@
 use crate::adaptor::{Error, IndexerAdaptor, Result};
-use crate::where_query::{WhereNode, WhereQuery};
+use crate::where_query::{WhereInequality, WhereNode, WhereQuery};
 use schema::field_path::FieldPath;
 use schema::index_value::IndexValue;
 use schema::Schema;
 use schema::{
     index::{IndexDirection, IndexField},
-    publickey::PublicKey,
     record::{RecordRoot, RecordValue},
 };
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
@@ -124,12 +123,86 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> bool {
                 WhereNode::Equality(ref eq_val) => {
                     return eq_val.0.clone() == IndexValue::try_from(rec_val.clone()).unwrap();
                 }
-                WhereNode::Inequality(ref ineq_val) => todo!(), // todo,
+                WhereNode::Inequality(ref ineq_val) => {
+                    let WhereInequality { gt, gte, lt, lte } = ineq_val.clone();
+
+                    if let Some(gt_val) = gt {
+                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+
+                        match (gt_val.0, rec_val) {
+                            (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
+                                return rec_num > wnum;
+                            }
+                            (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
+                                return rec_str > wstr;
+                            }
+
+                            (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
+                                return rec_bool & !wbool;
+                            }
+                            _ => return false,
+                        }
+                    }
+
+                    if let Some(gte_val) = gte {
+                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+
+                        match (gte_val.0, rec_val) {
+                            (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
+                                return rec_num >= wnum;
+                            }
+                            (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
+                                return rec_str >= wstr;
+                            }
+
+                            (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
+                                return rec_bool >= wbool;
+                            }
+                            _ => return false,
+                        }
+                    }
+
+                    if let Some(lt_val) = lt {
+                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+
+                        match (lt_val.0, rec_val) {
+                            (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
+                                return rec_num < wnum;
+                            }
+                            (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
+                                return rec_str < wstr;
+                            }
+
+                            (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
+                                return !rec_bool & wbool;
+                            }
+                            _ => return false,
+                        }
+                    }
+
+                    if let Some(lte_val) = lte {
+                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+
+                        match (lte_val.0, rec_val) {
+                            (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
+                                return rec_num <= wnum;
+                            }
+                            (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
+                                return rec_str <= wstr;
+                            }
+
+                            (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
+                                return rec_bool <= wbool;
+                            }
+                            _ => return false,
+                        }
+                    }
+                }
             }
         }
     }
 
-    true // TODO
+    true // todo
 }
 
 #[async_trait::async_trait]
@@ -196,6 +269,7 @@ impl IndexerAdaptor for MemoryStore {
         // TODO
         for IndexField { path, direction } in order_by {
             records.sort_by(|a, b| {
+                // how to handle Vec<String>?
                 if let Some(rec_a) = a.get(&path.0[0]) {
                     if let Some(rec_b) = b.get(&path.0[0]) {
                         match (rec_a, rec_b) {
@@ -287,7 +361,8 @@ impl IndexerAdaptor for MemoryStore {
 
 #[cfg(test)]
 mod tests {
-    use crate::where_query::WhereValue;
+    use crate::where_query::{WhereInequality, WhereValue};
+    use std::borrow::Cow;
 
     use super::*;
     use futures::StreamExt;
@@ -354,7 +429,6 @@ mod tests {
         use std::borrow::Cow;
 
         let store = MemoryStore::default();
-
         let collection_id = "test_collection";
 
         let mut record1_data = RecordRoot::new();
@@ -407,12 +481,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_where_sort() {
+        let store = MemoryStore::default();
+
+        let collection_id = "test_collection";
+
+        let mut record1_data = RecordRoot::new();
+        record1_data.insert("id".into(), RecordValue::String("id1".into()));
+        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
+        record1_data.insert("age".into(), RecordValue::Number(42.0));
+        record1_data.insert("place".into(), RecordValue::String("Timbuktu".into()));
+
+        let mut record2_data = RecordRoot::new();
+        record2_data.insert("id".into(), RecordValue::String("id2".into()));
+        record2_data.insert("name".into(), RecordValue::String("Bobby".into()));
+        record2_data.insert("age".into(), RecordValue::Number(42.0));
+        record2_data.insert("place".into(), RecordValue::String("Ougadougou".into()));
+
+        let mut record3_data = RecordRoot::new();
+        record3_data.insert("id".into(), RecordValue::String("id3".into()));
+        record3_data.insert("name".into(), RecordValue::String("Bobbers".into()));
+        record3_data.insert("age".into(), RecordValue::Number(42.0));
+        record3_data.insert("place".into(), RecordValue::String("Oshkosh".into()));
+
+        store
+            .set(collection_id, "rec1", &record1_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "rec2", &record2_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "rec3", &record3_data)
+            .await
+            .unwrap();
+
+        store.commit().await.unwrap();
+
+        let where_query = WhereQuery(
+            [(
+                FieldPath(["name".to_string()].into()),
+                WhereNode::Inequality(WhereInequality {
+                    gt: Some(WhereValue(IndexValue::String("Bob".into()))),
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+            )]
+            .into(),
+        );
+
+        let order_by = vec![IndexField {
+            path: vec!["name".to_string()].into(),
+            direction: IndexDirection::Descending,
+        }];
+
+        let records = store
+            .list(collection_id, None, where_query, &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0], record2_data);
+        assert_eq!(records[1], record3_data);
+    }
+
+    #[tokio::test]
     async fn test_memory_store_list_order_by() {
         use std::borrow::Cow;
 
         let store = MemoryStore::default();
 
-        let collection_id = "test_set_list_collection";
+        let collection_id = "test_collection";
 
         let mut record1_data = RecordRoot::new();
         record1_data.insert("id".into(), RecordValue::String("id1".into()));
