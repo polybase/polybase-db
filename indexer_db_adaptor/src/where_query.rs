@@ -3,10 +3,12 @@ use schema::{
     field_path::FieldPath,
     index::{EitherIndexField, Index, IndexDirection, IndexField},
     index_value::IndexValue,
-    record,
+    record::{self, RecordRoot, RecordValue},
+    Schema,
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap};
+use tracing::field;
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
@@ -208,6 +210,23 @@ impl<'a> WhereQuery<'a> {
                 })),
             });
         }
+    }
+
+    /// Create a RecordRoot from the where_query using the equality filters
+    pub fn to_record_root(&self) -> RecordRoot {
+        let mut record_root = RecordRoot::default();
+
+        self.0
+            .iter()
+            .filter_map(|(k, values)| match values {
+                WhereNode::Equality(WhereValue(v)) => Some((k, RecordValue::from(v.clone()))),
+                _ => None,
+            })
+            .for_each(|(k, v)| {
+                record_root.insert_path(k, v);
+            });
+
+        record_root
     }
 }
 

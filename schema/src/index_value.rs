@@ -1,3 +1,5 @@
+use crate::index::Index;
+
 use super::publickey::PublicKey;
 use super::record::{self, ForeignRecordReference, RecordError, RecordValue};
 use serde::{Deserialize, Serialize};
@@ -55,6 +57,21 @@ impl IndexValue<'_> {
             IndexValue::Number(n) => IndexValue::Number(n),
             IndexValue::Boolean(b) => IndexValue::Boolean(b),
             IndexValue::Null => IndexValue::Null,
+        }
+    }
+}
+
+impl From<IndexValue<'_>> for RecordValue {
+    fn from(value: IndexValue) -> Self {
+        match value {
+            IndexValue::Null => RecordValue::Null,
+            IndexValue::Boolean(b) => RecordValue::Boolean(b),
+            IndexValue::Number(n) => RecordValue::Number(n),
+            IndexValue::String(s) => RecordValue::String(s.into_owned()),
+            IndexValue::PublicKey(p) => RecordValue::PublicKey(p.into_owned()),
+            IndexValue::ForeignRecordReference(fr) => {
+                RecordValue::ForeignRecordReference(fr.into_owned())
+            }
         }
     }
 }

@@ -4,7 +4,9 @@ use crate::publickey;
 use crate::schema::Schema;
 use crate::types::{PrimitiveType, Type};
 use base64::Engine;
+use polylang::ast::Field;
 use serde::{Deserialize, Serialize};
+use std::f32::consts::E;
 use std::{
     borrow::Cow,
     collections::{hash_map, HashMap},
@@ -93,6 +95,21 @@ impl RecordRoot {
         self.0.insert(field, value);
     }
 
+    // TODO: handle array here too (see fill_path)
+    pub fn insert_path(&mut self, path: &FieldPath, value: RecordValue) {
+        if path.len() == 1 {
+            self.insert(path.name().to_string(), value);
+            return;
+        }
+
+        self.fill_path(path);
+
+        // We should always have a value here due to fill path
+        if let Some(RecordValue::Map(map)) = self.get_path_mut(&path.parent()) {
+            map.insert(path.name().to_string(), value);
+        }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&String, &RecordValue)> {
         self.0.iter()
     }
@@ -103,6 +120,40 @@ impl RecordRoot {
 
     pub fn get(&self, field: &str) -> Option<&RecordValue> {
         self.0.get(field)
+    }
+
+    pub fn entry(
+        &mut self,
+        field: String,
+    ) -> std::collections::hash_map::Entry<'_, String, RecordValue> {
+        self.0.entry(field)
+    }
+
+    // TODO: we should handle Array here too
+    pub fn fill_path(&mut self, path: &FieldPath) {
+        for part in path.iter().take(path.len() - 1) {
+            self.entry(part.to_string())
+                .or_insert_with(|| RecordValue::Map(HashMap::new()));
+        }
+    }
+
+    pub fn get_path_mut(&mut self, field: &FieldPath) -> Option<&mut RecordValue> {
+        let mut iter = field.iter();
+        let mut val = self.0.get_mut(iter.next()?)?;
+        for path in iter {
+            match val {
+                RecordValue::Array(array) => {
+                    let index = path.parse::<usize>().ok()?;
+                    val = array.get_mut(index)?;
+                }
+
+                RecordValue::Map(map) => {
+                    val = map.get_mut(path)?;
+                }
+                _ => return None,
+            }
+        }
+        Some(val)
     }
 
     pub fn get_path(&self, field: &FieldPath) -> Option<&RecordValue> {
@@ -158,7 +209,7 @@ pub fn json_to_record(
             if prop.required {
                 if always_cast {
                     // Insert default for the type
-                    map.insert(prop.path.name().to_string(), Converter::convert((&prop.type_, serde_json::Value::Null), &mut vec![Cow::Borrowed(&prop.path.name())], always_cast)?);
+                    map.insert(prop.path.name().to_string(), Converter::convert((&prop.type_, serde_json::Value::Null), &mut vec![Cow::Borrowed(prop.path.name())], always_cast)?);
                     continue;
                 }
 
@@ -188,6 +239,9 @@ pub fn record_to_json(value: RecordRoot) -> serde_json::Value {
 
     serde_json::Value::Object(map)
 }
+
+// TODO: should we not have a Object type? Or allow Map key to be
+// more than just String
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum RecordValue {

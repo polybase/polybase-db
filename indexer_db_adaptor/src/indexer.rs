@@ -15,6 +15,7 @@ use schema::{
 };
 use std::{
     borrow::Cow,
+    collections::HashSet,
     mem,
     pin::Pin,
     sync::{Arc, RwLock},
@@ -200,10 +201,16 @@ impl<A: IndexerAdaptor> Indexer<A> {
         where_query: &WhereQuery<'a>,
         public_key: Option<&PublicKey>,
     ) -> bool {
-        todo!()
+        // Convert where query to a record, so we can verify it
+        let record = where_query.to_record_root();
+
+        self.verify_read(collection_id, schema, &record, public_key)
+            .await
     }
 
-    /// Verify public_key is allowed to call method on record
+    /// Verify public_key is allowed to call method on record, we don't check record parameters
+    /// here, as they will automatically be checked when they are fetched using the normal read
+    /// rules.
     pub async fn verify_call(
         &self,
         collection_id: &str,
@@ -217,12 +224,10 @@ impl<A: IndexerAdaptor> Indexer<A> {
             return true;
         }
 
-        // If we don't have a public key and the schema doesn't allow any, deny call
+        // If no public key and not call all, deny call
         let Some(public_key) = public_key else {
             return false;
         };
-
-        // TODO: we also need to verify parameters have read/owner access
 
         // Check for matching public keys in record
         if schema.authorise_method_with_public_key(method, record, public_key) {
@@ -249,6 +254,7 @@ impl<A: IndexerAdaptor> Indexer<A> {
             return true;
         }
 
+        // If no public key and not read all, deny read
         let public_key = match public_key {
             Some(pk) => pk,
             None => return false,

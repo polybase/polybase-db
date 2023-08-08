@@ -9,7 +9,6 @@ use crate::{
     publickey::{self, PublicKey},
     record::{RecordRoot, RecordValue, Reference},
     types::{PrimitiveType, Type},
-    util::{self, normalize_name},
 };
 use polylang::stableast;
 use std::collections::HashMap;
