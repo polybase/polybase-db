@@ -220,7 +220,7 @@ impl ReasonCode {
                 ReasonCode::CollectionNotFound
             }
 
-            indexer_db_adaptor::UserError::CursorBeforeAndAfter { .. } => {
+            indexer_db_adaptor::UserError::InvalidCursorBeforeAndAfterSpecified { .. } => {
                 ReasonCode::IndexerInvalidCursorKey
             }
 

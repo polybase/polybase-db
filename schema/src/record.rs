@@ -123,14 +123,6 @@ impl RecordRoot {
         }
         Some(val)
     }
-
-    pub fn is_valid_for_schema(&self, schema: &Schema) -> Result<()> {
-        let Some(output_instance_id) = self.get("id") else {
-            return Err(RecordError::RecordIdNotFound)?;
-        };
-
-        Ok(())
-    }
 }
 
 impl Default for RecordRoot {
@@ -148,6 +140,7 @@ impl IntoIterator for RecordRoot {
     }
 }
 
+/// Converts JSON to RootRecord, also validates that the structure is correct
 pub fn json_to_record(
     schema: &Schema,
     value: serde_json::Value,
@@ -158,6 +151,7 @@ pub fn json_to_record(
         return Err(RecordUserError::RecordRootShouldBeAnObject { got: value }.into());
     };
 
+    // TODO: should we check for unexpected fields?
     for prop in schema.properties.iter() {
         let Some((name, value)) = value.remove_entry(prop.path.name())
         else {

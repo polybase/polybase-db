@@ -194,18 +194,18 @@ impl<'a> WhereQuery<'a> {
             let where_value = Some(WhereValue(cursor.record_id.with_static()));
 
             e.insert(match forward {
-                true => WhereNode::Inequality(WhereInequality {
+                true => WhereNode::Inequality(Box::new(WhereInequality {
                     gt: where_value,
                     gte: None,
                     lt: None,
                     lte: None,
-                }),
-                false => WhereNode::Inequality(WhereInequality {
+                })),
+                false => WhereNode::Inequality(Box::new(WhereInequality {
                     gt: None,
                     gte: None,
                     lt: where_value,
                     lte: None,
-                }),
+                })),
             });
         }
     }
@@ -233,7 +233,7 @@ fn is_inequality_forwards(key: &FieldPath, order_by: &[IndexField], dir: &Cursor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub(crate) enum WhereNode<'a> {
-    Inequality(WhereInequality<'a>),
+    Inequality(Box<WhereInequality<'a>>),
     Equality(WhereValue<'a>),
 }
 

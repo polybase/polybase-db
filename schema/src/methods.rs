@@ -153,7 +153,7 @@ impl Parameter {
 
 #[derive(Debug, Clone)]
 pub struct ReturnValue {
-    type_: Type,
+    pub type_: Type,
 }
 
 impl ReturnValue {

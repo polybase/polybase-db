@@ -40,8 +40,8 @@ pub enum UserError {
     #[error("collection not found")]
     CollectionNotFound { id: String },
 
-    #[error("cursor before and after are mutually exclusive")]
-    CursorBeforeAndAfter,
+    #[error("invalid cursor, before and after cannot be used together")]
+    InvalidCursorBeforeAndAfterSpecified,
 }
 
 pub struct Indexer<A: IndexerAdaptor> {
@@ -158,7 +158,7 @@ impl<A: IndexerAdaptor> Indexer<A> {
                 where_query.apply_cursor(cursor_after, cursor::CursorDirection::After, order_by)
             }
             (Some(_), Some(_)) => {
-                return Err(UserError::CursorBeforeAndAfter)?;
+                return Err(UserError::InvalidCursorBeforeAndAfterSpecified)?;
             }
             (None, None) => {}
         }
