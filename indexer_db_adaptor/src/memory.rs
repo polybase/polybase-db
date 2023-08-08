@@ -113,96 +113,99 @@ impl Default for MemoryStore {
     }
 }
 
-fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> bool {
-    println!("where_query = {where_query:?}");
-
+fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<bool> {
     for (rec_key, rec_val) in record.iter() {
-        println!("rec_key = {rec_key:?}, rec_val = {rec_val:?}");
         if let Some(where_val) = where_query.0.get(&FieldPath(vec![rec_key.clone()])) {
             match where_val {
                 WhereNode::Equality(ref eq_val) => {
-                    return eq_val.0.clone() == IndexValue::try_from(rec_val.clone()).unwrap();
+                    return Ok(eq_val.0.clone()
+                        == IndexValue::try_from(rec_val.clone())
+                            .map_err(|e| Error::Store(Box::new(e)))?);
                 }
                 WhereNode::Inequality(ref ineq_val) => {
                     let WhereInequality { gt, gte, lt, lte } = ineq_val.clone();
 
                     if let Some(gt_val) = gt {
-                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+                        let rec_val = IndexValue::try_from(rec_val.clone())
+                            .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        match (gt_val.0, rec_val) {
+                        return Ok(match (gt_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
-                                return rec_num > wnum;
+                                rec_num > wnum
                             }
                             (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
-                                return rec_str > wstr;
+                                rec_str > wstr
                             }
 
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
-                                return rec_bool & !wbool;
+                                rec_bool & !wbool
                             }
-                            _ => return false,
-                        }
+                            _ => false,
+                        });
                     }
 
                     if let Some(gte_val) = gte {
-                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+                        let rec_val = IndexValue::try_from(rec_val.clone())
+                            .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        match (gte_val.0, rec_val) {
+                        return Ok(match (gte_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
-                                return rec_num >= wnum;
+                                rec_num >= wnum
                             }
                             (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
-                                return rec_str >= wstr;
+                                rec_str >= wstr
                             }
 
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
-                                return rec_bool >= wbool;
+                                rec_bool >= wbool
                             }
-                            _ => return false,
-                        }
+                            _ => false,
+                        });
                     }
 
                     if let Some(lt_val) = lt {
-                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+                        let rec_val = IndexValue::try_from(rec_val.clone())
+                            .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        match (lt_val.0, rec_val) {
+                        return Ok(match (lt_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
-                                return rec_num < wnum;
+                                rec_num < wnum
                             }
                             (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
-                                return rec_str < wstr;
+                                rec_str < wstr
                             }
 
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
-                                return !rec_bool & wbool;
+                                !rec_bool & wbool
                             }
-                            _ => return false,
-                        }
+                            _ => false,
+                        });
                     }
 
                     if let Some(lte_val) = lte {
-                        let rec_val = IndexValue::try_from(rec_val.clone()).unwrap();
+                        let rec_val = IndexValue::try_from(rec_val.clone())
+                            .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        match (lte_val.0, rec_val) {
+                        return Ok(match (lte_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
-                                return rec_num <= wnum;
+                                rec_num <= wnum
                             }
                             (IndexValue::String(wstr), IndexValue::String(rec_str)) => {
-                                return rec_str <= wstr;
+                                rec_str <= wstr
                             }
 
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
-                                return rec_bool <= wbool;
+                                rec_bool <= wbool
                             }
-                            _ => return false,
-                        }
+                            _ => false,
+                        });
                     }
                 }
             }
         }
     }
 
-    true // todo
+    Ok(true) // todo
 }
 
 #[async_trait::async_trait]
@@ -257,10 +260,16 @@ impl IndexerAdaptor for MemoryStore {
             .map(|value| value.data.clone())
             .filter_map(|record| {
                 let record = record.clone();
-                if record_matches(&where_query, &record) {
-                    Some(record)
-                } else {
-                    None
+
+                match record_matches(&where_query, &record) {
+                    Ok(matches) => {
+                        if matches {
+                            Some(record)
+                        } else {
+                            None
+                        }
+                    }
+                    Err(_) => None,
                 }
             })
             .collect();
@@ -362,7 +371,6 @@ impl IndexerAdaptor for MemoryStore {
 #[cfg(test)]
 mod tests {
     use crate::where_query::{WhereInequality, WhereValue};
-    use std::borrow::Cow;
 
     use super::*;
     use futures::StreamExt;
@@ -549,6 +557,35 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0], record2_data);
         assert_eq!(records[1], record3_data);
+
+        let where_query = WhereQuery(
+            [(
+                FieldPath(["name".to_string()].into()),
+                WhereNode::Inequality(WhereInequality {
+                    gt: Some(WhereValue(IndexValue::String("Bob".into()))),
+                    gte: None,
+                    lt: None,
+                    lte: None,
+                }),
+            )]
+            .into(),
+        );
+
+        let order_by = vec![IndexField {
+            path: vec!["name".to_string()].into(),
+            direction: IndexDirection::Ascending,
+        }];
+
+        let records = store
+            .list(collection_id, None, where_query, &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0], record3_data);
+        assert_eq!(records[1], record2_data);
     }
 
     #[tokio::test]
