@@ -7,11 +7,11 @@ use std::{
 
 use actix_web::{http::header::CONTENT_LENGTH, FromRequest};
 use futures::{future::LocalBoxFuture, StreamExt};
-use indexer_db_adaptor::publickey::PublicKey;
+use schema::publickey::PublicKey;
 use serde::de::DeserializeOwned;
 
 use crate::errors::http::HTTPError;
-use indexer_db_adaptor::collection::collection::AuthUser;
+use indexer_db_adaptor::auth_user::AuthUser;
 
 pub type Result<T> = std::result::Result<T, AuthError>;
 

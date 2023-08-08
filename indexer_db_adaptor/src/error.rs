@@ -1,6 +1,5 @@
-use super::record::{self, IndexValueError};
-use super::{cursor, where_query};
-use crate::store;
+use crate::{adaptor, cursor, where_query};
+use schema::{index_value::IndexValueError, record};
 
 pub type Result<T> = std::result::Result<T, CollectionError>;
 
@@ -60,14 +59,16 @@ pub enum CollectionError {
     #[error("prost decode error")]
     ProstDecodeError(#[from] prost::DecodeError),
 
-    #[error("store error")]
-    Store(#[from] store::Error),
-
+    // #[error("store error")]
+    // Store(#[from] indexer::Error),
     #[error("index value error")]
     IndexValue(#[from] IndexValueError),
 
     #[error("cursor error")]
     CursorError(#[from] cursor::Error),
+
+    #[error("schema error")]
+    Schema(#[from] schema::Error),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -128,4 +129,7 @@ pub enum CollectionUserError {
 
     #[error("record user error")]
     RecordUserError(#[from] record::RecordUserError),
+
+    #[error("schema user error")]
+    Schema(#[from] schema::UserError),
 }

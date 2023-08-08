@@ -1,9 +1,14 @@
-use std::{borrow::Cow, collections::HashMap, error::Error};
-
+use crate::field_path::FieldPath;
+use crate::index_value::IndexValue;
+use crate::publickey;
+use crate::schema::Schema;
+use crate::types::{PrimitiveType, Type};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
-
-use crate::publickey;
+use std::{
+    borrow::Cow,
+    collections::{hash_map, HashMap},
+};
 
 pub type Result<T> = std::result::Result<T, RecordError>;
 
@@ -27,6 +32,9 @@ pub enum RecordError {
 
     #[error("foreign record reference has wrong collection id {collection_id:?}")]
     ForeignRecordReferenceHasWrongCollectionId { collection_id: String },
+
+    #[error("record does not have an ID field")]
+    RecordIdNotFound,
 
     #[error("unknown type")]
     UnknownType,
@@ -54,12 +62,6 @@ pub enum RecordError {
 }
 
 #[derive(Debug, thiserror::Error)]
-pub enum IndexValueError {
-    #[error("record value cannnot be indexed")]
-    TryFromRecordValue,
-}
-
-#[derive(Debug, thiserror::Error)]
 pub enum RecordUserError {
     #[error("record is missing field {field:?}")]
     MissingField { field: String },
@@ -78,10 +80,76 @@ pub enum RecordUserError {
     UnexpectedFields { fields: Vec<String> },
 }
 
-pub type RecordRoot = HashMap<String, RecordValue>;
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde()]
+pub struct RecordRoot(HashMap<String, RecordValue>);
+
+impl RecordRoot {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    pub fn insert(&mut self, field: String, value: RecordValue) {
+        self.0.insert(field, value);
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &RecordValue)> {
+        self.0.iter()
+    }
+
+    pub fn remove(&mut self, field: &str) -> Option<RecordValue> {
+        self.0.remove(field)
+    }
+
+    pub fn get(&self, field: &str) -> Option<&RecordValue> {
+        self.0.get(field)
+    }
+
+    pub fn get_path(&self, field: &FieldPath) -> Option<&RecordValue> {
+        let mut iter = field.iter();
+        let mut val = self.0.get(iter.next()?)?;
+        for path in iter {
+            match val {
+                RecordValue::Array(array) => {
+                    let index = path.parse::<usize>().ok()?;
+                    val = array.get(index)?;
+                }
+
+                RecordValue::Map(map) => {
+                    val = map.get(path)?;
+                }
+                _ => return None,
+            }
+        }
+        Some(val)
+    }
+
+    pub fn is_valid_for_schema(&self, schema: &Schema) -> Result<()> {
+        let Some(output_instance_id) = self.get("id") else {
+            return Err(RecordError::RecordIdNotFound)?;
+        };
+
+        Ok(())
+    }
+}
+
+impl Default for RecordRoot {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl IntoIterator for RecordRoot {
+    type Item = (String, RecordValue);
+    type IntoIter = hash_map::IntoIter<String, RecordValue>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 pub fn json_to_record(
-    collection: &polylang::stableast::Collection,
+    schema: &Schema,
     value: serde_json::Value,
     always_cast: bool,
 ) -> Result<RecordRoot> {
@@ -90,43 +158,41 @@ pub fn json_to_record(
         return Err(RecordUserError::RecordRootShouldBeAnObject { got: value }.into());
     };
 
-    for (field, ty, required) in collection.attributes.iter().filter_map(|a| match a {
-        polylang::stableast::CollectionAttribute::Property(p) => {
-            Some((&p.name, &p.type_, &p.required))
-        }
-        _ => None,
-    }) {
-        let Some((name, value)) = value.remove_entry(field.as_ref())
+    for prop in schema.properties.iter() {
+        let Some((name, value)) = value.remove_entry(prop.path.name())
         else {
-            if *required {
+            if prop.required {
                 if always_cast {
                     // Insert default for the type
-                    map.insert(field.to_string(), Converter::convert((ty, serde_json::Value::Null), &mut vec![Cow::Borrowed(field.as_ref())], always_cast)?);
+                    map.insert(prop.path.name().to_string(), Converter::convert((&prop.type_, serde_json::Value::Null), &mut vec![Cow::Borrowed(&prop.path.name())], always_cast)?);
                     continue;
                 }
 
-                return Err(RecordUserError::MissingField { field: field.to_string() }.into());
+                return Err(RecordUserError::MissingField { field: prop.path.to_string() }.into());
             } else {
                 continue;
             }
         };
 
-        let converted =
-            Converter::convert((ty, value), &mut vec![Cow::Borrowed(&name)], always_cast)?;
+        let converted = Converter::convert(
+            (&prop.type_, value),
+            &mut vec![Cow::Borrowed(&name)],
+            always_cast,
+        )?;
         map.insert(name, converted);
     }
 
-    Ok(map)
+    Ok(RecordRoot(map))
 }
 
-pub fn record_to_json(value: RecordRoot) -> Result<serde_json::Value> {
+pub fn record_to_json(value: RecordRoot) -> serde_json::Value {
     let mut map = serde_json::Map::new();
 
     for (field, value) in value {
-        map.insert(field, value.try_into()?);
+        map.insert(field, value.into());
     }
 
-    Ok(serde_json::Value::Object(map))
+    serde_json::Value::Object(map)
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -143,6 +209,8 @@ pub enum RecordValue {
     ForeignRecordReference(ForeignRecordReference),
 }
 
+// TODO: refactor converter?
+
 /// JSON to RecordValue converter
 pub trait Converter {
     /// If always_cast is true, the converter will try to cast values of mismatched types,
@@ -150,13 +218,13 @@ pub trait Converter {
     fn convert(self, path: &mut Vec<Cow<str>>, always_cast: bool) -> Result<RecordValue>;
 }
 
-impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
+impl Converter for (&Type, serde_json::Value) {
     fn convert(self, path: &mut Vec<Cow<str>>, always_cast: bool) -> Result<RecordValue> {
-        use polylang::stableast::{PrimitiveType, Type};
+        // use polylang::stableast::{PrimitiveType, Type};
 
         let (ty, value) = self;
         match ty {
-            Type::Primitive(p) => match (&p.value, value) {
+            Type::Primitive(p) => match (&p, value) {
                 (PrimitiveType::String, value) => match value {
                     serde_json::Value::String(s) => Ok(RecordValue::String(s)),
                     serde_json::Value::Null if always_cast => {
@@ -392,12 +460,12 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     let path_len_before_loop = path.len();
                     for field in &t.fields {
                         path.truncate(path_len_before_loop);
-                        path.push(Cow::Owned(field.name.to_string()));
+                        path.push(Cow::Owned(field.path.to_string()));
 
-                        let Some((k, v)) = o.remove_entry(field.name.as_ref()) else {
+                        let Some((k, v)) = o.remove_entry(field.path.name()) else {
                             if field.required {
                                 if always_cast {
-                                    map.insert(field.name.to_string(), Converter::convert((&field.type_, serde_json::Value::Null), path, always_cast)?);
+                                    map.insert(field.name().to_string(), Converter::convert((&field.type_, serde_json::Value::Null), path, always_cast)?);
                                     continue;
                                 }
 
@@ -434,7 +502,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     }
                 }
             },
-            Type::PublicKey(_) => match value {
+            Type::PublicKey => match value {
                 serde_json::Value::Object(_) => Ok(RecordValue::PublicKey(
                     publickey::PublicKey::try_from(value)?,
                 )),
@@ -463,7 +531,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                 }
                 .into()),
             },
-            Type::Record(_) => Ok(RecordValue::RecordReference({
+            Type::Record => Ok(RecordValue::RecordReference({
                 let mut r = match value {
                     serde_json::Value::Object(mut o) => {
                         let id = {
@@ -591,7 +659,7 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
                     if short_collection_name != fr.collection {
                         return Err::<_, RecordError>(
                             RecordError::ForeignRecordReferenceHasWrongCollectionId {
-                                collection_id: fr.collection.clone().into_owned(),
+                                collection_id: fr.collection.clone(),
                             },
                         );
                     }
@@ -611,62 +679,42 @@ impl Converter for (&polylang::stableast::Type<'_>, serde_json::Value) {
     }
 }
 
-impl TryFrom<RecordValue> for serde_json::Value {
-    type Error = RecordError;
-
-    fn try_from(value: RecordValue) -> Result<Self> {
+impl From<RecordValue> for serde_json::Value {
+    fn from(value: RecordValue) -> Self {
         match value {
-            RecordValue::String(s) => Ok(serde_json::Value::String(s)),
-            RecordValue::Number(n) => Ok(serde_json::Value::Number(
-                serde_json::Number::from_f64(n)
-                    .ok_or(RecordError::FailedToConvertF64ToSerdeNumber { f: n })?,
-            )),
-            RecordValue::Boolean(b) => Ok(serde_json::Value::Bool(b)),
-            RecordValue::PublicKey(p) => Ok(serde_json::Value::from(p)),
-            RecordValue::Null => Ok(serde_json::Value::Null),
-            RecordValue::Bytes(b) => Ok(serde_json::Value::String(
-                base64::engine::general_purpose::STANDARD.encode(b),
-            )),
+            RecordValue::String(s) => serde_json::Value::String(s),
+            // TODO: what to do with NaN or infinite values? Would those even occur?
+            RecordValue::Number(n) => serde_json::Number::from_f64(n)
+                .unwrap_or(serde_json::Number::from(0))
+                .into(),
+            RecordValue::Boolean(b) => serde_json::Value::Bool(b),
+            RecordValue::PublicKey(p) => serde_json::Value::from(p),
+            RecordValue::Null => serde_json::Value::Null,
+            RecordValue::Bytes(b) => {
+                serde_json::Value::String(base64::engine::general_purpose::STANDARD.encode(b))
+            }
             RecordValue::Map(m) => {
                 let mut map = serde_json::Map::with_capacity(m.len());
                 for (k, v) in m {
-                    map.insert(k, serde_json::Value::try_from(v)?);
+                    map.insert(k, serde_json::Value::from(v));
                 }
-                Ok(serde_json::Value::Object(map))
+                serde_json::Value::Object(map)
             }
             RecordValue::Array(a) => {
                 let mut array = Vec::with_capacity(a.len());
                 for v in a {
-                    array.push(serde_json::Value::try_from(v)?);
+                    array.push(serde_json::Value::from(v));
                 }
-                Ok(serde_json::Value::Array(array))
+                serde_json::Value::Array(array)
             }
-            RecordValue::RecordReference(r) => Ok(serde_json::Value::from(r)),
-            RecordValue::ForeignRecordReference(r) => Ok(serde_json::Value::from(r)),
+            RecordValue::RecordReference(r) => serde_json::Value::from(r),
+            RecordValue::ForeignRecordReference(r) => serde_json::Value::from(r),
         }
     }
 }
 
-impl TryFrom<IndexValue<'_>> for serde_json::Value {
-    type Error = RecordError;
-
-    fn try_from(value: IndexValue) -> Result<Self> {
-        Ok(match value {
-            IndexValue::String(s) => serde_json::Value::String(s.into_owned()),
-            IndexValue::Number(n) => serde_json::Value::Number(
-                serde_json::Number::from_f64(n)
-                    .ok_or(RecordError::FailedToConvertF64ToSerdeNumber { f: n })?,
-            ),
-            IndexValue::Boolean(b) => serde_json::Value::Bool(b),
-            IndexValue::PublicKey(p) => serde_json::Value::from(p.into_owned()),
-            IndexValue::ForeignRecordReference(r) => serde_json::Value::from(r.into_owned()),
-            IndexValue::Null => serde_json::Value::Null,
-        })
-    }
-}
-
 impl RecordValue {
-    pub fn walk<'a, E: Error>(
+    pub fn walk<'a, E: std::error::Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,
         f: &mut impl FnMut(&[Cow<str>], IndexValue<'a>) -> std::result::Result<(), E>,
@@ -714,7 +762,7 @@ impl RecordValue {
         Ok(())
     }
 
-    pub fn walk_all<'a, E: Error>(
+    pub fn walk_all<'a, E: std::error::Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,
         f: &mut impl FnMut(&[Cow<str>], &'a RecordValue) -> std::result::Result<(), E>,
@@ -806,6 +854,13 @@ impl RecordValue {
     }
 }
 
+/// A reference to another record (either same collection or foreign)
+pub enum Reference<'a> {
+    Record(&'a RecordReference),
+    ForeignRecord(&'a ForeignRecordReference),
+}
+
+/// A reference to a record in the same collection
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
 pub struct RecordReference {
     pub id: String,
@@ -819,6 +874,7 @@ impl From<RecordReference> for serde_json::Value {
     }
 }
 
+/// A reference to a record in a different collection
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
 pub struct ForeignRecordReference {
     pub id: String,
@@ -854,200 +910,5 @@ impl From<ForeignRecordReference> for serde_json::Value {
             "id": r.id,
             "collectionId": r.collection_id,
         })
-    }
-}
-
-pub trait PathFinder {
-    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>;
-
-    fn find_path_mut<T>(&mut self, path: &[T]) -> Option<&mut RecordValue>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>;
-}
-
-impl PathFinder for RecordRoot {
-    fn find_path<T>(&self, path: &[T]) -> Option<&RecordValue>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
-    {
-        let Some(head) = path.first() else {
-            return None;
-        };
-
-        let Some(value) = self.get(head.as_ref()) else {
-            return None;
-        };
-
-        if path.len() == 1 {
-            return Some(value);
-        }
-
-        value.find_path(&path[1..])
-    }
-
-    fn find_path_mut<T>(&mut self, path: &[T]) -> Option<&mut RecordValue>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
-    {
-        let Some(head) = path.first() else {
-            return None;
-        };
-
-        let Some(value) = self.get_mut(head.as_ref()) else {
-            return None;
-        };
-
-        if path.len() == 1 {
-            return Some(value);
-        }
-
-        value.find_path_mut(&path[1..])
-    }
-}
-
-impl PathFinder for RecordValue {
-    fn find_path<T>(&self, path: &[T]) -> std::option::Option<&RecordValue>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
-    {
-        let Some(head) = path.first() else {
-            return None;
-        };
-
-        match self {
-            RecordValue::Null => None,
-            RecordValue::Boolean(_) => None,
-            RecordValue::Number(_) => None,
-            RecordValue::String(_) => None,
-            RecordValue::PublicKey(_) => None,
-            RecordValue::Bytes(_) => None,
-            RecordValue::RecordReference(_) => None,
-            RecordValue::ForeignRecordReference(_) => None,
-            RecordValue::Map(m) => m.find_path(path),
-            RecordValue::Array(a) => {
-                if let Ok(index) = head.as_ref().parse::<usize>() {
-                    if let Some(value) = a.get(index) {
-                        if path.len() == 1 {
-                            return Some(value);
-                        }
-
-                        value.find_path(&path[1..])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-        }
-    }
-
-    fn find_path_mut<T>(&mut self, path: &[T]) -> std::option::Option<&mut RecordValue>
-    where
-        T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
-    {
-        let Some(head) = path.first() else {
-            return None;
-        };
-
-        match self {
-            RecordValue::Null => None,
-            RecordValue::Boolean(_) => None,
-            RecordValue::Number(_) => None,
-            RecordValue::String(_) => None,
-            RecordValue::PublicKey(_) => None,
-            RecordValue::Bytes(_) => None,
-            RecordValue::RecordReference(_) => None,
-            RecordValue::ForeignRecordReference(_) => None,
-            RecordValue::Map(m) => m.find_path_mut(path),
-            RecordValue::Array(a) => {
-                if let Ok(index) = head.as_ref().parse::<usize>() {
-                    if let Some(value) = a.get_mut(index) {
-                        if path.len() == 1 {
-                            return Some(value);
-                        }
-
-                        value.find_path_mut(&path[1..])
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-        }
-    }
-}
-
-// TODO: refactor this into own module
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
-pub enum IndexValue<'a> {
-    Number(f64),
-    Boolean(bool),
-    Null,
-    String(Cow<'a, str>),
-    PublicKey(Cow<'a, crate::publickey::PublicKey>),
-    ForeignRecordReference(Cow<'a, ForeignRecordReference>),
-}
-
-impl From<u64> for IndexValue<'_> {
-    fn from(n: u64) -> Self {
-        IndexValue::Number(n as f64)
-    }
-}
-
-impl From<f64> for IndexValue<'_> {
-    fn from(n: f64) -> Self {
-        IndexValue::Number(n)
-    }
-}
-
-impl From<bool> for IndexValue<'_> {
-    fn from(b: bool) -> Self {
-        IndexValue::Boolean(b)
-    }
-}
-
-impl<'a> From<&'a str> for IndexValue<'a> {
-    fn from(s: &'a str) -> Self {
-        IndexValue::String(Cow::Borrowed(s))
-    }
-}
-
-impl IndexValue<'_> {
-    pub fn with_static(self) -> IndexValue<'static> {
-        match self {
-            IndexValue::String(s) => IndexValue::String(Cow::Owned(s.into_owned())),
-            IndexValue::PublicKey(p) => IndexValue::PublicKey(Cow::Owned(p.into_owned())),
-            IndexValue::ForeignRecordReference(frr) => {
-                IndexValue::ForeignRecordReference(Cow::Owned(frr.into_owned()))
-            }
-            IndexValue::Number(n) => IndexValue::Number(n),
-            IndexValue::Boolean(b) => IndexValue::Boolean(b),
-            IndexValue::Null => IndexValue::Null,
-        }
-    }
-}
-
-impl TryFrom<RecordValue> for IndexValue<'_> {
-    type Error = IndexValueError;
-
-    fn try_from(value: RecordValue) -> std::result::Result<Self, IndexValueError> {
-        match value {
-            RecordValue::Null => Ok(IndexValue::Null),
-            RecordValue::Boolean(b) => Ok(IndexValue::Boolean(b)),
-            RecordValue::Number(n) => Ok(IndexValue::Number(n)),
-            RecordValue::String(s) => Ok(IndexValue::String(Cow::Owned(s))),
-            RecordValue::PublicKey(p) => Ok(IndexValue::PublicKey(Cow::Owned(p))),
-            RecordValue::ForeignRecordReference(fr) => {
-                Ok(IndexValue::ForeignRecordReference(Cow::Owned(fr)))
-            }
-            RecordValue::Bytes(_) => Err(IndexValueError::TryFromRecordValue),
-            RecordValue::RecordReference(_) => Err(IndexValueError::TryFromRecordValue),
-            RecordValue::Map(_) => Err(IndexValueError::TryFromRecordValue),
-            RecordValue::Array(_) => Err(IndexValueError::TryFromRecordValue),
-        }
     }
 }

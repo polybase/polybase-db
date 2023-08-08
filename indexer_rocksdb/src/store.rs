@@ -4,10 +4,10 @@ use crate::{
     keys::{self, Key},
     proto,
 };
-use indexer_db_adaptor::collection::record::RecordRoot;
 use parking_lot::Mutex;
 use prost::Message;
 use rocksdb::WriteBatch;
+use schema::record::RecordRoot;
 use std::collections::HashMap;
 use std::mem;
 use std::{convert::AsRef, path::Path, sync::Arc};
@@ -207,7 +207,7 @@ pub(crate) mod tests {
         ops::{Deref, DerefMut},
     };
 
-    use indexer_db_adaptor::collection::record::IndexValue;
+    use schema::index_value::IndexValue;
 
     use super::*;
 

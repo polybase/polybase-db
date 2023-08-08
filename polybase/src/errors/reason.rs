@@ -1,6 +1,6 @@
 use derive_more::Display;
 
-use crate::{auth, errors::code::ErrorCode};
+use crate::{auth, db, errors::code::ErrorCode};
 
 #[derive(Debug, Display, PartialEq)]
 pub enum ReasonCode {
@@ -130,36 +130,41 @@ impl ReasonCode {
         }
     }
 
+    pub fn from_db_error(err: &db::UserError) -> Self {
+        match err {
+            db::UserError::FunctionNotFound { .. } => ReasonCode::FunctionNotFound,
+            db::UserError::CollectionMismatch { .. } => ReasonCode::CollectionMismatch,
+            db::UserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
+            db::UserError::RecordIdNotString => ReasonCode::RecordIdNotString,
+            db::UserError::RecordIdNotFound => ReasonCode::RecordCollectionIdNotFound,
+            // db::UserError::RecordIDModified => ReasonCode::RecordIDModified,
+            db::UserError::Method(err) => Self::from_schema_method_error(err),
+        }
+    }
+
     pub fn from_gateway_error(err: &gateway::GatewayUserError) -> Self {
         match err {
-            gateway::GatewayUserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
+            // gateway::GatewayUserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
 
-            gateway::GatewayUserError::RecordIdNotString => ReasonCode::RecordIdNotString,
+            // gateway::GatewayUserError::RecordIdNotString => ReasonCode::RecordIdNotString,
 
-            gateway::GatewayUserError::RecordCollectionIdNotFound => {
-                ReasonCode::RecordCollectionIdNotFound
-            }
+            // gateway::GatewayUserError::RecordCollectionIdNotFound => {
+            //     ReasonCode::RecordCollectionIdNotFound
+            // }
 
-            gateway::GatewayUserError::RecordFieldNotObject => ReasonCode::RecordFieldNotObject,
-
+            // gateway::GatewayUserError::RecordFieldNotObject => ReasonCode::RecordFieldNotObject,
             gateway::GatewayUserError::RecordIDModified => ReasonCode::RecordIDModified,
 
-            gateway::GatewayUserError::CollectionNotFound { .. } => ReasonCode::CollectionNotFound,
+            // gateway::GatewayUserError::CollectionNotFound { .. } => ReasonCode::CollectionNotFound,
+            // gateway::GatewayUserError::CollectionIdExists => ReasonCode::CollectionIdExists,
 
-            gateway::GatewayUserError::CollectionIdExists => ReasonCode::CollectionIdExists,
+            // gateway::GatewayUserError::CollectionRecordIdNotFound => {
+            //     ReasonCode::CollectionRecordIdNotFound
+            // }
 
-            gateway::GatewayUserError::CollectionRecordIdNotFound => {
-                ReasonCode::CollectionRecordIdNotFound
-            }
+            // gateway::GatewayUserError::CollectionMismatch { .. } => ReasonCode::CollectionMismatch,
 
-            gateway::GatewayUserError::CollectionMismatch { .. } => ReasonCode::CollectionMismatch,
-
-            gateway::GatewayUserError::FunctionNotFound { .. } => ReasonCode::FunctionNotFound,
-
-            gateway::GatewayUserError::FunctionIncorrectNumberOfArguments { .. } => {
-                ReasonCode::FunctionInvalidArgs
-            }
-
+            // gateway::GatewayUserError::FunctionNotFound { .. } => ReasonCode::FunctionNotFound,
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
 
             gateway::GatewayUserError::JavaScriptException { .. } => {
@@ -170,10 +175,6 @@ impl ReasonCode {
                 ReasonCode::FunctionCollectionError
             }
 
-            gateway::GatewayUserError::FunctionInvalidArgumentType { .. } => {
-                ReasonCode::FunctionInvalidArgs
-            }
-
             gateway::GatewayUserError::ConstructorMustAssignId => ReasonCode::ConstructorNoId,
 
             gateway::GatewayUserError::FunctionTimedOut => ReasonCode::FunctionJavaScriptException,
@@ -181,98 +182,117 @@ impl ReasonCode {
     }
 
     pub fn from_where_query_error(
-        err: &indexer_db_adaptor::collection::where_query::WhereQueryUserError,
+        err: &indexer_db_adaptor::where_query::WhereQueryUserError,
     ) -> Self {
         match err {
-            indexer_db_adaptor::collection::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
+            indexer_db_adaptor::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
                 ..
             } => ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch,
-            indexer_db_adaptor::collection::where_query::WhereQueryUserError::InequalityNotLast => {
+            indexer_db_adaptor::where_query::WhereQueryUserError::InequalityNotLast => {
                 ReasonCode::IndexerQueryInequalityNotLast
             }
-            indexer_db_adaptor::collection::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
+            indexer_db_adaptor::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
                 ReasonCode::IndexerMissingIndex
             }
         }
     }
 
-    pub fn from_collection_error(
-        err: &indexer_db_adaptor::collection::CollectionUserError,
-    ) -> Self {
+    // pub fn from_schema_error(err: &schema::UserError) -> Self {
+    //     match err {
+    //         schema::UserError::Method(err) => Self::from_schema_method_error(err),
+    //     }
+    // }
+
+    pub fn from_schema_method_error(err: &schema::methods::UserError) -> Self {
         match err {
-            indexer_db_adaptor::collection::CollectionUserError::CollectionNotFound { .. } => {
+            schema::methods::UserError::MethodIncorrectNumberOfArguments { .. } => {
+                ReasonCode::FunctionInvalidArgs
+            }
+            schema::methods::UserError::MethodInvalidArgumentType { .. } => {
+                ReasonCode::FunctionInvalidArgs
+            }
+        }
+    }
+
+    pub fn from_indexer_error(err: &indexer_db_adaptor::UserError) -> Self {
+        match err {
+            indexer_db_adaptor::UserError::CollectionNotFound { .. } => {
                 ReasonCode::CollectionNotFound
             }
-            indexer_db_adaptor::collection::CollectionUserError::NoIndexFoundMatchingTheQuery => {
-                ReasonCode::IndexerMissingIndex
-            }
-            indexer_db_adaptor::collection::CollectionUserError::UnauthorizedRead => {
-                ReasonCode::Unauthorized
-            }
-            indexer_db_adaptor::collection::CollectionUserError::InvalidCursorKey => {
+
+            indexer_db_adaptor::UserError::CursorBeforeAndAfter { .. } => {
                 ReasonCode::IndexerInvalidCursorKey
-            }
-            indexer_db_adaptor::collection::CollectionUserError::InvalidCursorBeforeAndAfterSpecified => {
-                ReasonCode::IndexerInvalidCursorKey
-            }
-            indexer_db_adaptor::collection::CollectionUserError::CollectionIdMissingNamespace => {
-                ReasonCode::CollectionInvalidId
-            }
-            indexer_db_adaptor::collection::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
-                ReasonCode::CollectionInvalidId
-            }
-            indexer_db_adaptor::collection::CollectionUserError::MissingDefinitionForCollection { .. } => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::CollectionMissingIdField => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::CollectionIdFieldMustBeString => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::CollectionIdFieldCannotBeOptional => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
-                ReasonCode::CollectionInvalidSchema
-            }
-            indexer_db_adaptor::collection::CollectionUserError::CollectionDirectiveCannotHaveArguments {
-                ..
-            } => ReasonCode::CollectionInvalidSchema,
-            indexer_db_adaptor::collection::CollectionUserError::UnknownCollectionDirectives { .. } => {
-                ReasonCode::CollectionInvalidSchema
-            },
-            indexer_db_adaptor::collection::CollectionUserError::RecordUserError(_) => {
-                ReasonCode::RecordInvalidField
             }
 
+            indexer_db_adaptor::UserError::UnauthorizedRead { .. } => ReasonCode::Unauthorized,
+            // indexer_db_adaptor::CollectionUserError::NoIndexFoundMatchingTheQuery => {
+            //     ReasonCode::IndexerMissingIndex
+            // }
+            // indexer_db_adaptor::CollectionUserError::UnauthorizedRead => ReasonCode::Unauthorized,
+            // indexer_db_adaptor::CollectionUserError::InvalidCursorKey => {
+            //     ReasonCode::IndexerInvalidCursorKey
+            // }
+            // indexer_db_adaptor::CollectionUserError::InvalidCursorBeforeAndAfterSpecified => {
+            //     ReasonCode::IndexerInvalidCursorKey
+            // }
+            // indexer_db_adaptor::CollectionUserError::CollectionIdMissingNamespace => {
+            //     ReasonCode::CollectionInvalidId
+            // }
+            // indexer_db_adaptor::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
+            //     ReasonCode::CollectionInvalidId
+            // }
+            // indexer_db_adaptor::CollectionUserError::MissingDefinitionForCollection { .. } => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::CollectionMissingIdField => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::CollectionIdFieldMustBeString => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::CollectionIdFieldCannotBeOptional => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::CollectionDirectiveCannotHaveArguments {
+            //     ..
+            // } => ReasonCode::CollectionInvalidSchema,
+            // indexer_db_adaptor::CollectionUserError::UnknownCollectionDirectives { .. } => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
+            // indexer_db_adaptor::CollectionUserError::RecordUserError(_) => {
+            //     ReasonCode::RecordInvalidField
+            // }
+            // indexer_db_adaptor::CollectionUserError::Schema(_) => {
+            //     ReasonCode::CollectionInvalidSchema
+            // }
         }
     }
 
-    pub fn from_record_user_error(
-        err: &indexer_db_adaptor::collection::record::RecordUserError,
-    ) -> Self {
+    pub fn from_record_user_error(err: &schema::record::RecordUserError) -> Self {
         match err {
-            indexer_db_adaptor::collection::record::RecordUserError::RecordRootShouldBeAnObject { .. } => {
+            schema::record::RecordUserError::RecordRootShouldBeAnObject { .. } => {
                 ReasonCode::RecordNotObject
             }
-            indexer_db_adaptor::collection::record::RecordUserError::MissingField { .. } => ReasonCode::RecordMissingField,
-            indexer_db_adaptor::collection::record::RecordUserError::InvalidFieldValueType { .. } => {
+            schema::record::RecordUserError::MissingField { .. } => ReasonCode::RecordMissingField,
+            schema::record::RecordUserError::InvalidFieldValueType { .. } => {
                 ReasonCode::RecordInvalidField
             }
-            indexer_db_adaptor::collection::record::RecordUserError::UnexpectedFields { .. } => {
+            schema::record::RecordUserError::UnexpectedFields { .. } => {
                 ReasonCode::RecordInvalidField
             }
         }

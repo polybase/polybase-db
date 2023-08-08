@@ -77,7 +77,7 @@ impl From<gateway::GatewayError> for HTTPError {
         match err {
             // We only need to match the user errors
             gateway::GatewayError::UserError(e) => e.into(),
-            gateway::GatewayError::IndexerError(e) => e.into(),
+            // gateway::GatewayError::IndexerError(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
@@ -95,7 +95,7 @@ impl From<db::Error> for HTTPError {
             db::Error::CollectionNotFound => {
                 HTTPError::new(ReasonCode::CollectionNotFound, Some(Box::new(err)))
             }
-            db::Error::Collection(e) => e.into(),
+            // db::Error::Collection(e) => e.into(),
             db::Error::Gateway(e) => e.into(),
             db::Error::Indexer(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
@@ -103,41 +103,47 @@ impl From<db::Error> for HTTPError {
     }
 }
 
-impl From<indexer_db_adaptor::collection::CollectionError> for HTTPError {
-    fn from(err: indexer_db_adaptor::collection::CollectionError) -> Self {
-        match err {
-            indexer_db_adaptor::collection::CollectionError::UserError(e) => e.into(),
-            _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
-        }
+impl From<db::UserError> for HTTPError {
+    fn from(err: db::UserError) -> Self {
+        HTTPError::new(ReasonCode::from_db_error(&err), Some(Box::new(err)))
     }
 }
 
-impl From<indexer_db_adaptor::collection::CollectionUserError> for HTTPError {
-    fn from(err: indexer_db_adaptor::collection::CollectionUserError) -> Self {
-        HTTPError::new(ReasonCode::from_collection_error(&err), Some(Box::new(err)))
-    }
-}
+// impl From<indexer_db_adaptor::collection::CollectionError> for HTTPError {
+//     fn from(err: indexer_db_adaptor::collection::CollectionError) -> Self {
+//         match err {
+//             indexer_db_adaptor::collection::CollectionError::UserError(e) => e.into(),
+//             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
+//         }
+//     }
+// }
 
-impl From<indexer_db_adaptor::collection::cursor::Error> for HTTPError {
-    fn from(err: indexer_db_adaptor::collection::cursor::Error) -> Self {
+// impl From<indexer_db_adaptor::collection::CollectionUserError> for HTTPError {
+//     fn from(err: indexer_db_adaptor::collection::CollectionUserError) -> Self {
+//         HTTPError::new(ReasonCode::from_collection_error(&err), Some(Box::new(err)))
+//     }
+// }
+
+impl From<indexer_db_adaptor::cursor::Error> for HTTPError {
+    fn from(err: indexer_db_adaptor::cursor::Error) -> Self {
         HTTPError::new(ReasonCode::Internal, Some(Box::new(err)))
     }
 }
 
-impl From<indexer_db_adaptor::collection::where_query::WhereQueryError> for HTTPError {
-    fn from(err: indexer_db_adaptor::collection::where_query::WhereQueryError) -> Self {
+impl From<indexer_db_adaptor::where_query::WhereQueryError> for HTTPError {
+    fn from(err: indexer_db_adaptor::where_query::WhereQueryError) -> Self {
         match err {
-            indexer_db_adaptor::collection::where_query::WhereQueryError::UserError(e) => e.into(),
-            indexer_db_adaptor::collection::where_query::WhereQueryError::RecordError(
-                indexer_db_adaptor::collection::record::RecordError::UserError(e),
+            indexer_db_adaptor::where_query::WhereQueryError::UserError(e) => e.into(),
+            indexer_db_adaptor::where_query::WhereQueryError::RecordError(
+                schema::record::RecordError::UserError(e),
             ) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }
 }
 
-impl From<indexer_db_adaptor::collection::where_query::WhereQueryUserError> for HTTPError {
-    fn from(err: indexer_db_adaptor::collection::where_query::WhereQueryUserError) -> Self {
+impl From<indexer_db_adaptor::where_query::WhereQueryUserError> for HTTPError {
+    fn from(err: indexer_db_adaptor::where_query::WhereQueryUserError) -> Self {
         HTTPError::new(
             ReasonCode::from_where_query_error(&err),
             Some(Box::new(err)),
@@ -145,8 +151,8 @@ impl From<indexer_db_adaptor::collection::where_query::WhereQueryUserError> for 
     }
 }
 
-impl From<indexer_db_adaptor::collection::record::RecordUserError> for HTTPError {
-    fn from(err: indexer_db_adaptor::collection::record::RecordUserError) -> Self {
+impl From<schema::record::RecordUserError> for HTTPError {
+    fn from(err: schema::record::RecordUserError) -> Self {
         HTTPError::new(
             ReasonCode::from_record_user_error(&err),
             Some(Box::new(err)),
@@ -154,14 +160,14 @@ impl From<indexer_db_adaptor::collection::record::RecordUserError> for HTTPError
     }
 }
 
-impl From<indexer_db_adaptor::indexer::IndexerError> for HTTPError {
-    fn from(err: indexer_db_adaptor::indexer::IndexerError) -> Self {
+impl From<indexer_db_adaptor::Error> for HTTPError {
+    fn from(err: indexer_db_adaptor::Error) -> Self {
         match err {
             // Collection
-            indexer_db_adaptor::indexer::IndexerError::Collection(e) => match e {
-                indexer_db_adaptor::collection::CollectionError::UserError(e) => e.into(),
-                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
-            },
+            // indexer_db_adaptor::indexer_db_adaptor::Error::Collection(e) => match e {
+            //     indexer_db_adaptor::collection::CollectionError::UserError(e) => e.into(),
+            //     _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            // },
             // WhereQuery
             // todo - this variant is not in IndexerError anymore.
             //indexer_db_adaptor::indexer::IndexerError::WhereQuery(e) => match e {
@@ -169,10 +175,10 @@ impl From<indexer_db_adaptor::indexer::IndexerError> for HTTPError {
             //    _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             //},
             // Record
-            indexer_db_adaptor::indexer::IndexerError::Record(e) => match e {
-                indexer_db_adaptor::collection::record::RecordError::UserError(e) => e.into(),
-                _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
-            },
+            // indexer_db_adaptor::Error::Record(e) => match e {
+            //     schema::record::RecordError::UserError(e) => e.into(),
+            //     _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
+            // },
 
             // Other errors are internal
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),

@@ -1,10 +1,13 @@
-use crate::collection::{
-    field_path::FieldPath,
-    index::{Index, IndexDirection, IndexField},
-    record::{IndexValue, RecordRoot, RecordValue},
-    where_query::{WhereNode, WhereQuery},
+use crate::adaptor::{Error, IndexerAdaptor, Result};
+use crate::where_query::{WhereNode, WhereQuery};
+use schema::field_path::FieldPath;
+use schema::index_value::IndexValue;
+use schema::Schema;
+use schema::{
+    index::{IndexDirection, IndexField},
+    publickey::PublicKey,
+    record::{RecordRoot, RecordValue},
 };
-use crate::store::{Error, Result, Store};
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
 
@@ -45,6 +48,59 @@ impl MemoryStore {
             })),
         }
     }
+
+    async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()> {
+        let mut state = self.state.lock().await;
+
+        let collection = match state.data.get_mut(collection_id) {
+            Some(collection) => collection,
+            // TODO: we should implement Store trait error for missing collection
+            None => {
+                state.data.insert(
+                    collection_id.to_string(),
+                    Collection {
+                        data: HashMap::from([(
+                            record_id.to_string(),
+                            Record {
+                                data: value.clone(),
+                                last_updated: SystemTime::now(),
+                            },
+                        )]),
+                        last_updated: SystemTime::now(),
+                    },
+                );
+
+                state
+                    .data
+                    .get_mut(collection_id)
+                    .ok_or(Error::Store(Box::new(MemoryStoreError::Get)))?
+            }
+        };
+
+        collection.data.insert(
+            record_id.to_string(),
+            Record {
+                data: value.clone(),
+                last_updated: SystemTime::now(),
+            },
+        );
+
+        Ok(())
+    }
+
+    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
+        let mut state = self.state.lock().await;
+
+        let collection = match state.data.get_mut(collection_id) {
+            Some(collection) => collection,
+            // TODO: we should implement Store trait error for missing collection
+            None => return Ok(()),
+        };
+
+        collection.data.remove(record_id);
+
+        Ok(())
+    }
 }
 
 impl Default for MemoryStore {
@@ -72,50 +128,17 @@ fn matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> bool {
 }
 
 #[async_trait::async_trait]
-impl Store for MemoryStore {
-    type Config = ();
-
+impl IndexerAdaptor for MemoryStore {
     async fn commit(&self) -> Result<()> {
         Ok(())
     }
 
-    async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()> {
-        let mut state = self.state.lock().await;
-
-        let collection = match state.data.get_mut(collection_id) {
-            Some(collection) => collection,
-            // TODO: we should implement Store trait error for missing collection
-            None => {
-                state.data.insert(
-                    collection_id.to_string(),
-                    Collection {
-                        data: HashMap::from([(
-                            record_id.to_string(),
-                            Record {
-                                data: value.clone(),
-                                last_updated: SystemTime::now(),
-                            },
-                        )]),
-                        last_updated: SystemTime::now(),
-                    },
-                );
-
-                state
-                    .data
-                    .get_mut(collection_id)
-                    .ok_or(Error(Box::new(MemoryStoreError::Get)))?
-            }
+    async fn get_schema(&self, collection_id: &str) -> Result<Option<Schema>> {
+        let record = match self.get("Collection", collection_id).await? {
+            Some(record) => record,
+            None => return Ok(None),
         };
-
-        collection.data.insert(
-            record_id.to_string(),
-            Record {
-                data: value.clone(),
-                last_updated: SystemTime::now(),
-            },
-        );
-
-        Ok(())
+        Ok(Some(Schema::from_record(&record)?))
     }
 
     async fn get(&self, collection_id: &str, record_id: &str) -> Result<Option<RecordRoot>> {
@@ -139,7 +162,7 @@ impl Store for MemoryStore {
         collection_id: &str,
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
-        order_by: &[IndexField<'_>],
+        order_by: &[IndexField],
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         let state = self.state.lock().await;
 
@@ -168,8 +191,8 @@ impl Store for MemoryStore {
         // TODO
         for IndexField { path, direction } in order_by {
             records.sort_by(|a, b| {
-                if let Some(rec_a) = a.get(path[0].as_ref()) {
-                    if let Some(rec_b) = b.get(path[0].as_ref()) {
+                if let Some(rec_a) = a.get(&path.0[0]) {
+                    if let Some(rec_b) = b.get(&path.0[0]) {
                         match (rec_a, rec_b) {
                             (RecordValue::Number(na), RecordValue::Number(nb)) => match direction {
                                 IndexDirection::Ascending => na.partial_cmp(nb).unwrap(),
@@ -198,24 +221,6 @@ impl Store for MemoryStore {
         Ok(Box::pin(futures::stream::iter(
             records.into_iter().take(limit.unwrap_or(usize::MAX)),
         )))
-    }
-
-    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
-        let mut state = self.state.lock().await;
-
-        let collection = match state.data.get_mut(collection_id) {
-            Some(collection) => collection,
-            // TODO: we should implement Store trait error for missing collection
-            None => return Ok(()),
-        };
-
-        collection.data.remove(record_id);
-
-        Ok(())
-    }
-
-    async fn apply_indexes<'a>(&self, _indexes: Vec<Index<'a>>, _: Vec<Index<'a>>) -> Result<()> {
-        Ok(())
     }
 
     async fn last_record_update(
@@ -277,6 +282,8 @@ impl Store for MemoryStore {
 
 #[cfg(test)]
 mod tests {
+    use crate::where_query::WhereValue;
+
     use super::*;
     use futures::StreamExt;
     use tokio::time::Duration;
@@ -287,11 +294,10 @@ mod tests {
 
         let collection_id = "test_collection";
         let record_id = "test_record";
-        let record_data = [
-            ("id".into(), RecordValue::String("id1".into())),
-            ("name".into(), RecordValue::String("Bob".into())),
-        ]
-        .into();
+
+        let mut record_data = RecordRoot::new();
+        record_data.insert("id".into(), RecordValue::String("id1".into()));
+        record_data.insert("name".into(), RecordValue::String("Bob".into()));
 
         store
             .set(collection_id, record_id, &record_data)
@@ -307,19 +313,16 @@ mod tests {
         let store = MemoryStore::new();
 
         let collection_id = "test_collection";
-        let record1_data = [
-            ("id".into(), RecordValue::String("id1".into())),
-            ("name".into(), RecordValue::String("Bob".into())),
-            ("age".into(), RecordValue::Number(42.0)),
-        ]
-        .into();
 
-        let record2_data = [
-            ("id".into(), RecordValue::String("id2".into())),
-            ("name".into(), RecordValue::String("Dave".into())),
-            ("age".into(), RecordValue::Number(23.0)),
-        ]
-        .into();
+        let mut record1_data = RecordRoot::new();
+        record1_data.insert("id".into(), RecordValue::String("id1".into()));
+        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
+        record1_data.insert("age".into(), RecordValue::Number(42.0));
+
+        let mut record2_data = RecordRoot::new();
+        record2_data.insert("id".into(), RecordValue::String("id2".into()));
+        record2_data.insert("name".into(), RecordValue::String("Dave".into()));
+        record2_data.insert("age".into(), RecordValue::Number(23.0));
 
         store
             .set(collection_id, "record1", &record1_data)
@@ -342,37 +345,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_store_list_where_query_single_equality() {
-        use crate::collection::{
-            field_path::FieldPath,
-            record::IndexValue,
-            where_query::{WhereNode, WhereValue},
-        };
         use std::borrow::Cow;
 
         let store = MemoryStore::new();
 
         let collection_id = "test_collection";
 
-        let record1_data = [
-            ("id".into(), RecordValue::String("id1".into())),
-            ("name".into(), RecordValue::String("Bob".into())),
-            ("age".into(), RecordValue::Number(42.0)),
-        ]
-        .into();
+        let mut record1_data = RecordRoot::new();
 
-        let record2_data = [
-            ("id".into(), RecordValue::String("id2".into())),
-            ("name".into(), RecordValue::String("Dave".into())),
-            ("age".into(), RecordValue::Number(23.0)),
-        ]
-        .into();
+        record1_data.insert("id".into(), RecordValue::String("id1".into()));
+        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
+        record1_data.insert("age".into(), RecordValue::Number(42.0));
 
-        let record3_data = [
-            ("id".into(), RecordValue::String("id3".into())),
-            ("name".into(), RecordValue::String("Wanda".into())),
-            ("age".into(), RecordValue::Number(19.0)),
-        ]
-        .into();
+        let mut record2_data = RecordRoot::new();
+
+        record2_data.insert("id".into(), RecordValue::String("id2".into()));
+        record2_data.insert("name".into(), RecordValue::String("Dave".into()));
+        record2_data.insert("age".into(), RecordValue::Number(23.0));
+
+        let mut record3_data = RecordRoot::new();
+        record3_data.insert("id".into(), RecordValue::String("id3".into()));
+        record3_data.insert("name".into(), RecordValue::String("Wanda".into()));
+        record3_data.insert("age".into(), RecordValue::Number(19.0));
 
         store
             .set(collection_id, "record1", &record1_data)
@@ -411,11 +405,10 @@ mod tests {
         let store = MemoryStore::new();
         let collection_id = "test_collection";
         let record_id = "test_record";
-        let record_data = [
-            ("id".into(), RecordValue::String("id1".into())),
-            ("name".into(), RecordValue::String("Bob".into())),
-        ]
-        .into();
+
+        let mut record_data = RecordRoot::new();
+        record_data.insert("id".into(), RecordValue::String("id1".into()));
+        record_data.insert("name".into(), RecordValue::String("Bob".into()));
 
         store
             .set(collection_id, record_id, &record_data)
@@ -435,11 +428,10 @@ mod tests {
         let store = MemoryStore::new();
         let collection_id = "test_collection";
         let record_id = "test_record";
-        let record_data = [
-            ("id".into(), RecordValue::String("id1".into())),
-            ("name".into(), RecordValue::String("Bob".into())),
-        ]
-        .into();
+        let mut record_data = RecordRoot::new();
+
+        record_data.insert("id".into(), RecordValue::String("id1".into()));
+        record_data.insert("name".into(), RecordValue::String("Bob".into()));
 
         store
             .set(collection_id, record_id, &record_data)

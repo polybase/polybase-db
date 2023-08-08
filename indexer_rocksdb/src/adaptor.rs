@@ -1,12 +1,10 @@
 use crate::{error, store::Store};
 use indexer_db_adaptor::{
-    collection::{
-        index::{Index, IndexField},
-        record::RecordRoot,
-        where_query::WhereQuery,
-    },
-    store::{Result, Store as StoreAdaptor},
+    adaptor::{self, IndexerAdaptor, Result},
+    // indexer::{IndexField, Result, Store as StoreAdaptor},
+    where_query::WhereQuery,
 };
+use schema::{index::IndexField, record::RecordRoot, Schema};
 use std::{path::Path, pin::Pin, time::SystemTime};
 
 #[derive(Clone)]
@@ -23,17 +21,10 @@ impl RocksDBAdaptor {
 }
 
 #[async_trait::async_trait]
-impl StoreAdaptor for RocksDBAdaptor {
-    type Config = String;
-
+impl IndexerAdaptor for RocksDBAdaptor {
     async fn commit(&self) -> Result<()> {
         self.store.commit().await?;
         Ok(())
-    }
-
-    // TODO: this will be pulled from existing collection logic
-    async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()> {
-        todo!()
     }
 
     async fn get(&self, collection_id: &str, record_id: &str) -> Result<Option<RecordRoot>> {
@@ -45,20 +36,12 @@ impl StoreAdaptor for RocksDBAdaptor {
         collection_id: &str,
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
-        order_by: &[IndexField<'_>],
+        order_by: &[IndexField],
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         todo!()
     }
 
-    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
-        todo!()
-    }
-
-    async fn apply_indexes<'a>(
-        &self,
-        indexes: Vec<Index<'a>>,
-        previous: Vec<Index<'a>>,
-    ) -> Result<()> {
+    async fn get_schema(&self, collection_id: &str) -> Result<Option<Schema>> {
         todo!()
     }
 
@@ -87,8 +70,8 @@ impl StoreAdaptor for RocksDBAdaptor {
     }
 }
 
-impl From<error::Error> for indexer_db_adaptor::store::Error {
+impl From<error::Error> for adaptor::Error {
     fn from(err: error::Error) -> Self {
-        Self(Box::new(err))
+        Self::Store(Box::new(err))
     }
 }

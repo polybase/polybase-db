@@ -39,7 +39,7 @@ collection Account {
     "#;
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key = indexer_db_adaptor::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
     let signer = Signer::from(move |body: &str| {
         let mut signature = Signature::create(&private_key, SystemTime::now(), body);
         signature.public_key = Some(public_key.clone());

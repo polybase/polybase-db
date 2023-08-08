@@ -1,31 +1,30 @@
-use crate::collection::{
-    index::{Index, IndexField},
-    record::RecordRoot,
-    where_query::WhereQuery,
-};
-use std::pin::Pin;
-use std::time::SystemTime;
+use crate::where_query::WhereQuery;
+use schema::{self, record::RecordRoot, Schema};
+use std::{pin::Pin, time::SystemTime};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, thiserror::Error)]
-pub struct Error(#[source] pub Box<dyn std::error::Error>);
+pub use schema::{
+    index::{Index, IndexDirection, IndexField},
+    publickey::PublicKey,
+};
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("store error: {0}")]
+    Store(#[from] Box<dyn std::error::Error + Send + Sync>),
+
+    #[error("schema error: {0}")]
+    Schema(#[from] schema::Error),
+
+    #[error("Collection collection record not found for collection {id:?}")]
+    CollectionCollectionRecordNotFound { id: String },
 }
 
 /// The Store trait
 #[async_trait::async_trait]
-pub trait Store: Send + Sync + Clone {
-    // type Error: std::error::Error + Send + Sync + 'static;
-    type Config;
-
+pub trait IndexerAdaptor: Send + Sync {
     async fn commit(&self) -> Result<()>;
-
-    async fn set(&self, collection_id: &str, record_id: &str, value: &RecordRoot) -> Result<()>;
 
     async fn get(&self, collection_id: &str, record_id: &str) -> Result<Option<RecordRoot>>;
 
@@ -34,16 +33,10 @@ pub trait Store: Send + Sync + Clone {
         collection_id: &str,
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
-        order_by: &[IndexField<'_>],
+        order_by: &[IndexField],
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>>;
 
-    async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()>;
-
-    async fn apply_indexes<'a>(
-        &self,
-        indexes: Vec<Index<'a>>,
-        previous: Vec<Index<'a>>,
-    ) -> Result<()>;
+    async fn get_schema(&self, collection_id: &str) -> Result<Option<Schema>>;
 
     async fn last_record_update(
         &self,
