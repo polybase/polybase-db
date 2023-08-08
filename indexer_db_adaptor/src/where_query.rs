@@ -40,7 +40,28 @@ pub enum WhereQueryUserError {
 pub struct WhereQuery<'a>(pub(crate) HashMap<FieldPath, WhereNode<'a>>);
 
 impl<'a> WhereQuery<'a> {
-    // Determines if the query matches the given index
+    /// Determines if the query matches the given index
+    ///
+    /// Indexes must be able to select records as a contiguous block. Sort order of indexes
+    /// impacts the matching of an index.
+    ///
+    /// - Equality requirements must match front index fields (i.e.), sort order (ASC/DESC) of index does not matter
+    /// - Only one inequality filter can be used at once (although the same field can have an upper and lower bound),
+    ///   after an inequality filter no more filters can be used
+    /// - The first sort order or inequality filter used does not need to match index sort order, but subsequent sort
+    ///   orders must match index sort order
+    ///
+    /// [Name ASC, Age ASC, Group DESC]
+    ///
+    /// - Name == "calum" && Age > 10                  // MATCH
+    /// - Name == "calum" && Age > 10 && Age < 20      // MATCH
+    /// - Name == "calum" && Age > 10 && Group > 3     // INVALID, multiple inequality filters
+    ///
+    /// [Age ASC, Name ASC, Group DESC]
+    ///
+    /// - Name == "calum" && Age > 10                  // NO MATCH, no matches after inequality filter
+    /// - Name == "calum"                              // NO MATCH, equality requirements must match from front of index
+    ///
     pub fn matches(&self, index: &Index, sort: &[IndexField]) -> bool {
         let Ok(mut requirements) = index_requirements(self, sort) else { return false; };
 
