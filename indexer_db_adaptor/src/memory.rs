@@ -144,7 +144,7 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
                                 rec_bool & !wbool
                             }
-                            _ => false,
+                            _ => true, // todo - other IndexValue types
                         }));
                     }
 
@@ -163,7 +163,7 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
                                 rec_bool >= wbool
                             }
-                            _ => false,
+                            _ => true,
                         }));
                     }
 
@@ -182,7 +182,7 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
                                 !rec_bool & wbool
                             }
-                            _ => false,
+                            _ => true,
                         }));
                     }
 
@@ -201,7 +201,7 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
                                 rec_bool <= wbool
                             }
-                            _ => false,
+                            _ => true,
                         }));
                     }
                 }
@@ -1016,6 +1016,206 @@ mod tests {
         assert!(records.len() == 2);
         assert_eq!(records[0], record1_data);
         assert_eq!(records[1], record2_data);
+    }
+
+    #[tokio::test]
+    async fn test_where_foreign_record_reference() {
+        use schema::record::ForeignRecordReference;
+
+        let store = MemoryStore::new();
+
+        let user_collection = "test/User";
+        let user1_data = create_record_root(&["id"], &[RecordValue::String("0".into())]);
+        let user2_data = create_record_root(&["id"], &[RecordValue::String("1".into())]);
+
+        store
+            .set(user_collection, "user1", &user1_data)
+            .await
+            .unwrap();
+        store
+            .set(user_collection, "user2", &user2_data)
+            .await
+            .unwrap();
+
+        let account_collection = "test/Account";
+        let account1_data = create_record_root(
+            &["id", "user"],
+            &[
+                RecordValue::String("0".into()),
+                RecordValue::ForeignRecordReference(ForeignRecordReference {
+                    collection_id: user_collection.to_string(),
+                    id: "0".to_string(),
+                }),
+            ],
+        );
+        let account2_data = create_record_root(
+            &["id", "user"],
+            &[
+                RecordValue::String("1".into()),
+                RecordValue::ForeignRecordReference(ForeignRecordReference {
+                    collection_id: user_collection.to_string(),
+                    id: "1".to_string(),
+                }),
+            ],
+        );
+
+        let account3_data = create_record_root(
+            &["id", "user"],
+            &[
+                RecordValue::String("2".into()),
+                RecordValue::ForeignRecordReference(ForeignRecordReference {
+                    collection_id: user_collection.to_string(),
+                    id: "0".to_string(),
+                }),
+            ],
+        );
+
+        store
+            .set(account_collection, "account1", &account1_data)
+            .await
+            .unwrap();
+        store
+            .set(account_collection, "account2", &account2_data)
+            .await
+            .unwrap();
+        store
+            .set(account_collection, "account3", &account3_data)
+            .await
+            .unwrap();
+
+        let where_query = WhereQuery(
+            [(
+                FieldPath(["user".to_string()].into()),
+                WhereNode::Equality(WhereValue(IndexValue::ForeignRecordReference(Cow::Owned(
+                    ForeignRecordReference {
+                        collection_id: user_collection.to_string(),
+                        id: "1".to_string(),
+                    },
+                )))),
+            )]
+            .into(),
+        );
+
+        let records = store
+            .list(account_collection, None, where_query, &[])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 1);
+        assert_eq!(records[0], account2_data);
+    }
+
+    #[tokio::test]
+    async fn test_sort_foreign_record_reference() {
+        use schema::record::ForeignRecordReference;
+
+        let store = MemoryStore::new();
+
+        let user_collection = "test/User";
+        let user1_data = create_record_root(&["id"], &[RecordValue::String("0".into())]);
+        let user2_data = create_record_root(&["id"], &[RecordValue::String("1".into())]);
+
+        store
+            .set(user_collection, "user1", &user1_data)
+            .await
+            .unwrap();
+        store
+            .set(user_collection, "user2", &user2_data)
+            .await
+            .unwrap();
+
+        let account_collection = "test/Account";
+        let account1_data = create_record_root(
+            &["id", "user"],
+            &[
+                RecordValue::String("0".into()),
+                RecordValue::ForeignRecordReference(ForeignRecordReference {
+                    collection_id: user_collection.to_string(),
+                    id: "0".to_string(),
+                }),
+            ],
+        );
+        let account2_data = create_record_root(
+            &["id", "user"],
+            &[
+                RecordValue::String("1".into()),
+                RecordValue::ForeignRecordReference(ForeignRecordReference {
+                    collection_id: user_collection.to_string(),
+                    id: "1".to_string(),
+                }),
+            ],
+        );
+
+        let account3_data = create_record_root(
+            &["id", "user"],
+            &[
+                RecordValue::String("2".into()),
+                RecordValue::ForeignRecordReference(ForeignRecordReference {
+                    collection_id: user_collection.to_string(),
+                    id: "0".to_string(),
+                }),
+            ],
+        );
+
+        store
+            .set(account_collection, "account1", &account1_data)
+            .await
+            .unwrap();
+        store
+            .set(account_collection, "account2", &account2_data)
+            .await
+            .unwrap();
+        store
+            .set(account_collection, "account3", &account3_data)
+            .await
+            .unwrap();
+
+        let where_query = WhereQuery(
+            [(
+                FieldPath(["user".to_string()].into()),
+                WhereNode::Equality(WhereValue(IndexValue::ForeignRecordReference(Cow::Owned(
+                    ForeignRecordReference {
+                        collection_id: user_collection.to_string(),
+                        id: "0".to_string(),
+                    },
+                )))),
+            )]
+            .into(),
+        );
+
+        let order_by = vec![IndexField {
+            path: vec!["id".to_string()].into(),
+            direction: IndexDirection::Ascending,
+        }];
+
+        let records = store
+            .list(account_collection, None, where_query.clone(), &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 2);
+        assert_eq!(records[0], account1_data);
+        assert_eq!(records[1], account3_data);
+
+        let order_by = vec![IndexField {
+            path: vec!["id".to_string()].into(),
+            direction: IndexDirection::Descending,
+        }];
+
+        let records = store
+            .list(account_collection, None, where_query, &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 2);
+        assert_eq!(records[0], account3_data);
+        assert_eq!(records[1], account1_data);
     }
 
     #[tokio::test]
