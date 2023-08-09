@@ -7,9 +7,8 @@ use crate::{
     methods::Method,
     property::{Property, PropertyList},
     publickey::{self, PublicKey},
-    record::{json_to_record, RecordRoot, RecordValue, Reference},
+    record::{RecordRoot, RecordValue, Reference},
     types::{PrimitiveType, Type},
-    util,
 };
 use polylang::stableast;
 use std::collections::HashMap;
@@ -91,11 +90,35 @@ impl Schema {
     }
 
     pub fn from_record(record: &RecordRoot) -> Result<Self> {
-        let name = match record.get("id") {
-            Some(RecordValue::String(id)) => util::normalize_name(id),
+        let id = match record.get("id") {
+            Some(RecordValue::String(id)) => id,
+            None => return Err(Error::CollectionRecordMissingID),
             _ => return Err(Error::CollectionRecordIDIsNotAString),
         };
-        Ok(Self::new(&collection_ast_from_record(&name, record)?))
+
+        let (namespace, name) = if let Some((namespace, name)) = id.rsplit_once('/') {
+            (namespace, name)
+        } else {
+            return Err(UserError::CollectionIdMissingNamespace)?;
+        };
+
+        if namespace.is_empty() {
+            return Err(UserError::CollectionIdMissingNamespace.into());
+        }
+
+        // TODO: should we move this to Polybase?
+        if name.starts_with('$') {
+            return Err(UserError::CollectionNameCannotStartWithDollarSign.into());
+        }
+
+        let collection = collection_ast_from_record(name, record)?;
+
+        // Create the schema and use it to validate
+        let schema = Self::new(&collection);
+
+        schema.validate()?;
+
+        Ok(schema)
     }
 
     pub fn from_json_str(name: &str, ast_as_json_str: &str) -> Result<Self> {
@@ -212,7 +235,8 @@ impl Schema {
         )
     }
 
-    // TODO: validate that we can change to the new schema
+    // TODO: validate that we can change to the new schem we need to do more checks than this
+    // - e.g. we need to check if a field is changing type which we should not allow
     pub fn validate_schema_change(&self, new_schema: Schema) -> Result<()> {
         todo!()
     }

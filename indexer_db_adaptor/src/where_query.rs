@@ -3,10 +3,12 @@ use schema::{
     field_path::FieldPath,
     index::{EitherIndexField, Index, IndexDirection, IndexField},
     index_value::IndexValue,
-    record,
+    record::{self, RecordRoot, RecordValue},
+    Schema,
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap};
+use tracing::field;
 
 pub type Result<T> = std::result::Result<T, WhereQueryError>;
 
@@ -38,7 +40,28 @@ pub enum WhereQueryUserError {
 pub struct WhereQuery<'a>(pub(crate) HashMap<FieldPath, WhereNode<'a>>);
 
 impl<'a> WhereQuery<'a> {
-    // Determines if the query matches the given index
+    /// Determines if the query matches the given index
+    ///
+    /// Indexes must be able to select records as a contiguous block. Sort order of indexes
+    /// impacts the matching of an index.
+    ///
+    /// - Equality requirements must match front index fields (i.e.), sort order (ASC/DESC) of index does not matter
+    /// - Only one inequality filter can be used at once (although the same field can have an upper and lower bound),
+    ///   after an inequality filter no more filters can be used
+    /// - The first sort order or inequality filter used does not need to match index sort order, but subsequent sort
+    ///   orders must match index sort order
+    ///
+    /// [Name ASC, Age ASC, Group DESC]
+    ///
+    /// - Name == "calum" && Age > 10                  // MATCH
+    /// - Name == "calum" && Age > 10 && Age < 20      // MATCH
+    /// - Name == "calum" && Age > 10 && Group > 3     // INVALID, multiple inequality filters
+    ///
+    /// [Age ASC, Name ASC, Group DESC]
+    ///
+    /// - Name == "calum" && Age > 10                  // NO MATCH, no matches after inequality filter
+    /// - Name == "calum"                              // NO MATCH, equality requirements must match from front of index
+    ///
     pub fn matches(&self, index: &Index, sort: &[IndexField]) -> bool {
         let Ok(mut requirements) = index_requirements(self, sort) else { return false; };
 
@@ -194,20 +217,37 @@ impl<'a> WhereQuery<'a> {
             let where_value = Some(WhereValue(cursor.0.record_id.with_static()));
 
             e.insert(match forward {
-                true => WhereNode::Inequality(WhereInequality {
+                true => WhereNode::Inequality(Box::new(WhereInequality {
                     gt: where_value,
                     gte: None,
                     lt: None,
                     lte: None,
-                }),
-                false => WhereNode::Inequality(WhereInequality {
+                })),
+                false => WhereNode::Inequality(Box::new(WhereInequality {
                     gt: None,
                     gte: None,
                     lt: where_value,
                     lte: None,
-                }),
+                })),
             });
         }
+    }
+
+    /// Create a RecordRoot from the where_query using the equality filters
+    pub fn to_record_root(&self) -> RecordRoot {
+        let mut record_root = RecordRoot::default();
+
+        self.0
+            .iter()
+            .filter_map(|(k, values)| match values {
+                WhereNode::Equality(WhereValue(v)) => Some((k, RecordValue::from(v.clone()))),
+                _ => None,
+            })
+            .for_each(|(k, v)| {
+                record_root.insert_path(k, v);
+            });
+
+        record_root
     }
 }
 
@@ -233,7 +273,7 @@ fn is_inequality_forwards(key: &FieldPath, order_by: &[IndexField], dir: &Cursor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub(crate) enum WhereNode<'a> {
-    Inequality(WhereInequality<'a>),
+    Inequality(Box<WhereInequality<'a>>),
     Equality(WhereValue<'a>),
 }
 

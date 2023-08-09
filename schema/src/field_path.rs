@@ -30,8 +30,28 @@ impl FieldPath {
         self.0.last().expect("FieldPath is empty")
     }
 
+    pub fn parent(&self) -> FieldPath {
+        Self(self.0[..self.0.len() - 1].to_vec())
+    }
+
     pub fn path(&self) -> String {
         self.0.join(".")
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn first(&self) -> Option<&String> {
+        self.0.first()
+    }
+
+    pub fn as_slice(&self) -> &[String] {
+        self.0.as_slice()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &str> {

@@ -1,7 +1,7 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
 use indexer_db_adaptor::auth_user::AuthUser;
-use schema::{self, methods, publickey::PublicKey};
+use schema::{self, publickey::PublicKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::debug;
@@ -109,6 +109,18 @@ impl Gateway {
     ) -> Result<FunctionOutput> {
         // Run the function
         let output = self.run(collection_id, js_code, method, instance, args, auth)?;
+
+        // Log the function call
+        debug!(
+            collection_id = &collection_id,
+            collection_code = &js_code,
+            function_name = method,
+            instance = serde_json::to_string(&instance).unwrap_or_default(),
+            args = serde_json::to_string(&args).unwrap_or_default(),
+            auth = serde_json::to_string(&auth).unwrap_or_default(),
+            output = serde_json::to_string(&output).unwrap_or_default(),
+            "function output"
+        );
 
         if method != "constructor" && instance.get("id") != output.instance.get("id") {
             return Err(GatewayUserError::RecordIDModified)?;

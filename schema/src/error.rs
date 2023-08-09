@@ -13,6 +13,9 @@ pub enum Error {
     #[error("collection record missing AST")]
     CollectionRecordMissingAST,
 
+    #[error("collection record missing ID")]
+    CollectionRecordMissingID,
+
     #[error("collection {name} not found in AST")]
     CollectionNotFoundInAST { name: String },
 
@@ -49,7 +52,7 @@ pub enum UserError {
     #[error("index field {field:?} not found in schema")]
     IndexFieldNotFoundInSchema { field: String },
 
-    #[error("cannot index field {field:?} of type array")]
+    #[error("cannot index field {field} of type {field_type}")]
     FieldTypeCannotBeIndexed { field: String, field_type: String },
 
     #[error("collection directive {directive:?} cannot have arguments")]
