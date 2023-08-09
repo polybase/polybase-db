@@ -114,13 +114,17 @@ impl Default for MemoryStore {
 }
 
 fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<bool> {
+    // we need to match all conditions for the record against the where query for the record to
+    // qualify as a match.
+    let mut rec_field_matches: Vec<Result<bool>> = Vec::new();
+
     for (rec_key, rec_val) in record.iter() {
         if let Some(where_val) = where_query.0.get(&FieldPath(vec![rec_key.clone()])) {
             match where_val {
                 WhereNode::Equality(ref eq_val) => {
-                    return Ok(eq_val.0.clone()
+                    rec_field_matches.push(Ok(eq_val.0.clone()
                         == IndexValue::try_from(rec_val.clone())
-                            .map_err(|e| Error::Store(Box::new(e)))?);
+                            .map_err(|e| Error::Store(Box::new(e)))?));
                 }
                 WhereNode::Inequality(ref ineq_val) => {
                     let WhereInequality { gt, gte, lt, lte } = *ineq_val.clone();
@@ -129,7 +133,7 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                         let rec_val = IndexValue::try_from(rec_val.clone())
                             .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        return Ok(match (gt_val.0, rec_val) {
+                        rec_field_matches.push(Ok(match (gt_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
                                 rec_num > wnum
                             }
@@ -141,14 +145,14 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                                 rec_bool & !wbool
                             }
                             _ => false,
-                        });
+                        }));
                     }
 
                     if let Some(gte_val) = gte {
                         let rec_val = IndexValue::try_from(rec_val.clone())
                             .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        return Ok(match (gte_val.0, rec_val) {
+                        rec_field_matches.push(Ok(match (gte_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
                                 rec_num >= wnum
                             }
@@ -160,14 +164,14 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                                 rec_bool >= wbool
                             }
                             _ => false,
-                        });
+                        }));
                     }
 
                     if let Some(lt_val) = lt {
                         let rec_val = IndexValue::try_from(rec_val.clone())
                             .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        return Ok(match (lt_val.0, rec_val) {
+                        rec_field_matches.push(Ok(match (lt_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
                                 rec_num < wnum
                             }
@@ -179,14 +183,14 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                                 !rec_bool & wbool
                             }
                             _ => false,
-                        });
+                        }));
                     }
 
                     if let Some(lte_val) = lte {
                         let rec_val = IndexValue::try_from(rec_val.clone())
                             .map_err(|e| Error::Store(Box::new(e)))?;
 
-                        return Ok(match (lte_val.0, rec_val) {
+                        rec_field_matches.push(Ok(match (lte_val.0, rec_val) {
                             (IndexValue::Number(wnum), IndexValue::Number(rec_num)) => {
                                 rec_num <= wnum
                             }
@@ -198,14 +202,16 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                                 rec_bool <= wbool
                             }
                             _ => false,
-                        });
+                        }));
                     }
                 }
             }
         }
     }
 
-    Ok(true) // todo
+    Ok(rec_field_matches
+        .iter()
+        .all(|res| res.as_ref().map(|&b| b).unwrap_or(false)))
 }
 
 #[async_trait::async_trait]
@@ -862,6 +868,88 @@ mod tests {
         assert_eq!(records[0], record3_data);
         assert_eq!(records[1], record2_data);
         assert_eq!(records[2], record1_data);
+    }
+
+    #[tokio::test]
+    async fn test_where_boolean_field() {
+        let store = MemoryStore::default();
+
+        let collection_id = "test_collection";
+
+        let record1_data = create_record_root(
+            &["id", "name", "isActive"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Boolean(true),
+            ],
+        );
+
+        let record2_data = create_record_root(
+            &["id", "name", "isActive"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Boolean(false),
+            ],
+        );
+
+        store
+            .set(collection_id, "record1", &record1_data)
+            .await
+            .unwrap();
+        store
+            .set(collection_id, "record2", &record2_data)
+            .await
+            .unwrap();
+
+        let where_query = WhereQuery(
+            [
+                (
+                    FieldPath(["name".to_string()].into()),
+                    WhereNode::Equality(WhereValue(IndexValue::String(Cow::Owned("Bob".into())))),
+                ),
+                (
+                    FieldPath(["isActive".to_string()].into()),
+                    WhereNode::Equality(WhereValue(IndexValue::Boolean(true))),
+                ),
+            ]
+            .into(),
+        );
+
+        let records = store
+            .list(collection_id, None, where_query, &[])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 1);
+        assert_eq!(records[0], record1_data);
+
+        let where_query = WhereQuery(
+            [
+                (
+                    FieldPath(["name".to_string()].into()),
+                    WhereNode::Equality(WhereValue(IndexValue::String(Cow::Owned("Bob".into())))),
+                ),
+                (
+                    FieldPath(["isActive".to_string()].into()),
+                    WhereNode::Equality(WhereValue(IndexValue::Boolean(false))),
+                ),
+            ]
+            .into(),
+        );
+
+        let records = store
+            .list(collection_id, None, where_query, &[])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 1);
+        assert_eq!(records[0], record2_data);
     }
 
     #[tokio::test]
