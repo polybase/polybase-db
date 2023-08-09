@@ -953,6 +953,72 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sort_boolean_field() {
+        let store = MemoryStore::default();
+
+        let collection_id = "test_collection";
+
+        let record1_data = create_record_root(
+            &["id", "name", "isActive"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Boolean(true),
+            ],
+        );
+
+        let record2_data = create_record_root(
+            &["id", "name", "isActive"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Boolean(false),
+            ],
+        );
+
+        store
+            .set(collection_id, "record1", &record1_data)
+            .await
+            .unwrap();
+        store
+            .set(collection_id, "record2", &record2_data)
+            .await
+            .unwrap();
+
+        let order_by = vec![IndexField {
+            path: vec!["isActive".to_string()].into(),
+            direction: IndexDirection::Ascending,
+        }];
+
+        let records = store
+            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 2);
+        assert_eq!(records[0], record2_data);
+        assert_eq!(records[1], record1_data);
+
+        let order_by = vec![IndexField {
+            path: vec!["isActive".to_string()].into(),
+            direction: IndexDirection::Descending,
+        }];
+
+        let records = store
+            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 2);
+        assert_eq!(records[0], record1_data);
+        assert_eq!(records[1], record2_data);
+    }
+
+    #[tokio::test]
     async fn test_memory_store_delete() {
         let store = MemoryStore::new();
         let collection_id = "test_collection";
