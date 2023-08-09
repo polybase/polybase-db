@@ -1,6 +1,6 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-mod ast;
+pub mod ast;
 mod collection_schema;
 pub mod directive;
 mod error;

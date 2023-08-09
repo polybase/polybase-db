@@ -309,7 +309,7 @@ impl<A: IndexerAdaptor> Db<A> {
         };
 
         // Get the js code to run
-        let js_code = method.generate_js();
+        let js_code = schema.generate_js();
 
         // Get current record instance
         let record = if method.name == "constructor" {

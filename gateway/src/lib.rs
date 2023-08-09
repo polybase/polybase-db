@@ -3,7 +3,7 @@
 use indexer_db_adaptor::auth_user::AuthUser;
 use schema::{self, publickey::PublicKey};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Once};
 use tracing::debug;
 
 pub type Result<T> = std::result::Result<T, GatewayError>;
@@ -88,10 +88,14 @@ pub struct Gateway {
     _x: (),
 }
 
+static INIT: Once = Once::new();
+
 pub fn initialize() -> Gateway {
-    let platform = v8::new_default_platform(0, false).make_shared();
-    v8::V8::initialize_platform(platform);
-    v8::V8::initialize();
+    INIT.call_once(|| {
+        let platform = v8::new_default_platform(0, false).make_shared();
+        v8::V8::initialize_platform(platform);
+        v8::V8::initialize();
+    });
 
     Gateway { _x: () }
 }
@@ -115,7 +119,7 @@ impl Gateway {
             instance = serde_json::to_string(&instance).unwrap_or_default(),
             args = serde_json::to_string(&args).unwrap_or_default(),
             auth = serde_json::to_string(&auth).unwrap_or_default(),
-            "function output"
+            "function before"
         );
 
         // Run the function
@@ -130,7 +134,7 @@ impl Gateway {
             args = serde_json::to_string(&args).unwrap_or_default(),
             auth = serde_json::to_string(&auth).unwrap_or_default(),
             output = serde_json::to_string(&output).unwrap_or_default(),
-            "function output"
+            "function after"
         );
 
         if method != "constructor" && instance.get("id") != output.instance.get("id") {
@@ -477,118 +481,91 @@ impl Gateway {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use indexer_db_adaptor::memory::MemoryStore;
-//     use std::ops::{Deref, DerefMut};
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use schema::{ast::collection_ast_from_root, Schema};
+    use serde_json::json;
 
-//     use super::*;
+    #[tokio::test]
+    async fn test_constructor() {
+        let user_col_code = r#"
+            @public
+            collection User {
+                id: string;
+                name: string;
 
-//     pub(crate) struct TestIndexer(Option<Indexer<MemoryStore>>);
+                constructor (name: string) {
+                    this.id = "1";
+                    this.name = name;
+                }
+            }
+        "#;
+        let mut program = None;
+        let (_, stable_ast) = polylang::parse(user_col_code, "ns", &mut program).unwrap();
 
-//     impl Default for TestIndexer {
-//         fn default() -> Self {
-//             Self(Some(Indexer::new(MemoryStore::new()).unwrap()))
-//         }
-//     }
+        let collection = collection_ast_from_root("User", stable_ast).unwrap();
+        let schema = Schema::new(&collection);
+        let js_code = schema.generate_js();
 
-//     impl Drop for TestIndexer {
-//         fn drop(&mut self) {
-//             if let Some(indexer) = self.0.take() {
-//                 indexer.destroy();
-//             }
-//         }
-//     }
+        println!("{}", js_code);
 
-//     impl Deref for TestIndexer {
-//         type Target = Indexer<MemoryStore>;
+        let gateway = initialize();
+        let output = gateway
+            .call(
+                "ns/User",
+                &js_code,
+                "constructor",
+                &json!({}),
+                &[json!("new name")],
+                None,
+            )
+            .await
+            .unwrap();
 
-//         fn deref(&self) -> &Self::Target {
-//             self.0.as_ref().unwrap()
-//         }
-//     }
+        assert_eq!(output.instance, json!({ "id": "1", "name": "new name" }));
+        assert_eq!(output.args, vec![json!("new name")]);
+        assert!(!output.self_destruct);
+    }
 
-//     impl DerefMut for TestIndexer {
-//         fn deref_mut(&mut self) -> &mut Self::Target {
-//             self.0.as_mut().unwrap()
-//         }
-//     }
+    #[tokio::test]
+    async fn test_change_instance() {
+        let user_col_code = r#"
+            @public
+            collection User {
+                id: string;
+                name: string;
 
-//     #[tokio::test]
-//     async fn it_works() {
-//         let user_col_code = r#"
-//             @public
-//             collection User {
-//                 id: string;
-//                 name: string;
+                changeName (newName: string) {
+                    this.name = newName;
+                }
+            }
+        "#;
+        let mut program = None;
+        let (_, stable_ast) = polylang::parse(user_col_code, "ns", &mut program).unwrap();
 
-//                 changeName (newName: string) {
-//                     this.name = newName;
-//                 }
-//             }
-//         "#;
-//         let mut program = None;
-//         let (_, stable_ast) = polylang::parse(user_col_code, "ns", &mut program).unwrap();
+        let collection = collection_ast_from_root("User", stable_ast).unwrap();
+        let schema = Schema::new(&collection);
+        let js_code = schema.generate_js();
 
-//         let indexer = TestIndexer::default();
+        let gateway = initialize();
+        let output = gateway
+            .call(
+                "ns/User",
+                &js_code,
+                "changeName",
+                &json!({
+                    "id": "1",
+                    "name": "old name",
+                }),
+                &[json!("new name")],
+                None,
+            )
+            .await
+            .unwrap();
 
-//         let collection_collection = indexer.collection("Collection").await.unwrap();
-//         collection_collection
-//             .set(
-//                 "ns/User",
-//                 &[
-//                     ("id".into(), RecordValue::String("ns/User".into())),
-//                     (
-//                         "ast".into(),
-//                         RecordValue::String(serde_json::to_string(&stable_ast).unwrap()),
-//                     ),
-//                 ]
-//                 .into(),
-//             )
-//             .await
-//             .unwrap();
-
-//         indexer.commit().await.unwrap();
-
-//         let user_collection = indexer.collection("ns/User").await.unwrap();
-//         user_collection
-//             .set(
-//                 "1",
-//                 &[
-//                     ("id".into(), RecordValue::String("1".into())),
-//                     ("name".into(), RecordValue::String("John".into())),
-//                 ]
-//                 .into(),
-//             )
-//             .await
-//             .unwrap();
-
-//         indexer.commit().await.unwrap();
-
-//         let gateway = initialize::<MemoryStore>();
-//         let changes = gateway
-//             .call(
-//                 &indexer,
-//                 "ns/User".to_string(),
-//                 "changeName",
-//                 "1".to_string(),
-//                 vec!["Tim".into()],
-//                 None,
-//             )
-//             .await
-//             .unwrap();
-
-//         assert_eq!(changes.len(), 1);
-//         assert_eq!(
-//             changes[0],
-//             Change::Update {
-//                 collection_id: "ns/User".to_string(),
-//                 record_id: "1".to_string(),
-//                 record: HashMap::from([
-//                     ("id".into(), RecordValue::String("1".into())),
-//                     ("name".into(), RecordValue::String("Tim".into()))
-//                 ])
-//             }
-//         );
-//     }
-// }
+        assert_eq!(output.instance, json!({ "id": "1", "name": "new name" }));
+        assert_eq!(output.args, vec![json!("new name")]);
+        assert!(!output.self_destruct);
+    }
+}
