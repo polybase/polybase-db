@@ -106,6 +106,15 @@ impl MemoryStore {
 
         Ok(())
     }
+
+    pub async fn destroy(&self) -> Result<()> {
+        let mut state = self.state.lock().await;
+
+        state.data.clear();
+        state.system_data.clear();
+
+        Ok(())
+    }
 }
 
 impl Default for MemoryStore {
@@ -406,15 +415,6 @@ impl IndexerAdaptor for MemoryStore {
         let state = self.state.lock().await;
 
         Ok(state.system_data.get(key).cloned())
-    }
-
-    async fn destroy(&self) -> Result<()> {
-        let mut state = self.state.lock().await;
-
-        state.data.clear();
-        state.system_data.clear();
-
-        Ok(())
     }
 }
 

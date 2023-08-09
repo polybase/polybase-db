@@ -181,10 +181,6 @@ impl IndexerAdaptor for PostgresAdaptor {
     async fn get_system_key(&self, key: &str) -> adaptor::Result<Option<RecordRoot>> {
         todo!()
     }
-
-    async fn destroy(&self) -> adaptor::Result<()> {
-        todo!()
-    }
 }
 
 // impl From<StoreError> for Error {

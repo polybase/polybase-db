@@ -18,6 +18,9 @@ pub enum RecordError {
     #[error(transparent)]
     UserError(#[from] RecordUserError),
 
+    #[error("record ID must be a string")]
+    RecordIDMustBeAString,
+
     #[error("invalid boolean byte {b}")]
     InvalidBooleanByte { b: u8 },
 
@@ -87,6 +90,23 @@ pub struct RecordRoot(pub HashMap<String, RecordValue>);
 impl RecordRoot {
     pub fn new() -> Self {
         Self(HashMap::new())
+    }
+
+    pub fn id(&self) -> Result<&str> {
+        match self.get("id") {
+            Some(rv) => match rv {
+                RecordValue::String(record_id) => Ok(record_id),
+                _ => Err(RecordError::RecordIDMustBeAString),
+            },
+            None => Err(RecordError::RecordIdNotFound),
+        }
+    }
+
+    // TODO: this should validate against the schema, do we need this, given
+    // we do the conversion based on schema?
+    pub fn validate(&self, schema: &Schema) -> Result<()> {
+        self.id()?;
+        Ok(())
     }
 
     pub fn insert(&mut self, field: String, value: RecordValue) {

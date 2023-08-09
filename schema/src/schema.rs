@@ -14,7 +14,7 @@ use polylang::stableast;
 use std::collections::HashMap;
 
 // TODO: can we remove Clone
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Schema {
     pub name: String,
     /// List of indexes in the Collection, includes both automatic field indexes and custom

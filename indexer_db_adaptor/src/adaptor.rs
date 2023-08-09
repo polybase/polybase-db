@@ -50,6 +50,4 @@ pub trait IndexerAdaptor: Send + Sync {
     async fn set_system_key(&self, key: &str, data: &RecordRoot) -> Result<()>;
 
     async fn get_system_key(&self, key: &str) -> Result<Option<RecordRoot>>;
-
-    async fn destroy(&self) -> Result<()>;
 }

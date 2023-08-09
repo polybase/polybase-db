@@ -25,7 +25,7 @@ pub enum UserError {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Method {
     pub name: String,
     pub directives: Vec<Directive>,
@@ -128,7 +128,7 @@ impl Method {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
     pub name: String,
     pub type_: Type,
@@ -151,7 +151,7 @@ impl Parameter {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ReturnValue {
     pub type_: Type,
 }
