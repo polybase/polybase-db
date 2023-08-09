@@ -1,4 +1,4 @@
-use crate::where_query::WhereQuery;
+use crate::{indexer::IndexerChange, where_query::WhereQuery};
 use schema::{self, record::RecordRoot, Schema};
 use std::{pin::Pin, time::SystemTime};
 
@@ -24,7 +24,8 @@ pub enum Error {
 /// The Store trait
 #[async_trait::async_trait]
 pub trait IndexerAdaptor: Send + Sync {
-    async fn commit(&self) -> Result<()>;
+    // TODO: add a height in here, so we can track where we are up to
+    async fn commit(&self, height: usize, changes: Vec<IndexerChange>) -> Result<()>;
 
     async fn get(&self, collection_id: &str, record_id: &str) -> Result<Option<RecordRoot>>;
 

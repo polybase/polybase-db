@@ -179,10 +179,17 @@ impl From<indexer_db_adaptor::Error> for HTTPError {
             //     schema::record::RecordError::UserError(e) => e.into(),
             //     _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(e))),
             // },
+            indexer_db_adaptor::Error::User(e) => e.into(),
 
             // Other errors are internal
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
+    }
+}
+
+impl From<indexer_db_adaptor::UserError> for HTTPError {
+    fn from(err: indexer_db_adaptor::UserError) -> Self {
+        HTTPError::new(ReasonCode::from_indexer_error(&err), Some(Box::new(err)))
     }
 }
 

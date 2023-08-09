@@ -2,6 +2,8 @@ use crate::{index, proto};
 use cid::multihash::{Hasher, MultihashDigest};
 use prost::Message;
 use schema::{
+    field_path::FieldPath,
+    index::IndexDirection,
     index_value::IndexValue,
     record::{self, RecordRoot},
 };
@@ -116,7 +118,9 @@ pub(crate) fn comparator(key1: &[u8], key2: &[u8]) -> Ordering {
 
         match field_1.cmp(field_2) {
             Ordering::Equal => {}
-            x if !directions.is_empty() && directions[i] == u8::from(Direction::Descending) => {
+            x if !directions.is_empty()
+                && directions[i] == index_direction_to_u8(&IndexDirection::Descending) =>
+            {
                 return x.reverse()
             }
             x => return x,
@@ -163,7 +167,7 @@ pub(crate) enum Key<'a> {
     SystemData { cid: Cow<'a, [u8]> },
     Index {
         cid: Cow<'a, [u8]>,
-        directions: Cow<'a, [Direction]>,
+        directions: Cow<'a, [IndexDirection]>,
         values: Vec<Cow<'a, IndexValue<'a>>>,
     },
 }
@@ -206,8 +210,8 @@ impl<'a> Key<'a> {
 
     pub(crate) fn new_index(
         namespace: String,
-        paths: &[&[impl AsRef<str>]],
-        directions: &[Direction],
+        paths: &[&FieldPath],
+        directions: &[IndexDirection],
         values: Vec<Cow<'a, IndexValue<'a>>>,
     ) -> Result<Self> {
         let data = proto::IndexKey {
@@ -269,7 +273,7 @@ impl<'a> Key<'a> {
 
                 key.extend_from_slice(u16::try_from(directions.len())?.to_le_bytes().as_ref());
                 for dir in directions.iter() {
-                    key.push((*dir).into());
+                    key.push(index_direction_to_u8(dir));
                 }
 
                 for value in values.iter() {
@@ -296,7 +300,7 @@ impl<'a> Key<'a> {
                     directions: {
                         let mut directions = Vec::with_capacity(directions_len);
                         for i in 0..directions_len {
-                            directions.push(Direction::try_from(key[39 + i])?);
+                            directions.push(u8_to_index_directon(key[39 + i])?);
                         }
                         Cow::Owned(directions)
                     },
@@ -358,42 +362,27 @@ impl<'a> Key<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Direction {
-    Ascending,
-    Descending,
-}
-
-impl From<Direction> for u8 {
-    fn from(d: Direction) -> Self {
-        match d {
-            Direction::Ascending => 0x00,
-            Direction::Descending => 0x01,
-        }
+fn index_direction_to_u8(d: &IndexDirection) -> u8 {
+    match d {
+        IndexDirection::Ascending => 0x00,
+        IndexDirection::Descending => 0x01,
     }
 }
 
-impl TryFrom<u8> for Direction {
-    type Error = KeysError;
-
-    fn try_from(d: u8) -> Result<Self> {
-        match d {
-            0x00 => Ok(Direction::Ascending),
-            0x01 => Ok(Direction::Descending),
-            _ => Err(KeysError::InvalidDirection { n: d })?,
-        }
+fn u8_to_index_directon(d: u8) -> Result<IndexDirection> {
+    match d {
+        0x00 => Ok(IndexDirection::Ascending),
+        0x01 => Ok(IndexDirection::Descending),
+        _ => Err(KeysError::InvalidDirection { n: d })?,
     }
 }
 
-pub(crate) fn index_record_key_with_record<'a, T>(
+pub(crate) fn index_record_key_with_record<'a>(
     namespace: String,
-    paths: &[&[T]],
-    directions: &[Direction],
+    paths: &[&FieldPath],
+    directions: &[IndexDirection],
     record: &'a RecordRoot,
-) -> Result<Key<'a>>
-where
-    T: AsRef<str> + PartialEq + for<'other> PartialEq<&'other str>,
-{
+) -> Result<Key<'a>> {
     if paths.len() != directions.len() {
         return Err(KeysError::PathAndDirectionsLengthMismatch)?;
     }
@@ -403,10 +392,7 @@ where
         #[allow(clippy::unwrap_used)]
         v.walk::<std::convert::Infallible>(&mut vec![Cow::Borrowed(k)], &mut |path, value| {
             if let Some(found) = paths.iter().find(|p| {
-                p.len() == path.len()
-                    && p.iter()
-                        .zip(path.iter())
-                        .all(|(p, v)| p.as_ref() == v.as_ref())
+                p.len() == path.len() && p.iter().zip(path.iter()).all(|(p, v)| p == v.as_ref())
             }) {
                 found_values.push((found, value));
             }
@@ -444,6 +430,8 @@ where
 
 #[cfg(test)]
 mod test {
+    // use crate::stableast_ext::Field;
+
     use super::*;
 
     impl Key<'_> {
@@ -508,8 +496,8 @@ mod test {
         test_comparator_index_key_equal,
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"], &["b"]],
-            &[Direction::Ascending, Direction::Descending],
+            &[&"a".into(), &"b".into()],
+            &[IndexDirection::Ascending, IndexDirection::Descending],
             vec![
                 Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
@@ -518,8 +506,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"], &["b"]],
-            &[Direction::Ascending, Direction::Descending],
+            &[&"a".into(), &"b".into()],
+            &[IndexDirection::Ascending, IndexDirection::Descending],
             vec![
                 Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
@@ -533,8 +521,8 @@ mod test {
         test_comparator_index_key_less,
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"], &["b"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"a".into(), &"b".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
@@ -543,8 +531,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"], &["b"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"a".into(), &"b".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
@@ -558,8 +546,8 @@ mod test {
         test_comparator_index_key_greater,
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"], &["b"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"a".into(), &"b".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(2.0)),
@@ -568,8 +556,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"], &["b"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"a".into(), &"b".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::String("hello".to_string().into())),
                 Cow::Borrowed(&IndexValue::Number(1.0)),
@@ -583,8 +571,8 @@ mod test {
         test_comparator_index_key_greater_string,
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"a".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::String(
                 "hello2".to_string().into()
             ))]
@@ -592,8 +580,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["a"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"a".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::String(
                 "hello".to_string().into()
             ))]
@@ -635,15 +623,15 @@ mod test {
         test_comparator_30_lt_40,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"]],
-            &[Direction::Ascending],
+            &[&"age".into()],
+            &[IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"]],
-            &[Direction::Ascending],
+            &[&"age".into()],
+            &[IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(40.0))],
         )
         .unwrap()
@@ -655,8 +643,8 @@ mod test {
         test_comparator_wildcard_in_b,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
                 Cow::Borrowed(&IndexValue::String("John".to_string().into())),
@@ -665,8 +653,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
@@ -678,16 +666,16 @@ mod test {
         test_comparator_wildcard_in_a,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
         .wildcard(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
                 Cow::Borrowed(&IndexValue::String("John".to_string().into())),
@@ -701,16 +689,16 @@ mod test {
         test_comparator_wildcard_in_a_and_b,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
         .wildcard(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
@@ -722,8 +710,8 @@ mod test {
         test_comparator_with_immediate_successor_is_more_than_without,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
@@ -731,8 +719,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap(),
@@ -743,15 +731,15 @@ mod test {
         test_comparator_with_immediate_successor_is_more_than_without_but_with_flipped_order,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Descending, Direction::Descending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Descending, IndexDirection::Descending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Descending, Direction::Descending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Descending, IndexDirection::Descending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
@@ -764,15 +752,15 @@ mod test {
         test_comparator_without_immediate_successor_is_less_than_with,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["name"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"name".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
@@ -785,16 +773,16 @@ mod test {
         test_comparator_1,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
         .wildcard(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
                 Cow::Borrowed(&IndexValue::Number(3.0)),
@@ -808,8 +796,8 @@ mod test {
         test_comparator_2,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
                 Cow::Borrowed(&IndexValue::Number(3.0)),
@@ -818,8 +806,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(30.0))],
         )
         .unwrap()
@@ -831,8 +819,8 @@ mod test {
         test_comparator_3,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Descending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Descending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(30.0)),
                 Cow::Borrowed(&IndexValue::String("1".to_string().into())),
@@ -841,8 +829,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Descending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Descending, IndexDirection::Ascending],
             vec![],
         )
         .unwrap()
@@ -854,15 +842,15 @@ mod test {
         test_comparator_4,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Descending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Descending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::Number(31.0))],
         )
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Descending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Descending, IndexDirection::Ascending],
             vec![],
         )
         .unwrap()
@@ -874,8 +862,8 @@ mod test {
         test_comparator_5,
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Descending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Descending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(40.0)),
                 Cow::Borrowed(&IndexValue::String("2".to_string().into())),
@@ -884,8 +872,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["age"], &["id"]],
-            &[Direction::Descending, Direction::Ascending],
+            &[&"age".into(), &"id".into()],
+            &[IndexDirection::Descending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::Number(39.0)),
                 Cow::Borrowed(&IndexValue::String("2".to_string().into())),
@@ -899,8 +887,8 @@ mod test {
         test_comparator_6,
         Key::new_index(
             "namespace".to_string(),
-            &[&["name"], &["id"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"name".into(), &"id".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![
                 Cow::Borrowed(&IndexValue::String("John".to_string().into())),
                 Cow::Borrowed(&IndexValue::String("rec1".to_string().into())),
@@ -909,8 +897,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["name"], &["id"]],
-            &[Direction::Ascending, Direction::Ascending],
+            &[&"name".into(), &"id".into()],
+            &[IndexDirection::Ascending, IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::String(
                 "Jane".to_string().into()
             ))],
@@ -924,8 +912,8 @@ mod test {
         test_comparator_7,
         Key::new_index(
             "namespace".to_string(),
-            &[&["id"]],
-            &[Direction::Ascending],
+            &[&"id".into()],
+            &[IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::String(
                 "3/last".to_string().into()
             ))],
@@ -933,8 +921,8 @@ mod test {
         .unwrap(),
         Key::new_index(
             "namespace".to_string(),
-            &[&["id"]],
-            &[Direction::Ascending],
+            &[&"id".into()],
+            &[IndexDirection::Ascending],
             vec![Cow::Borrowed(&IndexValue::String("2".to_string().into()))],
         )
         .unwrap(),

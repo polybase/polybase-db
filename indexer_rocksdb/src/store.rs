@@ -1,6 +1,5 @@
 use crate::snapshot::{SnapshotChunk, SnapshotIterator};
 use crate::{
-    error::{Error as StoreError, Result},
     keys::{self, Key},
     proto,
 };
@@ -11,6 +10,32 @@ use schema::record::RecordRoot;
 use std::collections::HashMap;
 use std::mem;
 use std::{convert::AsRef, path::Path, sync::Arc};
+
+pub type Result<T> = std::result::Result<T, StoreError>;
+
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    #[error("invalid key/value combination")]
+    InvalidKeyValueCombination,
+
+    #[error("keys error")]
+    KeysError(#[from] keys::KeysError),
+
+    #[error("RocksDB error")]
+    RocksDBError(#[from] rocksdb::Error),
+
+    #[error("bincode error")]
+    BincodeError(#[from] bincode::Error),
+
+    #[error("tokio task join error")]
+    TokioTaskJoinError(#[from] tokio::task::JoinError),
+
+    #[error("snapshot error")]
+    SnapshotError(#[from] crate::snapshot::Error),
+
+    #[error("prost decode error")]
+    ProstDecode(#[from] prost::DecodeError),
+}
 
 #[derive(Debug)]
 pub(crate) enum Value<'a> {
@@ -207,7 +232,7 @@ pub(crate) mod tests {
         ops::{Deref, DerefMut},
     };
 
-    use schema::index_value::IndexValue;
+    use schema::{index::IndexDirection, index_value::IndexValue};
 
     use super::*;
 
@@ -253,8 +278,8 @@ pub(crate) mod tests {
 
         let index = Key::new_index(
             "ns".to_string(),
-            &[&["name"]],
-            &[keys::Direction::Ascending],
+            &[&"name".into()],
+            &[IndexDirection::Ascending],
             vec![Cow::Owned(IndexValue::String("John".to_string().into()))],
         )
         .unwrap();

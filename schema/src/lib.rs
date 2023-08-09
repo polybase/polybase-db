@@ -15,6 +15,6 @@ mod schema;
 pub mod types;
 pub mod util;
 
-pub use collection_schema::COLLECTION_SCHEMA;
+pub use collection_schema::{COLLECTION_RECORD, COLLECTION_SCHEMA};
 pub use error::{Error, Result, UserError};
 pub use schema::Schema;

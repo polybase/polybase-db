@@ -1,5 +1,3 @@
-use crate::index::Index;
-
 use super::publickey::PublicKey;
 use super::record::{self, ForeignRecordReference, RecordError, RecordValue};
 use serde::{Deserialize, Serialize};
@@ -58,6 +56,10 @@ impl IndexValue<'_> {
             IndexValue::Boolean(b) => IndexValue::Boolean(b),
             IndexValue::Null => IndexValue::Null,
         }
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(self, IndexValue::String(_))
     }
 }
 

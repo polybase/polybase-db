@@ -18,7 +18,7 @@ use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
-use std::{sync::Arc, time::Duration};
+use std::{cmp::min, sync::Arc, time::Duration};
 
 struct RouteState<S: adaptor::IndexerAdaptor> {
     db: Arc<Db<S>>,
@@ -241,7 +241,7 @@ async fn get_records<'a>(
         .collect::<Vec<_>>();
 
     let list_query = list_query::ListQuery {
-        limit: Some(std::cmp::min(1000, query.limit.unwrap_or(100))),
+        limit: Some(min(1000, query.limit.unwrap_or(100))),
         where_query: query.where_query.clone(),
         order_by: &sort_indexes,
         cursor_after: query.after.0.clone(),

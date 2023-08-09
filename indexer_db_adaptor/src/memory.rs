@@ -1,11 +1,12 @@
 use crate::adaptor::{Error, IndexerAdaptor, Result};
+use crate::indexer::IndexerChange;
 use crate::where_query::{WhereInequality, WhereNode, WhereQuery};
-use schema::field_path::FieldPath;
-use schema::index_value::IndexValue;
-use schema::Schema;
 use schema::{
+    field_path::FieldPath,
     index::{IndexDirection, IndexField},
+    index_value::IndexValue,
     record::{RecordRoot, RecordValue},
+    Schema,
 };
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
 use tokio::sync::Mutex;
@@ -216,7 +217,26 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
 
 #[async_trait::async_trait]
 impl IndexerAdaptor for MemoryStore {
-    async fn commit(&self) -> Result<()> {
+    async fn commit(&self, _height: usize, changes: Vec<IndexerChange>) -> Result<()> {
+        for change in changes {
+            match change {
+                IndexerChange::Set {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    self.set(&collection_id, &record_id, &record).await?;
+                }
+
+                IndexerChange::Delete {
+                    collection_id,
+                    record_id,
+                } => {
+                    self.delete(&collection_id, &record_id).await?;
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -420,6 +440,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_store_set_and_get() {
         let store = MemoryStore::default();
+        let mut changes = Vec::new();
 
         let collection_id = "test_collection";
         let record_id = "test_record";
@@ -432,10 +453,13 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, record_id, &record_data)
-            .await
-            .unwrap();
+        changes.push(IndexerChange::Set {
+            collection_id: collection_id.to_string(),
+            record_id: record_id.to_string(),
+            record: record_data.clone(),
+        });
+
+        store.commit(0, changes).await.unwrap();
 
         let retrieved_data = store.get(collection_id, record_id).await.unwrap().unwrap();
         assert_eq!(retrieved_data, record_data);
@@ -465,15 +489,20 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "record1", &record1_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record1".into(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record2".to_string(),
+                record: record2_data.clone(),
+            },
+        ];
 
-        store
-            .set(collection_id, "record2", &record2_data)
-            .await
-            .unwrap();
+        store.commit(9, changes).await.unwrap();
 
         let records = store
             .list(collection_id, None, WhereQuery::default(), &[])
@@ -488,6 +517,7 @@ mod tests {
     #[tokio::test]
     async fn test_memory_store_list_where_query_single_equality() {
         let store = MemoryStore::default();
+
         let collection_id = "test_collection";
 
         let record1_data = create_record_root(
@@ -516,18 +546,25 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "record1", &record1_data)
-            .await
-            .unwrap();
-        store
-            .set(collection_id, "record2", &record2_data)
-            .await
-            .unwrap();
-        store
-            .set(collection_id, "record3", &record3_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record1".to_string(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record2".to_string(),
+                record: record2_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record3".to_string(),
+                record: record3_data.clone(),
+            },
+        ];
+
+        store.commit(0, changes).await.unwrap();
 
         let where_query = WhereQuery(
             [(
@@ -584,22 +621,25 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "rec1", &record1_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "rec1".to_string(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "rec2".to_string(),
+                record: record2_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "rec3".to_string(),
+                record: record3_data.clone(),
+            },
+        ];
 
-        store
-            .set(collection_id, "rec2", &record2_data)
-            .await
-            .unwrap();
-
-        store
-            .set(collection_id, "rec3", &record3_data)
-            .await
-            .unwrap();
-
-        store.commit().await.unwrap();
+        store.commit(0, changes).await.unwrap();
 
         let where_query = WhereQuery(
             [(
@@ -699,27 +739,30 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "record1", &record1_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record1".to_string(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record2".to_string(),
+                record: record2_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record3".to_string(),
+                record: record3_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record4".to_string(),
+                record: record4_data.clone(),
+            },
+        ];
 
-        store
-            .set(collection_id, "record2", &record2_data)
-            .await
-            .unwrap();
-
-        store
-            .set(collection_id, "record3", &record3_data)
-            .await
-            .unwrap();
-
-        store
-            .set(collection_id, "record4", &record4_data)
-            .await
-            .unwrap();
-
-        store.commit().await.unwrap();
+        store.commit(0, changes).await.unwrap();
 
         let where_query = WhereQuery(
             [(
@@ -780,17 +823,20 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "record1", &record1_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record1".to_string(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record2".to_string(),
+                record: record2_data.clone(),
+            },
+        ];
 
-        store
-            .set(collection_id, "record2", &record2_data)
-            .await
-            .unwrap();
-
-        store.commit().await.unwrap();
+        store.commit(0, changes).await.unwrap();
 
         let where_query = WhereQuery(
             [(
@@ -841,22 +887,25 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "record1", &record1_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record1".to_string(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record2".to_string(),
+                record: record2_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record3".to_string(),
+                record: record3_data.clone(),
+            },
+        ];
 
-        store
-            .set(collection_id, "record2", &record2_data)
-            .await
-            .unwrap();
-
-        store
-            .set(collection_id, "record3", &record3_data)
-            .await
-            .unwrap();
-
-        store.commit().await.unwrap();
+        store.commit(0, changes).await.unwrap();
 
         let order_by = vec![IndexField {
             path: vec!["info".to_string(), "name".to_string()].into(),
@@ -917,14 +966,20 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "record1", &record1_data)
-            .await
-            .unwrap();
-        store
-            .set(collection_id, "record2", &record2_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record1".to_string(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record2".to_string(),
+                record: record2_data.clone(),
+            },
+        ];
+
+        store.commit(0, changes).await.unwrap();
 
         let where_query = WhereQuery(
             [
@@ -999,14 +1054,20 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, "record1", &record1_data)
-            .await
-            .unwrap();
-        store
-            .set(collection_id, "record2", &record2_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record1".to_string(),
+                record: record1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: collection_id.into(),
+                record_id: "record2".to_string(),
+                record: record2_data.clone(),
+            },
+        ];
+
+        store.commit(0, changes).await.unwrap();
 
         let order_by = vec![IndexField {
             path: vec!["isActive".to_string()].into(),
@@ -1051,14 +1112,20 @@ mod tests {
         let user1_data = create_record_root(&["id"], &[RecordValue::String("0".into())]);
         let user2_data = create_record_root(&["id"], &[RecordValue::String("1".into())]);
 
-        store
-            .set(user_collection, "user1", &user1_data)
-            .await
-            .unwrap();
-        store
-            .set(user_collection, "user2", &user2_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: user_collection.into(),
+                record_id: "user1".to_string(),
+                record: user1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: user_collection.into(),
+                record_id: "user2".to_string(),
+                record: user2_data.clone(),
+            },
+        ];
+
+        store.commit(0, changes).await.unwrap();
 
         let account_collection = "test/Account";
         let account1_data = create_record_root(
@@ -1093,18 +1160,25 @@ mod tests {
             ],
         );
 
-        store
-            .set(account_collection, "account1", &account1_data)
-            .await
-            .unwrap();
-        store
-            .set(account_collection, "account2", &account2_data)
-            .await
-            .unwrap();
-        store
-            .set(account_collection, "account3", &account3_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: account_collection.into(),
+                record_id: "account1".to_string(),
+                record: account1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: account_collection.into(),
+                record_id: "account2".to_string(),
+                record: account2_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: account_collection.into(),
+                record_id: "account3".to_string(),
+                record: account3_data.clone(),
+            },
+        ];
+
+        store.commit(0, changes).await.unwrap();
 
         let where_query = WhereQuery(
             [(
@@ -1140,14 +1214,20 @@ mod tests {
         let user1_data = create_record_root(&["id"], &[RecordValue::String("0".into())]);
         let user2_data = create_record_root(&["id"], &[RecordValue::String("1".into())]);
 
-        store
-            .set(user_collection, "user1", &user1_data)
-            .await
-            .unwrap();
-        store
-            .set(user_collection, "user2", &user2_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: user_collection.into(),
+                record_id: "user1".to_string(),
+                record: user1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: user_collection.into(),
+                record_id: "user2".to_string(),
+                record: user2_data.clone(),
+            },
+        ];
+
+        store.commit(0, changes).await.unwrap();
 
         let account_collection = "test/Account";
         let account1_data = create_record_root(
@@ -1182,18 +1262,25 @@ mod tests {
             ],
         );
 
-        store
-            .set(account_collection, "account1", &account1_data)
-            .await
-            .unwrap();
-        store
-            .set(account_collection, "account2", &account2_data)
-            .await
-            .unwrap();
-        store
-            .set(account_collection, "account3", &account3_data)
-            .await
-            .unwrap();
+        let changes = vec![
+            IndexerChange::Set {
+                collection_id: account_collection.into(),
+                record_id: "account1".to_string(),
+                record: account1_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: account_collection.into(),
+                record_id: "account2".to_string(),
+                record: account2_data.clone(),
+            },
+            IndexerChange::Set {
+                collection_id: account_collection.into(),
+                record_id: "account3".to_string(),
+                record: account3_data.clone(),
+            },
+        ];
+
+        store.commit(0, changes).await.unwrap();
 
         let where_query = WhereQuery(
             [(
@@ -1255,15 +1342,24 @@ mod tests {
             ],
         );
 
-        store
-            .set(collection_id, record_id, &record_data)
-            .await
-            .unwrap();
+        let changes = vec![IndexerChange::Set {
+            collection_id: collection_id.into(),
+            record_id: record_id.to_string(),
+            record: record_data.clone(),
+        }];
+
+        store.commit(0, changes).await.unwrap();
 
         let retrieved_data = store.get(collection_id, record_id).await.unwrap().unwrap();
         assert_eq!(retrieved_data, record_data);
 
-        store.delete(collection_id, record_id).await.unwrap();
+        let changes = vec![IndexerChange::Delete {
+            collection_id: collection_id.into(),
+            record_id: record_id.to_string(),
+        }];
+
+        store.commit(0, changes).await.unwrap();
+
         let deleted_data = store.get(collection_id, record_id).await.unwrap();
         assert!(deleted_data.is_none());
     }
@@ -1304,6 +1400,7 @@ mod tests {
         let record_data = RecordRoot::new();
 
         store.set_system_key(key, &record_data).await.unwrap();
+
         let retrieved_data = store.get_system_key(key).await.unwrap().unwrap();
 
         assert_eq!(retrieved_data, record_data);
@@ -1317,10 +1414,13 @@ mod tests {
         let record_id = "test_record";
 
         let record_data = RecordRoot::new();
-        store
-            .set(collection_id, record_id, &record_data)
-            .await
-            .unwrap();
+        let changes = vec![IndexerChange::Set {
+            collection_id: collection_id.into(),
+            record_id: record_id.to_string(),
+            record: record_data.clone(),
+        }];
+
+        store.commit(0, changes).await.unwrap();
 
         let system_data = RecordRoot::new();
         store

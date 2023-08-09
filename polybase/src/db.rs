@@ -1,9 +1,9 @@
 use crate::hash;
 use crate::mempool::Mempool;
 use crate::txn::{self, CallTxn};
-use futures_util::StreamExt;
+use futures_util::{future, StreamExt};
 use gateway::Gateway;
-use indexer_db_adaptor::adaptor::IndexerAdaptor;
+use indexer_db_adaptor::{adaptor::IndexerAdaptor, IndexerChange};
 use indexer_db_adaptor::{auth_user::AuthUser, list_query::ListQuery, Indexer};
 use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
 use parking_lot::Mutex;
@@ -93,24 +93,9 @@ pub enum UserError {
 
     #[error("methods error")]
     Method(#[from] methods::UserError),
-}
 
-#[derive(Debug, PartialEq)]
-pub enum Change {
-    Create {
-        collection_id: String,
-        record_id: String,
-        record: RecordRoot,
-    },
-    Update {
-        collection_id: String,
-        record_id: String,
-        record: RecordRoot,
-    },
-    Delete {
-        collection_id: String,
-        record_id: String,
-    },
+    #[error("you do not have permission to call this function")]
+    UnauthorizedCall,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,7 +205,7 @@ impl<A: IndexerAdaptor> Db<A> {
         let updated = wait_for_update(since, wait_for, || async {
             Ok(self
                 .indexer
-                .last_record_update(&collection_id, &record_id)
+                .last_record_update(collection_id, record_id)
                 .await?)
         })
         .await?;
@@ -261,7 +246,7 @@ impl<A: IndexerAdaptor> Db<A> {
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
         // updated within the given time.
         let updated = wait_for_update(since, wait_for, || async {
-            Ok(self.indexer.last_collection_update(&collection_id).await?)
+            Ok(self.indexer.last_collection_update(collection_id).await?)
         })
         .await?;
 
@@ -300,7 +285,7 @@ impl<A: IndexerAdaptor> Db<A> {
         Ok(record_id)
     }
 
-    async fn call_changes(&self, txn: &CallTxn) -> Result<(String, Vec<Change>)> {
+    async fn call_changes(&self, txn: &CallTxn) -> Result<(String, Vec<IndexerChange>)> {
         let CallTxn {
             collection_id,
             record_id,
@@ -309,7 +294,7 @@ impl<A: IndexerAdaptor> Db<A> {
             auth,
         } = txn;
 
-        let schema = std::sync::Arc::new(self.indexer.get_schema_required(&collection_id).await?);
+        let schema = std::sync::Arc::new(self.indexer.get_schema_required(collection_id).await?);
         let public_key = auth.as_ref().map(|a| a.public_key());
 
         // Get the method
@@ -332,7 +317,7 @@ impl<A: IndexerAdaptor> Db<A> {
         } else {
             match self
                 .indexer
-                .get(&collection_id, record_id, public_key)
+                .get(collection_id, record_id, public_key)
                 .await?
             {
                 Some(record) => record,
@@ -346,9 +331,13 @@ impl<A: IndexerAdaptor> Db<A> {
         };
 
         // Check user has permission to call
-        if method.name != "constructor" {
-            self.indexer
-                .verify_call(collection_id, &method.name, &schema, &record, public_key);
+        if method.name != "constructor"
+            && !self
+                .indexer
+                .verify_call(collection_id, &method.name, &schema, &record, public_key)
+                .await
+        {
+            return Err(UserError::UnauthorizedCall)?;
         }
 
         // Get args as RecordValues (so we can validate them and find the references)
@@ -357,8 +346,8 @@ impl<A: IndexerAdaptor> Db<A> {
         // TODO: Validate args against schema
 
         // Convert all record references to JSON
-        let extended_args = futures::future::join_all(args.into_iter().zip(&arg_values).map(
-            |(json, val)| async move {
+        let extended_args =
+            futures::future::join_all(args.iter().zip(&arg_values).map(|(json, val)| async move {
                 match val {
                     // TODO(minor): clean up duplicate code
                     RecordValue::ForeignRecordReference(ForeignRecordReference {
@@ -367,7 +356,7 @@ impl<A: IndexerAdaptor> Db<A> {
                     }) => {
                         let record = self
                             .indexer
-                            .get(&collection_id, &id, public_key)
+                            .get(collection_id, id, public_key)
                             .await?
                             .ok_or(UserError::RecordNotFound {
                                 collection_id: collection_id.to_string(),
@@ -378,7 +367,7 @@ impl<A: IndexerAdaptor> Db<A> {
                     RecordValue::RecordReference(RecordReference { id }) => {
                         let record = self
                             .indexer
-                            .get(&collection_id, &id, public_key)
+                            .get(collection_id, id, public_key)
                             .await?
                             .ok_or(UserError::RecordNotFound {
                                 collection_id: collection_id.to_string(),
@@ -389,11 +378,10 @@ impl<A: IndexerAdaptor> Db<A> {
                     // Keep all other values as JSON
                     _ => Ok(json.clone()),
                 }
-            },
-        ))
-        .await
-        .into_iter()
-        .collect::<Result<Vec<serde_json::Value>>>()?;
+            }))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<serde_json::Value>>>()?;
 
         let json_record = &record_to_json(record);
 
@@ -444,10 +432,11 @@ impl<A: IndexerAdaptor> Db<A> {
                 .into_iter()
                 .zip(output.args)
                 .zip(arg_values)
-                .filter(|(_, value)| match value {
-                    RecordValue::ForeignRecordReference(_) => true,
-                    RecordValue::RecordReference(_) => true,
-                    _ => false,
+                .filter(|(_, value)| {
+                    matches!(
+                        value,
+                        RecordValue::ForeignRecordReference(_) | RecordValue::RecordReference(_)
+                    )
                 })
                 .filter(|((input, output), _)| input != output)
                 .map(|((_, output), value)| {
@@ -460,14 +449,14 @@ impl<A: IndexerAdaptor> Db<A> {
                             }) => {
                                 let schema =
                                     self.indexer.get_schema_required(&collection_id).await?;
-                                Ok(Change::Update {
+                                Ok(IndexerChange::Set {
                                     collection_id,
                                     record_id: id,
                                     record: json_to_record(&schema, output, false)?,
                                 })
                             }
                             RecordValue::RecordReference(RecordReference { id }) => {
-                                Ok(Change::Update {
+                                Ok(IndexerChange::Set {
                                     collection_id: collection_id.to_string(),
                                     record_id: id,
                                     record: json_to_record(&schema, output, false)?,
@@ -482,23 +471,17 @@ impl<A: IndexerAdaptor> Db<A> {
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
-        if method.name == "constructor" {
+        if method.name == "constructor" || output_record_changed {
             // TODO: if we're creating a new collection, let's do more validation here!
-            changes.push(Change::Create {
+            changes.push(IndexerChange::Set {
                 collection_id: collection_id.to_string(),
                 record_id: output_instance_id.to_string(),
                 record: output_record,
             });
         } else if output.self_destruct {
-            changes.push(Change::Delete {
+            changes.push(IndexerChange::Delete {
                 collection_id: collection_id.to_string(),
                 record_id: output_instance_id.to_string(),
-            });
-        } else if output_record_changed {
-            changes.push(Change::Update {
-                collection_id: collection_id.to_string(),
-                record_id: output_instance_id.to_string(),
-                record: output_record,
             });
         }
 
@@ -547,19 +530,37 @@ impl<A: IndexerAdaptor> Db<A> {
     #[tracing::instrument(skip(self))]
     pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let txns = &manifest.txns;
-        let mut keys = vec![];
 
-        for txn in txns.iter() {
-            let call_txn = CallTxn::deserialize(&txn.data)?;
-            let hash: [u8; 32] = call_txn.hash()?;
-            match self.commit_txn(call_txn).await {
-                Ok(_) => {}
-                Err(err) => {
-                    return Err(err);
-                }
-            };
-            keys.push(hash);
-        }
+        // Convert txns into CallTxn
+        let call_txns = txns
+            .iter()
+            .map(|txn| {
+                let call_txn = CallTxn::deserialize(&txn.data)?;
+                Ok(call_txn)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Get a list of keys to remove from the mempool
+        let keys = call_txns
+            .iter()
+            .map(|call_txn| {
+                let hash: [u8; 32] = call_txn.hash()?;
+                Ok(hash)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Get a list of changes for the indexer
+        let changes = future::join_all(
+            call_txns
+                .iter()
+                .map(|txn| async move { Ok(self.call_changes(txn).await?.1) }),
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
 
         let height = manifest.height;
 
@@ -567,7 +568,7 @@ impl<A: IndexerAdaptor> Db<A> {
         self.set_manifest(manifest).await?;
 
         // Commit all txns
-        self.indexer.commit().await?;
+        self.indexer.commit(height, changes).await?;
 
         // Commit changes in mempool (releasing unused txns and removing used ones). This will
         // also release all requests that were waiting for these txns to be committed.
@@ -585,32 +586,32 @@ impl<A: IndexerAdaptor> Db<A> {
     }
 
     // #[tracing::instrument(skip(self))]
-    pub async fn commit_txn(&self, txn: CallTxn) -> Result<()> {
-        // Get changes
-        let (_, changes) = self.call_changes(&txn).await?;
+    // pub async fn commit_txn(&self, txn: CallTxn) -> Result<()> {
+    //     // Get changes
+    //     let (_, changes) = self.call_changes(&txn).await?;
 
-        for change in changes.iter() {
-            // Insert into indexer
-            match change {
-                Change::Create {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(&collection_id, &record_id, record).await?,
-                Change::Update {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(collection_id, record_id, record).await?,
-                Change::Delete {
-                    record_id,
-                    collection_id,
-                } => self.delete(collection_id, record_id).await?,
-            };
-        }
+    //     for change in changes.iter() {
+    //         // Insert into indexer
+    //         match change {
+    //             Indexer::Create {
+    //                 record,
+    //                 collection_id,
+    //                 record_id,
+    //             } => self.set(&collection_id, &record_id, record).await?,
+    //             Change::Update {
+    //                 record,
+    //                 collection_id,
+    //                 record_id,
+    //             } => self.set(collection_id, record_id, record).await?,
+    //             Change::Delete {
+    //                 record_id,
+    //                 collection_id,
+    //             } => self.delete(collection_id, record_id).await?,
+    //         };
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     /// Reset all data in the database
     pub fn reset(&self) -> Result<()> {
@@ -649,21 +650,6 @@ impl<A: IndexerAdaptor> Db<A> {
         };
         let manifest: proposal::ProposalManifest = bincode::deserialize(&value)?;
         Ok(Some(manifest))
-    }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
-        // Update the indexer
-        self.indexer.delete(collection_id, record_id).await?;
-
-        Ok(())
-    }
-
-    async fn set(&self, collection_id: &str, record_id: &str, record: &RecordRoot) -> Result<()> {
-        // Get the indexer collection instance
-        self.indexer.set(&collection_id, record_id, record).await?;
-
-        Ok(())
     }
 
     // async fn validate_schema_update(
@@ -713,21 +699,16 @@ fn get_key(namespace: &str, id: &str) -> [u8; 32] {
     hash::hash_bytes(b)
 }
 
-fn to_change_keys(changes: &Vec<Change>) -> Vec<[u8; 32]> {
+fn to_change_keys(changes: &[IndexerChange]) -> Vec<[u8; 32]> {
     changes
         .iter()
         .map(|change| match change {
-            Change::Create {
+            IndexerChange::Set {
                 collection_id,
                 record_id,
                 ..
             } => get_key(collection_id, record_id),
-            Change::Update {
-                collection_id,
-                record_id,
-                ..
-            } => get_key(collection_id, record_id),
-            Change::Delete {
+            IndexerChange::Delete {
                 collection_id,
                 record_id,
             } => get_key(collection_id, record_id),
