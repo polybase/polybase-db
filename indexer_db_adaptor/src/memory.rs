@@ -123,7 +123,7 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                             .map_err(|e| Error::Store(Box::new(e)))?);
                 }
                 WhereNode::Inequality(ref ineq_val) => {
-                    let WhereInequality { gt, gte, lt, lte } = ineq_val.clone();
+                    let WhereInequality { gt, gte, lt, lte } = *ineq_val.clone();
 
                     if let Some(gt_val) = gt {
                         let rec_val = IndexValue::try_from(rec_val.clone())
@@ -283,8 +283,12 @@ impl IndexerAdaptor for MemoryStore {
                     if let Some(rec_b) = b.get(&path.0[0]) {
                         match (rec_a, rec_b) {
                             (RecordValue::Number(na), RecordValue::Number(nb)) => match direction {
-                                IndexDirection::Ascending => na.partial_cmp(nb).unwrap(),
-                                IndexDirection::Descending => nb.partial_cmp(na).unwrap(),
+                                IndexDirection::Ascending => {
+                                    na.partial_cmp(nb).unwrap_or(std::cmp::Ordering::Greater)
+                                }
+                                IndexDirection::Descending => {
+                                    nb.partial_cmp(na).unwrap_or(std::cmp::Ordering::Greater)
+                                }
                             },
                             (RecordValue::String(sa), RecordValue::String(sb)) => match direction {
                                 IndexDirection::Ascending => sa.cmp(sb),
@@ -376,6 +380,16 @@ mod tests {
     use futures::StreamExt;
     use tokio::time::Duration;
 
+    fn create_record_root(fields: &[&str], values: &[RecordValue]) -> RecordRoot {
+        let mut record_root = RecordRoot::new();
+
+        for (field, value) in fields.iter().zip(values) {
+            record_root.insert(field.to_string(), value.clone());
+        }
+
+        record_root
+    }
+
     #[tokio::test]
     async fn test_memory_store_set_and_get() {
         let store = MemoryStore::default();
@@ -383,9 +397,13 @@ mod tests {
         let collection_id = "test_collection";
         let record_id = "test_record";
 
-        let mut record_data = RecordRoot::new();
-        record_data.insert("id".into(), RecordValue::String("id1".into()));
-        record_data.insert("name".into(), RecordValue::String("Bob".into()));
+        let record_data = create_record_root(
+            &["id", "name"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+            ],
+        );
 
         store
             .set(collection_id, record_id, &record_data)
@@ -402,15 +420,23 @@ mod tests {
 
         let collection_id = "test_collection";
 
-        let mut record1_data = RecordRoot::new();
-        record1_data.insert("id".into(), RecordValue::String("id1".into()));
-        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
-        record1_data.insert("age".into(), RecordValue::Number(42.0));
+        let record1_data = create_record_root(
+            &["id", "name", "age"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Number(42.0),
+            ],
+        );
 
-        let mut record2_data = RecordRoot::new();
-        record2_data.insert("id".into(), RecordValue::String("id2".into()));
-        record2_data.insert("name".into(), RecordValue::String("Dave".into()));
-        record2_data.insert("age".into(), RecordValue::Number(23.0));
+        let record2_data = create_record_root(
+            &["id", "name", "age"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Dave".into()),
+                RecordValue::Number(23.0),
+            ],
+        );
 
         store
             .set(collection_id, "record1", &record1_data)
@@ -439,22 +465,31 @@ mod tests {
         let store = MemoryStore::default();
         let collection_id = "test_collection";
 
-        let mut record1_data = RecordRoot::new();
+        let record1_data = create_record_root(
+            &["id", "name", "age"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Number(42.0),
+            ],
+        );
 
-        record1_data.insert("id".into(), RecordValue::String("id1".into()));
-        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
-        record1_data.insert("age".into(), RecordValue::Number(42.0));
-
-        let mut record2_data = RecordRoot::new();
-
-        record2_data.insert("id".into(), RecordValue::String("id2".into()));
-        record2_data.insert("name".into(), RecordValue::String("Dave".into()));
-        record2_data.insert("age".into(), RecordValue::Number(23.0));
-
-        let mut record3_data = RecordRoot::new();
-        record3_data.insert("id".into(), RecordValue::String("id3".into()));
-        record3_data.insert("name".into(), RecordValue::String("Wanda".into()));
-        record3_data.insert("age".into(), RecordValue::Number(19.0));
+        let record2_data = create_record_root(
+            &["id", "name", "age"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Dave".into()),
+                RecordValue::Number(23.0),
+            ],
+        );
+        let record3_data = create_record_root(
+            &["id", "name", "age"],
+            &[
+                RecordValue::String("id3".into()),
+                RecordValue::String("Wanda".into()),
+                RecordValue::Number(19.0),
+            ],
+        );
 
         store
             .set(collection_id, "record1", &record1_data)
@@ -494,23 +529,35 @@ mod tests {
 
         let collection_id = "test_collection";
 
-        let mut record1_data = RecordRoot::new();
-        record1_data.insert("id".into(), RecordValue::String("id1".into()));
-        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
-        record1_data.insert("age".into(), RecordValue::Number(42.0));
-        record1_data.insert("place".into(), RecordValue::String("Timbuktu".into()));
+        let record1_data = create_record_root(
+            &["id", "name", "age", "place"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Number(42.0),
+                RecordValue::String("Timbuktu".into()),
+            ],
+        );
 
-        let mut record2_data = RecordRoot::new();
-        record2_data.insert("id".into(), RecordValue::String("id2".into()));
-        record2_data.insert("name".into(), RecordValue::String("Bobby".into()));
-        record2_data.insert("age".into(), RecordValue::Number(42.0));
-        record2_data.insert("place".into(), RecordValue::String("Ougadougou".into()));
+        let record2_data = create_record_root(
+            &["id", "name", "age", "place"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Bobby".into()),
+                RecordValue::Number(21.0),
+                RecordValue::String("Timbuktu".into()),
+            ],
+        );
 
-        let mut record3_data = RecordRoot::new();
-        record3_data.insert("id".into(), RecordValue::String("id3".into()));
-        record3_data.insert("name".into(), RecordValue::String("Bobbers".into()));
-        record3_data.insert("age".into(), RecordValue::Number(42.0));
-        record3_data.insert("place".into(), RecordValue::String("Oshkosh".into()));
+        let record3_data = create_record_root(
+            &["id", "name", "age", "place"],
+            &[
+                RecordValue::String("id3".into()),
+                RecordValue::String("Bobbers".into()),
+                RecordValue::Number(89.0),
+                RecordValue::String("Timbuktu".into()),
+            ],
+        );
 
         store
             .set(collection_id, "rec1", &record1_data)
@@ -532,12 +579,12 @@ mod tests {
         let where_query = WhereQuery(
             [(
                 FieldPath(["name".to_string()].into()),
-                WhereNode::Inequality(WhereInequality {
+                WhereNode::Inequality(Box::new(WhereInequality {
                     gt: Some(WhereValue(IndexValue::String("Bob".into()))),
                     gte: None,
                     lt: None,
                     lte: None,
-                }),
+                })),
             )]
             .into(),
         );
@@ -561,12 +608,12 @@ mod tests {
         let where_query = WhereQuery(
             [(
                 FieldPath(["name".to_string()].into()),
-                WhereNode::Inequality(WhereInequality {
+                WhereNode::Inequality(Box::new(WhereInequality {
                     gt: Some(WhereValue(IndexValue::String("Bob".into()))),
                     gte: None,
                     lt: None,
                     lte: None,
-                }),
+                })),
             )]
             .into(),
         );
@@ -596,25 +643,38 @@ mod tests {
 
         let collection_id = "test_collection";
 
-        let mut record1_data = RecordRoot::new();
-        record1_data.insert("id".into(), RecordValue::String("id1".into()));
-        record1_data.insert("name".into(), RecordValue::String("Bob".into()));
-        record1_data.insert("age".into(), RecordValue::Number(42.0));
-
-        let mut record2_data = RecordRoot::new();
-        record2_data.insert("id".into(), RecordValue::String("id2".into()));
-        record2_data.insert("name".into(), RecordValue::String("Bob".into()));
-        record2_data.insert("age".into(), RecordValue::Number(23.0));
-
-        let mut record3_data = RecordRoot::new();
-        record3_data.insert("id".into(), RecordValue::String("id3".into()));
-        record3_data.insert("name".into(), RecordValue::String("Wanda".into()));
-        record3_data.insert("age".into(), RecordValue::Number(23.0));
-
-        let mut record4_data = RecordRoot::new();
-        record4_data.insert("id".into(), RecordValue::String("id4".into()));
-        record4_data.insert("name".into(), RecordValue::String("Bob".into()));
-        record4_data.insert("age".into(), RecordValue::Number(89.0));
+        let record1_data = create_record_root(
+            &["id", "name"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Number(42.0),
+            ],
+        );
+        let record2_data = create_record_root(
+            &["id", "name"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Number(23.0),
+            ],
+        );
+        let record3_data = create_record_root(
+            &["id", "name"],
+            &[
+                RecordValue::String("id3".into()),
+                RecordValue::String("Wanda".into()),
+                RecordValue::Number(23.0),
+            ],
+        );
+        let record4_data = create_record_root(
+            &["id", "name"],
+            &[
+                RecordValue::String("id4".into()),
+                RecordValue::String("Bob".into()),
+                RecordValue::Number(89.0),
+            ],
+        );
 
         store
             .set(collection_id, "record1", &record1_data)
@@ -681,9 +741,13 @@ mod tests {
         let collection_id = "test_collection";
         let record_id = "test_record";
 
-        let mut record_data = RecordRoot::new();
-        record_data.insert("id".into(), RecordValue::String("id1".into()));
-        record_data.insert("name".into(), RecordValue::String("Bob".into()));
+        let record_data = create_record_root(
+            &["id", "name"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+            ],
+        );
 
         store
             .set(collection_id, record_id, &record_data)
@@ -703,10 +767,14 @@ mod tests {
         let store = MemoryStore::new();
         let collection_id = "test_collection";
         let record_id = "test_record";
-        let mut record_data = RecordRoot::new();
 
-        record_data.insert("id".into(), RecordValue::String("id1".into()));
-        record_data.insert("name".into(), RecordValue::String("Bob".into()));
+        let record_data = create_record_root(
+            &["id", "name"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+            ],
+        );
 
         store
             .set(collection_id, record_id, &record_data)
@@ -741,6 +809,7 @@ mod tests {
 
         let collection_id = "test_collection";
         let record_id = "test_record";
+
         let record_data = RecordRoot::new();
         store
             .set(collection_id, record_id, &record_data)
