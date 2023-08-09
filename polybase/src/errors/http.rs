@@ -98,6 +98,7 @@ impl From<db::Error> for HTTPError {
             // db::Error::Collection(e) => e.into(),
             db::Error::Gateway(e) => e.into(),
             db::Error::Indexer(e) => e.into(),
+            db::Error::User(e) => e.into(),
             _ => HTTPError::new(ReasonCode::Internal, Some(Box::new(err))),
         }
     }

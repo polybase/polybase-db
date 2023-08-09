@@ -137,6 +137,8 @@ impl ReasonCode {
             db::UserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
             db::UserError::RecordIdNotString => ReasonCode::RecordIdNotString,
             db::UserError::RecordIdNotFound => ReasonCode::RecordCollectionIdNotFound,
+            db::UserError::CollectionIdExists => ReasonCode::CollectionIdExists,
+            // TODO: is this checked?
             // db::UserError::RecordIDModified => ReasonCode::RecordIDModified,
             db::UserError::UnauthorizedCall => ReasonCode::Unauthorized,
             db::UserError::Method(err) => Self::from_schema_method_error(err),
@@ -147,25 +149,14 @@ impl ReasonCode {
         match err {
             // gateway::GatewayUserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
 
-            // gateway::GatewayUserError::RecordIdNotString => ReasonCode::RecordIdNotString,
-
-            // gateway::GatewayUserError::RecordCollectionIdNotFound => {
-            //     ReasonCode::RecordCollectionIdNotFound
-            // }
-
             // gateway::GatewayUserError::RecordFieldNotObject => ReasonCode::RecordFieldNotObject,
             gateway::GatewayUserError::RecordIDModified => ReasonCode::RecordIDModified,
 
             // gateway::GatewayUserError::CollectionNotFound { .. } => ReasonCode::CollectionNotFound,
-            // gateway::GatewayUserError::CollectionIdExists => ReasonCode::CollectionIdExists,
 
             // gateway::GatewayUserError::CollectionRecordIdNotFound => {
             //     ReasonCode::CollectionRecordIdNotFound
             // }
-
-            // gateway::GatewayUserError::CollectionMismatch { .. } => ReasonCode::CollectionMismatch,
-
-            // gateway::GatewayUserError::FunctionNotFound { .. } => ReasonCode::FunctionNotFound,
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
 
             gateway::GatewayUserError::JavaScriptException { .. } => {

@@ -44,6 +44,7 @@ pub struct Indexer<A: IndexerAdaptor> {
     adaptor: A,
 }
 
+#[derive(Debug, Clone)]
 pub enum IndexerChange {
     Set {
         collection_id: String,

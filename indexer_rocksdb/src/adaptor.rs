@@ -39,6 +39,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("collection not found")]
+    CollectionNotFound,
+
     #[error("metadata is missing lastRecordUpdatedAt")]
     MetadataMissingLastRecordUpdatedAt,
 
@@ -497,6 +500,32 @@ impl RocksDBAdaptor {
 #[async_trait::async_trait]
 impl IndexerAdaptor for RocksDBAdaptor {
     async fn commit(&self, height: usize, changes: Vec<IndexerChange>) -> adaptor::Result<()> {
+        for change in changes {
+            match change {
+                IndexerChange::Set {
+                    collection_id,
+                    record_id,
+                    record,
+                } => {
+                    let schema = self
+                        .get_schema(&collection_id)
+                        .await?
+                        .ok_or(Error::CollectionNotFound)?;
+                    self.set(&collection_id, &record_id, &record, &schema)
+                        .await?;
+                }
+                IndexerChange::Delete {
+                    collection_id,
+                    record_id,
+                } => {
+                    let schema = self
+                        .get_schema(&collection_id)
+                        .await?
+                        .ok_or(Error::CollectionNotFound)?;
+                    self.delete(&collection_id, &record_id, &schema).await?;
+                }
+            }
+        }
         self.store.commit().await.map_err(Error::from)?;
         Ok(())
     }

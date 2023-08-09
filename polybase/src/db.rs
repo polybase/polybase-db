@@ -91,6 +91,9 @@ pub enum UserError {
     #[error("record ID field is not a string")]
     RecordIdNotString,
 
+    #[error("record id already exists in collection")]
+    CollectionIdExists,
+
     #[error("methods error")]
     Method(#[from] methods::UserError),
 
@@ -409,14 +412,19 @@ impl<A: IndexerAdaptor> Db<A> {
             None => return Err(UserError::RecordIdNotFound)?,
         };
 
-        // let Some(output_instance_id) = output_record.get("id") else {
-        //     return Err(UserError::RecordIdNotFound)?;
-        // };
-
         // Check output ID is a string
         let RecordValue::String(output_instance_id) = output_instance_id else {
             return Err(UserError::RecordIdNotString)?;
         };
+
+        // Check if already exists
+        if let Ok(Some(_)) = self
+            .indexer
+            .get(collection_id, &output_instance_id, public_key)
+            .await
+        {
+            return Err(UserError::CollectionIdExists)?;
+        }
 
         // Check output args are same as input, otherwise something strange has happened,
         // possibly someone messing around with the JS code
@@ -584,34 +592,6 @@ impl<A: IndexerAdaptor> Db<A> {
 
         Ok(())
     }
-
-    // #[tracing::instrument(skip(self))]
-    // pub async fn commit_txn(&self, txn: CallTxn) -> Result<()> {
-    //     // Get changes
-    //     let (_, changes) = self.call_changes(&txn).await?;
-
-    //     for change in changes.iter() {
-    //         // Insert into indexer
-    //         match change {
-    //             Indexer::Create {
-    //                 record,
-    //                 collection_id,
-    //                 record_id,
-    //             } => self.set(&collection_id, &record_id, record).await?,
-    //             Change::Update {
-    //                 record,
-    //                 collection_id,
-    //                 record_id,
-    //             } => self.set(collection_id, record_id, record).await?,
-    //             Change::Delete {
-    //                 record_id,
-    //                 collection_id,
-    //             } => self.delete(collection_id, record_id).await?,
-    //         };
-    //     }
-
-    //     Ok(())
-    // }
 
     /// Reset all data in the database
     pub fn reset(&self) -> Result<()> {
