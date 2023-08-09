@@ -236,7 +236,6 @@ impl IndexerAdaptor for MemoryStore {
         Ok(None)
     }
 
-    // todo : remove this
     #[allow(unused_variables)]
     async fn list(
         &self,
@@ -253,7 +252,6 @@ impl IndexerAdaptor for MemoryStore {
         };
 
         // Loop through every record and filter based on the where query
-        // TODO
         let mut records: Vec<RecordRoot> = collection
             .data
             .values()
@@ -275,12 +273,11 @@ impl IndexerAdaptor for MemoryStore {
             .collect();
 
         // sort based on order_by
-        // TODO
         for IndexField { path, direction } in order_by {
             records.sort_by(|a, b| {
-                // how to handle Vec<String>?
-                if let Some(rec_a) = a.get(&path.0[0]) {
-                    if let Some(rec_b) = b.get(&path.0[0]) {
+                let joined_path = path.0.join("."); // vector of fields
+                if let Some(rec_a) = a.get(&joined_path) {
+                    if let Some(rec_b) = b.get(&joined_path) {
                         match (rec_a, rec_b) {
                             (RecordValue::Number(na), RecordValue::Number(nb)) => match direction {
                                 IndexDirection::Ascending => {
@@ -378,6 +375,7 @@ mod tests {
 
     use super::*;
     use futures::StreamExt;
+    use std::borrow::Cow;
     use tokio::time::Duration;
 
     fn create_record_root(fields: &[&str], values: &[RecordValue]) -> RecordRoot {
@@ -460,8 +458,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_store_list_where_query_single_equality() {
-        use std::borrow::Cow;
-
         let store = MemoryStore::default();
         let collection_id = "test_collection";
 
@@ -637,8 +633,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_store_list_order_by() {
-        use std::borrow::Cow;
-
         let store = MemoryStore::default();
 
         let collection_id = "test_collection";
@@ -733,6 +727,141 @@ mod tests {
         assert_eq!(first, record4_data);
         assert_eq!(second, record2_data);
         assert_eq!(third, record1_data);
+    }
+
+    #[tokio::test]
+    async fn test_where_nested_fields() {
+        let store = MemoryStore::default();
+
+        let collection_id = "test_collection";
+
+        let record1_data = create_record_root(
+            &["id", "info.name"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+            ],
+        );
+
+        let record2_data = create_record_root(
+            &["id", "info.name"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Dave".into()),
+            ],
+        );
+
+        store
+            .set(collection_id, "record1", &record1_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "record2", &record2_data)
+            .await
+            .unwrap();
+
+        store.commit().await.unwrap();
+
+        let where_query = WhereQuery(
+            [(
+                FieldPath(["info.name".to_string()].into()),
+                WhereNode::Equality(WhereValue(IndexValue::String(Cow::Owned("Bob".into())))),
+            )]
+            .into(),
+        );
+
+        let records = store
+            .list(collection_id, None, where_query, &[])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 1);
+        assert_eq!(records[0], record1_data);
+    }
+
+    #[tokio::test]
+    async fn test_sort_nested_fields() {
+        let store = MemoryStore::default();
+
+        let collection_id = "test_collection";
+
+        let record1_data = create_record_root(
+            &["id", "info.name"],
+            &[
+                RecordValue::String("id1".into()),
+                RecordValue::String("Bob".into()),
+            ],
+        );
+
+        let record2_data = create_record_root(
+            &["id", "info.name"],
+            &[
+                RecordValue::String("id2".into()),
+                RecordValue::String("Dave".into()),
+            ],
+        );
+
+        let record3_data = create_record_root(
+            &["id", "info.name"],
+            &[
+                RecordValue::String("id3".into()),
+                RecordValue::String("Wanda".into()),
+            ],
+        );
+
+        store
+            .set(collection_id, "record1", &record1_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "record2", &record2_data)
+            .await
+            .unwrap();
+
+        store
+            .set(collection_id, "record3", &record3_data)
+            .await
+            .unwrap();
+
+        store.commit().await.unwrap();
+
+        let order_by = vec![IndexField {
+            path: vec!["info".to_string(), "name".to_string()].into(),
+            direction: IndexDirection::Ascending,
+        }];
+
+        let records = store
+            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 3);
+        assert_eq!(records[0], record1_data);
+        assert_eq!(records[1], record2_data);
+        assert_eq!(records[2], record3_data);
+
+        let order_by = vec![IndexField {
+            path: vec!["info".to_string(), "name".to_string()].into(),
+            direction: IndexDirection::Descending,
+        }];
+
+        let records = store
+            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+
+        assert!(records.len() == 3);
+        assert_eq!(records[0], record3_data);
+        assert_eq!(records[1], record2_data);
+        assert_eq!(records[2], record1_data);
     }
 
     #[tokio::test]
