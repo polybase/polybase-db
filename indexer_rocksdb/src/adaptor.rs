@@ -1,4 +1,4 @@
-use crate::keys::{self, Key};
+use crate::keys;
 use crate::result_stream::convert_stream;
 use crate::{
     key_range::{self, key_range, KeyRange},
@@ -161,28 +161,6 @@ impl RocksDBAdaptor {
         Ok(stream.boxed())
     }
 
-    async fn update_metadata(&self, collection_id: &str, time: &SystemTime) -> Result<()> {
-        let collection_metadata_key = Key::new_system_data(format!("{}/metadata", collection_id))?;
-
-        self.store
-            .set(
-                &collection_metadata_key,
-                &store::Value::DataValue(&RecordRoot(
-                    [(
-                        "lastRecordUpdatedAt".to_string(),
-                        RecordValue::String(
-                            time.duration_since(SystemTime::UNIX_EPOCH)?
-                                .as_millis()
-                                .to_string(),
-                        ),
-                    )]
-                    .into(),
-                )),
-            )
-            .await?;
-        Ok(())
-    }
-
     #[tracing::instrument(skip(self))]
     pub async fn set(
         &self,
@@ -227,12 +205,30 @@ impl RocksDBAdaptor {
         Ok(())
     }
 
+    pub async fn _get_system_record(&self, key: &str) -> Result<Option<RecordRoot>> {
+        let key = keys::Key::new_system_data(key.to_string())?;
+
+        match self.store.get(&key).await? {
+            Some(record) => Ok(Some(record)),
+            None => Ok(None),
+        }
+    }
+
+    pub async fn _set_system_record(&self, key: &str, record: &RecordRoot) -> Result<()> {
+        let key = keys::Key::new_system_data(key.to_string())?;
+
+        self.store
+            .set(&key, &store::Value::DataValue(record))
+            .await?;
+
+        Ok(())
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn get_metadata(&self, collection_id: &str) -> Result<Option<CollectionMetadata>> {
-        let collection_metadata_key =
-            keys::Key::new_system_data(format!("{}/metadata", &collection_id))?;
+        let collection_metadata_key = format!("{}/metadata", &collection_id);
 
-        let Some(record) = self.store.get(&collection_metadata_key).await? else {
+        let Some(record) = self._get_system_record(&collection_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -249,36 +245,24 @@ impl RocksDBAdaptor {
         }))
     }
 
-    #[tracing::instrument(skip(self))]
-    pub async fn update_record_metadata(
-        &self,
-        collection_id: &str,
-        record_id: &str,
-        updated_at: &SystemTime,
-    ) -> Result<()> {
-        let record_metadata_key = keys::Key::new_system_data(format!(
-            "{}/records/{}/metadata",
-            collection_id, record_id
-        ))?;
+    async fn update_metadata(&self, collection_id: &str, time: &SystemTime) -> Result<()> {
+        let collection_metadata_key = &format!("{}/metadata", collection_id);
 
-        self.store
-            .set(
-                &record_metadata_key,
-                &store::Value::DataValue(&RecordRoot(
-                    [(
-                        "updatedAt".into(),
-                        RecordValue::String(
-                            updated_at
-                                .duration_since(SystemTime::UNIX_EPOCH)?
-                                .as_millis()
-                                .to_string(),
-                        ),
-                    )]
-                    .into(),
-                )),
-            )
-            .await?;
-        Ok(())
+        self._set_system_record(
+            collection_metadata_key,
+            &RecordRoot(
+                [(
+                    "lastRecordUpdatedAt".to_string(),
+                    RecordValue::String(
+                        time.duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_millis()
+                            .to_string(),
+                    ),
+                )]
+                .into(),
+            ),
+        )
+        .await
     }
 
     #[tracing::instrument(skip(self))]
@@ -287,12 +271,9 @@ impl RocksDBAdaptor {
         collection_id: &str,
         record_id: &str,
     ) -> Result<Option<RecordMetadata>> {
-        let record_metadata_key = keys::Key::new_system_data(format!(
-            "{}/records/{}/metadata",
-            collection_id, record_id
-        ))?;
+        let record_metadata_key = format!("{}/records/{}/metadata", collection_id, record_id);
 
-        let Some(record) = self.store.get(&record_metadata_key).await? else {
+        let Some(record) = self._get_system_record(&record_metadata_key).await? else {
             return Ok(None);
         };
 
@@ -304,6 +285,34 @@ impl RocksDBAdaptor {
         };
 
         Ok(Some(RecordMetadata { updated_at }))
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn update_record_metadata(
+        &self,
+        collection_id: &str,
+        record_id: &str,
+        updated_at: &SystemTime,
+    ) -> Result<()> {
+        let record_metadata_key = format!("{}/records/{}/metadata", collection_id, record_id);
+
+        self._set_system_record(
+            &record_metadata_key,
+            &RecordRoot(
+                [(
+                    "updatedAt".into(),
+                    RecordValue::String(
+                        updated_at
+                            .duration_since(SystemTime::UNIX_EPOCH)?
+                            .as_millis()
+                            .to_string(),
+                    ),
+                )]
+                .into(),
+            ),
+        )
+        .await?;
+        Ok(())
     }
 
     pub(crate) async fn add_indexes(
@@ -540,11 +549,11 @@ impl IndexerAdaptor for RocksDBAdaptor {
     }
 
     async fn set_system_key(&self, key: &str, data: &RecordRoot) -> adaptor::Result<()> {
-        todo!()
+        Ok(self._set_system_record(key, data).await?)
     }
 
     async fn get_system_key(&self, key: &str) -> adaptor::Result<Option<RecordRoot>> {
-        todo!()
+        Ok(self._get_system_record(key).await?)
     }
 }
 
