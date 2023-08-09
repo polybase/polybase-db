@@ -138,6 +138,7 @@ impl ReasonCode {
             db::UserError::RecordIdNotString => ReasonCode::RecordIdNotString,
             db::UserError::RecordIdNotFound => ReasonCode::RecordCollectionIdNotFound,
             // db::UserError::RecordIDModified => ReasonCode::RecordIDModified,
+            db::UserError::UnauthorizedCall => ReasonCode::Unauthorized,
             db::UserError::Method(err) => Self::from_schema_method_error(err),
         }
     }
@@ -225,61 +226,64 @@ impl ReasonCode {
             }
 
             indexer_db_adaptor::UserError::UnauthorizedRead { .. } => ReasonCode::Unauthorized,
-            // indexer_db_adaptor::CollectionUserError::NoIndexFoundMatchingTheQuery => {
-            //     ReasonCode::IndexerMissingIndex
-            // }
-            // indexer_db_adaptor::CollectionUserError::UnauthorizedRead => ReasonCode::Unauthorized,
-            // indexer_db_adaptor::CollectionUserError::InvalidCursorKey => {
-            //     ReasonCode::IndexerInvalidCursorKey
-            // }
-            // indexer_db_adaptor::CollectionUserError::InvalidCursorBeforeAndAfterSpecified => {
-            //     ReasonCode::IndexerInvalidCursorKey
-            // }
-            // indexer_db_adaptor::CollectionUserError::CollectionIdMissingNamespace => {
-            //     ReasonCode::CollectionInvalidId
-            // }
-            // indexer_db_adaptor::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
-            //     ReasonCode::CollectionInvalidId
-            // }
-            // indexer_db_adaptor::CollectionUserError::MissingDefinitionForCollection { .. } => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::CollectionMissingIdField => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::CollectionIdFieldMustBeString => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::CollectionIdFieldCannotBeOptional => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::CollectionDirectiveCannotHaveArguments {
-            //     ..
-            // } => ReasonCode::CollectionInvalidSchema,
-            // indexer_db_adaptor::CollectionUserError::UnknownCollectionDirectives { .. } => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
-            // indexer_db_adaptor::CollectionUserError::RecordUserError(_) => {
-            //     ReasonCode::RecordInvalidField
-            // }
-            // indexer_db_adaptor::CollectionUserError::Schema(_) => {
-            //     ReasonCode::CollectionInvalidSchema
-            // }
+
+            indexer_db_adaptor::UserError::NoIndexFoundMatchingTheQuery { .. } => {
+                ReasonCode::IndexerMissingIndex
+            } // indexer_db_adaptor::CollectionUserError::NoIndexFoundMatchingTheQuery => {
+              //     ReasonCode::IndexerMissingIndex
+              // }
+              // indexer_db_adaptor::CollectionUserError::UnauthorizedRead => ReasonCode::Unauthorized,
+              // indexer_db_adaptor::CollectionUserError::InvalidCursorKey => {
+              //     ReasonCode::IndexerInvalidCursorKey
+              // }
+              // indexer_db_adaptor::CollectionUserError::InvalidCursorBeforeAndAfterSpecified => {
+              //     ReasonCode::IndexerInvalidCursorKey
+              // }
+              // indexer_db_adaptor::CollectionUserError::CollectionIdMissingNamespace => {
+              //     ReasonCode::CollectionInvalidId
+              // }
+              // indexer_db_adaptor::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
+              //     ReasonCode::CollectionInvalidId
+              // }
+              // indexer_db_adaptor::CollectionUserError::MissingDefinitionForCollection { .. } => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::CollectionMissingIdField => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::CollectionIdFieldMustBeString => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::CollectionIdFieldCannotBeOptional => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::CollectionDirectiveCannotHaveArguments {
+              //     ..
+              // } => ReasonCode::CollectionInvalidSchema,
+              // indexer_db_adaptor::CollectionUserError::UnknownCollectionDirectives { .. } => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
+              // indexer_db_adaptor::CollectionUserError::RecordUserError(_) => {
+              //     ReasonCode::RecordInvalidField
+              // }
+              // indexer_db_adaptor::CollectionUserError::Schema(_) => {
+              //     ReasonCode::CollectionInvalidSchema
+              // }
         }
     }
 

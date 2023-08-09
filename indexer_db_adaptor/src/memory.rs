@@ -1,9 +1,9 @@
-use crate::adaptor::{Error, IndexerAdaptor, Result};
+use crate::adaptor::{IndexerAdaptor, Result};
+use crate::indexer::IndexerChange;
 use crate::where_query::WhereQuery;
 use schema::Schema;
 use schema::{
     index::{IndexDirection, IndexField},
-    publickey::PublicKey,
     record::{RecordRoot, RecordValue},
 };
 use std::{collections::HashMap, pin::Pin, sync::Arc, time::SystemTime};
@@ -100,7 +100,7 @@ impl MemoryStore {
 
 #[async_trait::async_trait]
 impl IndexerAdaptor for MemoryStore {
-    async fn commit(&self) -> Result<()> {
+    async fn commit(&self, height: usize, changes: Vec<IndexerChange>) -> Result<()> {
         Ok(())
     }
 

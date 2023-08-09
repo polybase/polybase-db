@@ -4,6 +4,7 @@ use error::Result;
 use indexer_db_adaptor::{
     adaptor::{self, IndexerAdaptor},
     where_query::WhereQuery,
+    IndexerChange,
 };
 use row::CollectionRecordRow;
 // use lru::LruCache;
@@ -99,7 +100,7 @@ impl PostgresAdaptor {
 
 #[async_trait::async_trait]
 impl IndexerAdaptor for PostgresAdaptor {
-    async fn commit(&self) -> adaptor::Result<()> {
+    async fn commit(&self, height: usize, changes: Vec<IndexerChange>) -> adaptor::Result<()> {
         Ok(())
     }
 

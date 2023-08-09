@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+use std::string::ParseError;
 use std::{borrow::Cow, fmt::Display};
 
 // TODO: rename to PropertyPath
@@ -66,6 +68,14 @@ impl FieldPath {
     }
 }
 
+impl FromStr for FieldPath {
+    type Err = ParseError;
+
+    fn from_str(path: &str) -> Result<Self, Self::Err> {
+        Ok(Self(vec![path.to_string()]))
+    }
+}
+
 impl FromIterator<String> for FieldPath {
     fn from_iter<I: IntoIterator<Item = String>>(iter: I) -> Self {
         Self(iter.into_iter().collect())
@@ -93,6 +103,18 @@ impl From<Vec<&String>> for FieldPath {
 impl From<Vec<&str>> for FieldPath {
     fn from(v: Vec<&str>) -> Self {
         Self(v.iter().map(|s| s.to_string()).collect())
+    }
+}
+
+// impl From<dyn AsRef<str>> for FieldPath {
+//     fn from(v: dyn AsRef<str>) -> Self {
+//         Self(vec![v.to_string()])
+//     }
+// }
+
+impl From<&str> for FieldPath {
+    fn from(v: &str) -> Self {
+        Self(vec![v.to_string()])
     }
 }
 

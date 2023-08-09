@@ -4,9 +4,7 @@ use crate::publickey;
 use crate::schema::Schema;
 use crate::types::{PrimitiveType, Type};
 use base64::Engine;
-use polylang::ast::Field;
 use serde::{Deserialize, Serialize};
-use std::f32::consts::E;
 use std::{
     borrow::Cow,
     collections::{hash_map, HashMap},
@@ -84,7 +82,7 @@ pub enum RecordUserError {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde()]
-pub struct RecordRoot(HashMap<String, RecordValue>);
+pub struct RecordRoot(pub HashMap<String, RecordValue>);
 
 impl RecordRoot {
     pub fn new() -> Self {

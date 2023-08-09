@@ -1,10 +1,7 @@
-use crate::error::Result;
-use polylang::stableast;
 use schema::{
     publickey,
     record::{ForeignRecordReference, RecordReference, RecordRoot, RecordValue},
     types::{Array, Map, PrimitiveType, Type},
-    util::normalize_name,
     Schema,
 };
 use sqlx::{postgres::PgRow, Column, Row};

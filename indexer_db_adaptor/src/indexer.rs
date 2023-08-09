@@ -2,25 +2,17 @@ use crate::{
     adaptor::{self, IndexerAdaptor},
     cursor,
     list_query::ListQuery,
-    where_query::{self, WhereQuery},
+    where_query::WhereQuery,
 };
 use futures::stream::{FuturesUnordered, StreamExt};
 use schema::{
     directive::DirectiveKind,
     field_path::FieldPath,
-    index::IndexField,
     publickey::PublicKey,
     record::{ForeignRecordReference, RecordReference, RecordRoot, Reference},
-    Schema,
+    Schema, COLLECTION_RECORD,
 };
-use std::{
-    borrow::Cow,
-    collections::HashSet,
-    mem,
-    pin::Pin,
-    sync::{Arc, RwLock},
-    time::SystemTime,
-};
+use std::{borrow::Cow, pin::Pin, time::SystemTime};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -43,51 +35,34 @@ pub enum UserError {
 
     #[error("invalid cursor, before and after cannot be used together")]
     InvalidCursorBeforeAndAfterSpecified,
+
+    #[error("no index found matching the query")]
+    NoIndexFoundMatchingTheQuery,
 }
 
 pub struct Indexer<A: IndexerAdaptor> {
     adaptor: A,
-    commit_store: Arc<RwLock<Vec<IndexerChange>>>,
 }
 
 pub enum IndexerChange {
-    Set,
-    SetCollection,
-    Create,
-    Delete,
-    Update,
+    Set {
+        collection_id: String,
+        record_id: String,
+        record: RecordRoot,
+    },
+    Delete {
+        collection_id: String,
+        record_id: String,
+    },
 }
 
 impl<A: IndexerAdaptor> Indexer<A> {
     pub fn new(adaptor: A) -> Self {
-        Self {
-            adaptor,
-            commit_store: Arc::new(RwLock::new(vec![])),
-        }
+        Self { adaptor }
     }
 
-    pub async fn commit(&self) -> Result<()> {
-        // let mut commit_store = self.commit_store.write().unwrap();
-        // let commits = mem::replace(&mut *commit_store, vec![]);
-        // Ok(self.adaptor.commit().await?)
-        Ok(())
-    }
-
-    pub async fn set(
-        &self,
-        collection_id: &str,
-        record_id: &str,
-        value: &RecordRoot,
-    ) -> Result<()> {
-        let mut commit_store = self.commit_store.write().unwrap();
-        commit_store.push(IndexerChange::Set);
-        Ok(())
-    }
-
-    pub async fn delete(&self, collection_id: &str, record_id: &str) -> Result<()> {
-        let mut commit_store = self.commit_store.write().unwrap();
-        commit_store.push(IndexerChange::Delete);
-        Ok(())
+    pub async fn commit(&self, height: usize, changes: Vec<IndexerChange>) -> Result<()> {
+        Ok(self.adaptor.commit(height, changes).await?)
     }
 
     pub async fn get(
@@ -96,6 +71,11 @@ impl<A: IndexerAdaptor> Indexer<A> {
         record_id: &str,
         public_key: Option<&PublicKey>,
     ) -> Result<Option<RecordRoot>> {
+        // Automatically respond with Collection collection record
+        if collection_id == "Collection" && record_id == "Collection" {
+            return Ok(Some(COLLECTION_RECORD.clone()));
+        }
+
         let record = match self.adaptor.get(collection_id, record_id).await? {
             Some(record) => record,
             None => return Ok(None),
@@ -134,6 +114,15 @@ impl<A: IndexerAdaptor> Indexer<A> {
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         let schema = self.get_schema_required(collection_id).await?;
 
+        // Check we have a matching index
+        if !schema
+            .indexes
+            .iter()
+            .any(|index| query.where_query.matches(index, query.order_by))
+        {
+            return Err(UserError::NoIndexFoundMatchingTheQuery)?;
+        };
+
         if !self
             .verify_list(collection_id, &schema, &query.where_query, public_key)
             .await
@@ -151,6 +140,7 @@ impl<A: IndexerAdaptor> Indexer<A> {
 
         let mut where_query = where_query.clone();
 
+        // Apply the cursor to the where_query
         match (cursor_before, cursor_after) {
             (Some(cursor_before), None) => {
                 where_query.apply_cursor(cursor_before, cursor::CursorDirection::Before, order_by)

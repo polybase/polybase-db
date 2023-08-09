@@ -6,9 +6,10 @@
 pub mod adaptor;
 pub mod auth_user;
 pub mod cursor;
+// pub mod index;
 mod indexer;
 pub mod list_query;
 pub mod memory;
 pub mod where_query;
 
-pub use indexer::{Error, Indexer, Result, UserError};
+pub use indexer::{Error, Indexer, IndexerChange, Result, UserError};

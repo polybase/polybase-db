@@ -18,7 +18,7 @@ use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
-use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
+use std::{cmp::min, sync::Arc, time::Duration};
 
 struct RouteState<S: adaptor::IndexerAdaptor> {
     db: Arc<Db<S>>,
