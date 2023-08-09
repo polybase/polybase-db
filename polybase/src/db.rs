@@ -423,7 +423,9 @@ impl<A: IndexerAdaptor> Db<A> {
             .get(collection_id, &output_instance_id, public_key)
             .await
         {
-            return Err(UserError::CollectionIdExists)?;
+            if method.name == "constructor" {
+                return Err(UserError::CollectionIdExists)?;
+            }
         }
 
         // Check output args are same as input, otherwise something strange has happened,
