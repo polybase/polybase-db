@@ -144,7 +144,7 @@ fn record_matches(where_query: &WhereQuery<'_>, record: &RecordRoot) -> Result<b
                             (IndexValue::Boolean(wbool), IndexValue::Boolean(rec_bool)) => {
                                 rec_bool & !wbool
                             }
-                            _ => true, // todo - other IndexValue types
+                            _ => true,
                         }));
                     }
 
@@ -278,7 +278,7 @@ impl IndexerAdaptor for MemoryStore {
             })
             .collect();
 
-        // sort based on order_by
+        // sort the matching records based on order_by
         for IndexField { path, direction } in order_by {
             records.sort_by(|a, b| {
                 let joined_path = path.0.join("."); // vector of fields
@@ -302,10 +302,33 @@ impl IndexerAdaptor for MemoryStore {
                                 IndexDirection::Ascending => ba.cmp(bb),
                                 IndexDirection::Descending => bb.cmp(ba),
                             },
+
+                            (RecordValue::PublicKey(pka), RecordValue::PublicKey(pkb)) => {
+                                match direction {
+                                    IndexDirection::Ascending => {
+                                        pka.partial_cmp(pkb).unwrap_or(std::cmp::Ordering::Greater)
+                                    }
+                                    IndexDirection::Descending => {
+                                        pkb.partial_cmp(pka).unwrap_or(std::cmp::Ordering::Greater)
+                                    }
+                                }
+                            }
+
+                            (
+                                RecordValue::ForeignRecordReference(fra),
+                                RecordValue::ForeignRecordReference(frb),
+                            ) => match direction {
+                                IndexDirection::Ascending => {
+                                    fra.partial_cmp(frb).unwrap_or(std::cmp::Ordering::Greater)
+                                }
+                                IndexDirection::Descending => {
+                                    frb.partial_cmp(fra).unwrap_or(std::cmp::Ordering::Greater)
+                                }
+                            },
                             _ => std::cmp::Ordering::Equal,
                         }
                     } else {
-                        std::cmp::Ordering::Equal
+                        std::cmp::Ordering::Equal // todo - PublicKey and ForeignRecordReference
                     }
                 } else {
                     std::cmp::Ordering::Equal

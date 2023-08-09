@@ -27,7 +27,7 @@ pub enum PublicKeyError {
     Secp256k1Error(#[from] secp256k1::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub struct PublicKey {
     /// Key type. Always `EC` for now.
     kty: String,

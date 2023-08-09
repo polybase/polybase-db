@@ -923,7 +923,7 @@ impl From<RecordReference> for serde_json::Value {
 }
 
 /// A reference to a record in a different collection
-#[derive(Debug, PartialEq, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize, Default)]
 pub struct ForeignRecordReference {
     pub id: String,
     pub collection_id: String,
