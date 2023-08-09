@@ -18,7 +18,7 @@ use crate::rpc::create_rpc_server;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
-use indexer_db_adaptor::{memory, Indexer};
+use indexer_db_adaptor::Indexer;
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
@@ -91,6 +91,8 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
     Ok(())
 }
 
+pub type ArcDbIndexer = Arc<Db<indexer_rocksdb::adaptor::RocksDBAdaptor>>;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::parse();
@@ -139,7 +141,7 @@ async fn main() -> Result<()> {
     // Database combines various components into a single interface
     // that is thread safe
     #[allow(clippy::unwrap_used)]
-    let db = Arc::new(
+    let db: ArcDbIndexer = Arc::new(
         Db::new(
             indexer,
             DbConfig {

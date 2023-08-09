@@ -107,6 +107,17 @@ impl Gateway {
         args: &[serde_json::Value],
         auth: Option<&AuthUser>,
     ) -> Result<FunctionOutput> {
+        // Log the function call
+        debug!(
+            collection_id = &collection_id,
+            collection_code = &js_code,
+            function_name = method,
+            instance = serde_json::to_string(&instance).unwrap_or_default(),
+            args = serde_json::to_string(&args).unwrap_or_default(),
+            auth = serde_json::to_string(&auth).unwrap_or_default(),
+            "function output"
+        );
+
         // Run the function
         let output = self.run(collection_id, js_code, method, instance, args, auth)?;
 

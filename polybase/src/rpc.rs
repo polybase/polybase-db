@@ -7,22 +7,23 @@ use crate::errors::metrics::MetricsData;
 use crate::errors::reason::ReasonCode;
 use crate::errors::AppError;
 use crate::txn::CallTxn;
+use crate::ArcDbIndexer;
 use crate::{auth, util::hash};
 use abi::Parser;
 use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
-use indexer_db_adaptor::adaptor::IndexerAdaptor;
-use indexer_db_adaptor::{adaptor, auth_user::AuthUser, cursor, list_query, memory, where_query};
+// use indexer_db_adaptor::adaptor::IndexerAdaptor;
+use indexer_db_adaptor::{auth_user::AuthUser, cursor, list_query, where_query};
 use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::{cmp::min, sync::Arc, time::Duration};
 
-struct RouteState<A: adaptor::IndexerAdaptor> {
-    db: Arc<Db<A>>,
+struct RouteState {
+    db: ArcDbIndexer,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
 }
@@ -73,7 +74,7 @@ struct GetRecordResponse {
 
 #[get("/{collection}/records/{id}")]
 async fn get_record(
-    state: web::Data<RouteState<memory::MemoryStore>>,
+    state: web::Data<RouteState>,
     path: web::Path<(String, String)>,
     query: web::Query<GetRecordQuery>,
     body: auth::SignedJSON<()>,
@@ -221,7 +222,7 @@ struct ListResponse<'a> {
 #[get("/{collection}/records")]
 async fn get_records<'a>(
     req: HttpRequest,
-    state: web::Data<RouteState<memory::MemoryStore>>,
+    state: web::Data<RouteState>,
     path: web::Path<String>,
     query: web::Query<ListQuery<'a>>,
     body: auth::SignedJSON<()>,
@@ -327,7 +328,7 @@ struct FunctionResponse {
 #[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records")]
 async fn post_record(
-    state: web::Data<RouteState<memory::MemoryStore>>,
+    state: web::Data<RouteState>,
     path: web::Path<String>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
@@ -372,7 +373,7 @@ async fn post_record(
 #[tracing::instrument(skip(state, body))]
 #[post("/{collection}/records/{record}/call/{function}")]
 async fn call_function(
-    state: web::Data<RouteState<memory::MemoryStore>>,
+    state: web::Data<RouteState>,
     path: web::Path<(String, String, String)>,
     body: auth::SignedJSON<FunctionCall>,
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
@@ -513,7 +514,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
 }
 
 #[get("/v0/health")]
-async fn health(state: web::Data<RouteState<memory::MemoryStore>>) -> impl Responder {
+async fn health(state: web::Data<RouteState>) -> impl Responder {
     if state.db.is_healthy() {
         HttpResponse::Ok()
     } else {
@@ -531,9 +532,7 @@ struct StatusResponse {
 
 #[tracing::instrument(skip(state))]
 #[get("/v0/status")]
-async fn status(
-    state: web::Data<RouteState<memory::MemoryStore>>,
-) -> Result<web::Json<StatusResponse>, HTTPError> {
+async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse>, HTTPError> {
     let manifest = state.db.get_manifest().await?;
     let height = manifest.as_ref().map(|m| m.height).unwrap_or(0);
     let hash = manifest
@@ -549,9 +548,9 @@ async fn status(
 }
 
 #[tracing::instrument(skip(db))]
-pub fn create_rpc_server<A: IndexerAdaptor + 'static>(
+pub fn create_rpc_server(
     rpc_laddr: String,
-    db: Arc<Db<A>>,
+    db: ArcDbIndexer,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
 ) -> Result<Server, std::io::Error> {

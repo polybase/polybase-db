@@ -13,6 +13,7 @@ use indexer_db_adaptor::{
     IndexerChange,
 };
 use prost::Message;
+use schema::COLLECTION_SCHEMA;
 use schema::{
     field_path::FieldPath,
     index::{IndexDirection, IndexField},
@@ -521,6 +522,10 @@ impl IndexerAdaptor for RocksDBAdaptor {
     }
 
     async fn get_schema(&self, collection_id: &str) -> adaptor::Result<Option<Schema>> {
+        if collection_id == "Collection" {
+            return Ok(Some(COLLECTION_SCHEMA.clone()));
+        }
+
         let record = match self._get("Collection", collection_id).await? {
             Some(record) => record,
             None => return Ok(None),

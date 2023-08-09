@@ -10,7 +10,7 @@ use schema::{
     field_path::FieldPath,
     publickey::PublicKey,
     record::{ForeignRecordReference, RecordReference, RecordRoot, Reference},
-    Schema, COLLECTION_RECORD,
+    Schema, COLLECTION_RECORD, COLLECTION_SCHEMA,
 };
 use std::{borrow::Cow, pin::Pin, time::SystemTime};
 
@@ -338,6 +338,10 @@ impl<A: IndexerAdaptor> Indexer<A> {
     /// Use this instead of self.adaptor.get_schema to error when schema is missing, i.e.
     /// collection does not exist
     pub async fn get_schema_required(&self, collection_id: &str) -> Result<Schema> {
+        if collection_id == "Collection" {
+            return Ok(COLLECTION_SCHEMA.clone());
+        }
+
         match self.adaptor.get_schema(collection_id).await? {
             Some(schema) => Ok(schema),
             None => Err(UserError::CollectionNotFound {
