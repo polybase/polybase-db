@@ -476,6 +476,15 @@ mod tests {
     use schema::{ast::collection_ast_from_root, Schema};
     use serde_json::json;
 
+    fn get_code(collection_name: &str, collection_schema: &str) -> String {
+        let mut program = None;
+        let (_, stable_ast) = polylang::parse(collection_schema, "ns", &mut program).unwrap();
+
+        let collection = collection_ast_from_root(collection_name, stable_ast).unwrap();
+        let schema = Schema::new(&collection);
+        schema.generate_js()
+    }
+
     #[tokio::test]
     async fn test_constructor() {
         let user_col_code = r#"
@@ -490,12 +499,7 @@ mod tests {
                 }
             }
         "#;
-        let mut program = None;
-        let (_, stable_ast) = polylang::parse(user_col_code, "ns", &mut program).unwrap();
-
-        let collection = collection_ast_from_root("User", stable_ast).unwrap();
-        let schema = Schema::new(&collection);
-        let js_code = schema.generate_js();
+        let js_code = get_code("User", user_col_code);
 
         let gateway = initialize();
         let output = gateway
@@ -528,12 +532,7 @@ mod tests {
                 }
             }
         "#;
-        let mut program = None;
-        let (_, stable_ast) = polylang::parse(user_col_code, "ns", &mut program).unwrap();
-
-        let collection = collection_ast_from_root("User", stable_ast).unwrap();
-        let schema = Schema::new(&collection);
-        let js_code = schema.generate_js();
+        let js_code = get_code("User", user_col_code);
 
         let gateway = initialize();
         let output = gateway
@@ -553,6 +552,72 @@ mod tests {
 
         assert_eq!(output.instance, json!({ "id": "1", "name": "new name" }));
         assert_eq!(output.args, vec![json!("new name")]);
-        assert!(!output.self_destruct);
+        assert!(!output.self_destruct, "selfdestruct() was called");
+    }
+
+    #[tokio::test]
+    async fn test_nested_fields() {
+        let user_col_code = r#"
+            @public
+            collection Account {
+                id: string;
+                info: {
+                    name: string;
+                };
+            
+                @index(info.name);
+            
+                constructor (id: string, name: string) {
+                    this.id = id;
+                    this.info = { name: name };
+                }
+            }
+        "#;
+        let js_code = get_code("Account", user_col_code);
+
+        let gateway = initialize();
+        let output = gateway
+            .call(
+                "ns/Account",
+                &js_code,
+                "constructor",
+                &json!({}),
+                &[json!("1"), json!("new name")],
+                None,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            output.instance,
+            json!({ "id": "1", "info": { "name": "new name" } })
+        );
+        assert_eq!(output.args, vec![json!("1"), json!("new name")]);
+        assert!(!output.self_destruct, "selfdestruct() was called");
+    }
+
+    #[tokio::test]
+    async fn test_self_destruct() {
+        let user_col_code = r#"
+            @public
+            collection User {
+                id: string;
+            
+                del () {
+                    selfdestruct();
+                }
+            }
+        "#;
+        let js_code = get_code("User", user_col_code);
+
+        let gateway = initialize();
+        let output = gateway
+            .call("ns/User", &js_code, "del", &json!({}), &[], None)
+            .await
+            .unwrap();
+
+        assert_eq!(output.instance, json!({}));
+        assert_eq!(output.args, Vec::<serde_json::Value>::new());
+        assert!(output.self_destruct, "selfdestruct() was not called");
     }
 }

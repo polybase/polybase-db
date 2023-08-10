@@ -11,7 +11,10 @@ use crate::{
     types::{PrimitiveType, Type},
 };
 use polylang::stableast;
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+};
 
 // TODO: can we remove Clone
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -162,8 +165,11 @@ impl Schema {
         record: &'a RecordRoot,
     ) -> impl Iterator<Item = (FieldPath, Reference<'a>)> {
         // Find any auth references
-        self.fields_auth(directives)
-            .filter_map(map_to_reference(record))
+        unique_filter(
+            self.fields_auth(directives)
+                .filter_map(map_to_reference(record)),
+            |(path, _)| path,
+        )
     }
 
     /// Finds all fields including fields referenced in method directives arguments
@@ -173,9 +179,12 @@ impl Schema {
         record: &'a RecordRoot,
     ) -> impl Iterator<Item = (FieldPath, Reference<'a>)> {
         // Find any auth references
-        self.fields_auth(&[DirectiveKind::Call])
-            .chain(self.method_auth(method))
-            .filter_map(map_to_reference(record))
+        unique_filter(
+            self.fields_auth(&[DirectiveKind::Call])
+                .chain(self.method_auth(method))
+                .filter_map(map_to_reference(record)),
+            |(path, _)| path,
+        )
     }
 
     /// Get all properties from @call directives on a method, e.g @call(publicKey, anotherField)
@@ -344,8 +353,28 @@ fn map_to_reference<'a>(
     }
 }
 
+// Filter iter for unique values
+fn unique_filter<I, F, T, U>(iter: I, uniqueness_test: F) -> impl Iterator<Item = T>
+where
+    I: Iterator<Item = T>,
+    F: Fn(&T) -> &U,
+    U: Eq + Hash + PartialEq + Clone + 'static,
+{
+    let mut seen = HashSet::new();
+    iter.filter(move |item| {
+        let v = uniqueness_test(item);
+        if seen.contains(v) {
+            false
+        } else {
+            seen.insert(v.clone());
+            true
+        }
+    })
+}
 #[cfg(test)]
 mod test {
+    use crate::record::RecordReference;
+
     use super::*;
     use polylang::parse;
 
@@ -428,6 +457,72 @@ mod test {
     }
 
     #[test]
+    fn test_find_directive_references() {
+        let code = r#"
+            collection Test {
+                id: string;
+                @read
+                name: PublicKey;
+                @read
+                ignored: string;
+                @read
+                read: Test;
+                @delegate
+                delegate: Test;
+            }
+        "#;
+
+        let schema = create_schema("Test", code);
+        assert_eq!(
+            schema
+                .find_directive_references(
+                    &[DirectiveKind::Read, DirectiveKind::Delegate],
+                    &RecordRoot(
+                        [(
+                            "read".to_string(),
+                            RecordValue::RecordReference(RecordReference {
+                                id: "test".to_string()
+                            })
+                        )]
+                        .into()
+                    )
+                )
+                .map(|(p, _)| p.to_string())
+                .collect::<Vec<_>>(),
+            vec!["read"],
+        );
+    }
+
+    #[test]
+    fn test_find_directive_references_empty_record() {
+        let code = r#"
+            collection Test {
+                id: string;
+                @read
+                name: PublicKey;
+                @read
+                ignored: string;
+                @read
+                read: Test;
+                @delegate
+                delegate: Test;
+            }
+        "#;
+
+        let schema = create_schema("Test", code);
+        assert_eq!(
+            schema
+                .find_directive_references(
+                    &[DirectiveKind::Read, DirectiveKind::Delegate],
+                    &RecordRoot(HashMap::new())
+                )
+                .map(|(p, _)| p.to_string())
+                .collect::<Vec<_>>(),
+            Vec::<String>::new(),
+        );
+    }
+
+    #[test]
     fn test_method_auth() {
         let code = r#"
             collection Test {
@@ -453,6 +548,75 @@ mod test {
                 .map(|p| p.path.to_string())
                 .collect::<Vec<_>>(),
             vec!["name", "call_prop"]
+        );
+    }
+
+    #[test]
+    fn test_method_references_with_empty_record() {
+        let code = r#"
+            collection Test {
+                id: string;
+                name: PublicKey;
+                ignored: string;
+                @delegate
+                delegate: Test;
+                @call
+                call_prop: Test;
+
+                @call(name)
+                @call(call_prop)
+                @call(ignored)
+                function test() {}
+            }
+        "#;
+
+        let schema = create_schema("Test", code);
+        assert_eq!(
+            schema
+                .find_method_references("test", &RecordRoot(HashMap::new()))
+                .map(|(p, _)| p.to_string())
+                .collect::<Vec<_>>(),
+            Vec::<String>::new(),
+        );
+    }
+
+    #[test]
+    fn test_method_references_with_record() {
+        let code = r#"
+            collection Test {
+                id: string;
+                name: PublicKey;
+                ignored: string;
+                @delegate
+                delegate: Test;
+                @call
+                call_prop: Test;
+
+                @call(name)
+                @call(call_prop)
+                @call(ignored)
+                function test() {}
+            }
+        "#;
+
+        let schema = create_schema("Test", code);
+        assert_eq!(
+            schema
+                .find_method_references(
+                    "test",
+                    &RecordRoot(
+                        [(
+                            "call_prop".to_string(),
+                            RecordValue::RecordReference(RecordReference {
+                                id: "test".to_string()
+                            })
+                        )]
+                        .into()
+                    )
+                )
+                .map(|(p, _)| p.to_string())
+                .collect::<Vec<_>>(),
+            vec!["call_prop"]
         );
     }
 }

@@ -210,8 +210,9 @@ impl<A: IndexerAdaptor> Indexer<A> {
         record: &RecordRoot,
         public_key: Option<&PublicKey>,
     ) -> bool {
-        // Always allow call if schema allows any
-        if schema.call_all {
+        // Always allow call if schema allows any, and there are no @call directives
+        // on the method be called
+        if schema.call_all && schema.method_auth(method).next().is_none() {
             return true;
         }
 

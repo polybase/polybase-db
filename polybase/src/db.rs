@@ -311,6 +311,8 @@ impl<A: IndexerAdaptor> Db<A> {
             }
         };
 
+        // TODO: validate parameters
+
         // Get the js code to run
         let js_code = schema.generate_js();
 

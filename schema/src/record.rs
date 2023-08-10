@@ -921,6 +921,7 @@ impl RecordValue {
 }
 
 /// A reference to another record (either same collection or foreign)
+#[derive(Debug)]
 pub enum Reference<'a> {
     Record(&'a RecordReference),
     ForeignRecord(&'a ForeignRecordReference),

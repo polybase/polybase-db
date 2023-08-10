@@ -189,23 +189,6 @@ impl ReasonCode {
         }
     }
 
-    // pub fn from_schema_error(err: &schema::UserError) -> Self {
-    //     match err {
-    //         schema::UserError::Method(err) => Self::from_schema_method_error(err),
-    //     }
-    // }
-
-    pub fn from_schema_method_error(err: &schema::methods::UserError) -> Self {
-        match err {
-            schema::methods::UserError::MethodIncorrectNumberOfArguments { .. } => {
-                ReasonCode::FunctionInvalidArgs
-            }
-            schema::methods::UserError::MethodInvalidArgumentType { .. } => {
-                ReasonCode::FunctionInvalidArgs
-            }
-        }
-    }
-
     pub fn from_indexer_error(err: &indexer_db_adaptor::UserError) -> Self {
         match err {
             indexer_db_adaptor::UserError::CollectionNotFound { .. } => {
@@ -275,6 +258,17 @@ impl ReasonCode {
               // indexer_db_adaptor::CollectionUserError::Schema(_) => {
               //     ReasonCode::CollectionInvalidSchema
               // }
+        }
+    }
+
+    pub fn from_schema_method_error(err: &schema::methods::UserError) -> Self {
+        match err {
+            schema::methods::UserError::MethodIncorrectNumberOfArguments { .. } => {
+                ReasonCode::FunctionInvalidArgs
+            }
+            schema::methods::UserError::MethodInvalidArgumentType { .. } => {
+                ReasonCode::FunctionInvalidArgs
+            }
         }
     }
 

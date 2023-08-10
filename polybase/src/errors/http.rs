@@ -106,7 +106,10 @@ impl From<db::Error> for HTTPError {
 
 impl From<db::UserError> for HTTPError {
     fn from(err: db::UserError) -> Self {
-        HTTPError::new(ReasonCode::from_db_error(&err), Some(Box::new(err)))
+        match err {
+            db::UserError::Method(e) => e.into(),
+            _ => HTTPError::new(ReasonCode::from_db_error(&err), Some(Box::new(err))),
+        }
     }
 }
 
@@ -156,6 +159,15 @@ impl From<schema::record::RecordUserError> for HTTPError {
     fn from(err: schema::record::RecordUserError) -> Self {
         HTTPError::new(
             ReasonCode::from_record_user_error(&err),
+            Some(Box::new(err)),
+        )
+    }
+}
+
+impl From<schema::methods::UserError> for HTTPError {
+    fn from(err: schema::methods::UserError) -> Self {
+        HTTPError::new(
+            ReasonCode::from_schema_method_error(&err),
             Some(Box::new(err)),
         )
     }
