@@ -406,8 +406,8 @@ fn is_inequality_forwards(key: &FieldPath, order_by: &[IndexField], dir: &Cursor
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum WhereNode<'a> {
-    Inequality(Box<WhereInequality<'a>>),
     Equality(WhereValue<'a>),
+    Inequality(Box<WhereInequality<'a>>),
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -416,12 +416,16 @@ pub struct WhereValue<'a>(pub IndexValue<'a>);
 #[derive(Debug, Serialize, Default, Clone)]
 pub struct WhereInequality<'a> {
     #[serde(rename = "$gt")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gt: Option<WhereValue<'a>>,
     #[serde(rename = "$gte")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub gte: Option<WhereValue<'a>>,
     #[serde(rename = "$lt")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lt: Option<WhereValue<'a>>,
     #[serde(rename = "$lte")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub lte: Option<WhereValue<'a>>,
 }
 
@@ -470,314 +474,52 @@ impl<'de, 'a> Deserialize<'de> for WhereInequality<'a> {
     }
 }
 
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-//     use crate::index::IndexDirection;
+#[cfg(test)]
+mod test {
+    use super::*;
+    use schema::index_value::IndexValue;
 
-//     macro_rules! test_to_key_range {
-//         ($name:ident, $query:expr, $fields:expr, $directions:expr, $lower:expr, $upper:expr) => {
-//             #[test]
-//             fn $name() {
-//                 let query = $query;
+    #[test]
+    fn test_equality_serialization() {
+        let query: WhereQuery<'_> = WhereQuery(
+            [
+                (
+                    "name".into(),
+                    WhereNode::Equality(WhereValue(IndexValue::String("John".into()))),
+                ), // ("isActive".to_string(), json!(true),
+            ]
+            .into(),
+        );
+        let query_str = r#"{"name":"John"}"#;
 
-//                 let key_range = query
-//                     .key_range(
-//                         &polylang::stableast::Collection {
-//                             namespace: polylang::stableast::Namespace {
-//                                 value: "test".into(),
-//                             },
-//                             name: "Sample".into(),
-//                             attributes: vec![
-//                                 polylang::stableast::CollectionAttribute::Property(
-//                                     polylang::stableast::Property {
-//                                         name: "id".into(),
-//                                         type_: polylang::stableast::Type::Primitive(
-//                                             polylang::stableast::Primitive {
-//                                                 value: polylang::stableast::PrimitiveType::String,
-//                                             },
-//                                         ),
-//                                         directives: vec![],
-//                                         required: false,
-//                                     },
-//                                 ),
-//                                 polylang::stableast::CollectionAttribute::Property(
-//                                     polylang::stableast::Property {
-//                                         name: "name".into(),
-//                                         type_: polylang::stableast::Type::Primitive(
-//                                             polylang::stableast::Primitive {
-//                                                 value: polylang::stableast::PrimitiveType::String,
-//                                             },
-//                                         ),
-//                                         directives: vec![],
-//                                         required: false,
-//                                     },
-//                                 ),
-//                                 polylang::stableast::CollectionAttribute::Property(
-//                                     polylang::stableast::Property {
-//                                         name: "age".into(),
-//                                         type_: polylang::stableast::Type::Primitive(
-//                                             polylang::stableast::Primitive {
-//                                                 value: polylang::stableast::PrimitiveType::Number,
-//                                             },
-//                                         ),
-//                                         directives: vec![],
-//                                         required: false,
-//                                     },
-//                                 ),
-//                             ],
-//                         },
-//                         "namespace".to_string(),
-//                         $fields,
-//                         $directions,
-//                     )
-//                     .unwrap();
+        assert_eq!(query_str, serde_json::to_string(&query).unwrap());
 
-//                 assert_eq!(key_range.lower, $lower, "lower");
+        let _: WhereQuery = serde_json::from_str(query_str).unwrap();
+    }
 
-//                 assert_eq!(key_range.upper, $upper, "upper");
-//             }
-//         };
-//     }
+    #[test]
+    fn test_inequality_serialization() {
+        let query: WhereQuery<'_> = WhereQuery(
+            [
+                (
+                    "name".into(),
+                    WhereNode::Inequality(
+                        WhereInequality {
+                            gt: Some(WhereValue(IndexValue::String("John".into()))),
+                            gte: None,
+                            lt: None,
+                            lte: None,
+                        }
+                        .into(),
+                    ),
+                ), // ("isActive".to_string(), json!(true),
+            ]
+            .into(),
+        );
+        let query_str = r#"{"name":{"$gt":"John"}}"#;
 
-//     test_to_key_range!(
-//         test_to_key_range_name_eq_john,
-//         WhereQuery(HashMap::from_iter(vec![(
-//             FieldPath(vec!["name".to_string()]),
-//             WhereNode::Equality(WhereValue("john".into())),
-//         )])),
-//         &[&["name"]],
-//         &[IndexDirection::Ascending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["name"]],
-//             &[IndexDirection::Ascending],
-//             vec![Cow::Owned(IndexValue::String("john".to_string().into()))]
-//         )
-//         .unwrap(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["name"]],
-//             &[IndexDirection::Ascending],
-//             vec![Cow::Owned(IndexValue::String("john".to_string().into()))]
-//         )
-//         .unwrap()
-//         .wildcard()
-//     );
+        assert_eq!(query_str, serde_json::to_string(&query).unwrap());
 
-//     test_to_key_range!(
-//         test_to_key_range_age_gt_30,
-//         WhereQuery(HashMap::from_iter(vec![(
-//             FieldPath(vec!["age".to_string()]),
-//             WhereNode::Inequality(WhereInequality {
-//                 gt: Some(WhereValue(30.0.into())),
-//                 ..Default::default()
-//             }),
-//         )])),
-//         &[&["age"]],
-//         &[IndexDirection::Ascending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             vec![Cow::Borrowed(&IndexValue::Number(30.0))]
-//         )
-//         .unwrap()
-//         .wildcard(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             Vec::new(),
-//         )
-//         .unwrap()
-//         .wildcard()
-//     );
-
-//     test_to_key_range!(
-//         test_to_key_range_age_gte_30,
-//         WhereQuery(HashMap::from_iter(vec![(
-//             FieldPath(vec!["age".to_string()]),
-//             WhereNode::Inequality(WhereInequality {
-//                 gte: Some(WhereValue(30.0.into())),
-//                 ..Default::default()
-//             }),
-//         )])),
-//         &[&["age"]],
-//         &[IndexDirection::Ascending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             vec![Cow::Borrowed(&IndexValue::Number(30.0))]
-//         )
-//         .unwrap(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             Vec::new(),
-//         )
-//         .unwrap()
-//         .wildcard()
-//     );
-
-//     test_to_key_range!(
-//         test_to_key_range_age_lt_30,
-//         WhereQuery(HashMap::from_iter(vec![(
-//             FieldPath(vec!["age".to_string()]),
-//             WhereNode::Inequality(WhereInequality {
-//                 lt: Some(WhereValue(30.0.into())),
-//                 ..Default::default()
-//             }),
-//         )])),
-//         &[&["age"]],
-//         &[IndexDirection::Ascending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             Vec::new(),
-//         )
-//         .unwrap(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             vec![Cow::Borrowed(&IndexValue::Number(30.0))]
-//         )
-//         .unwrap()
-//     );
-
-//     test_to_key_range!(
-//         test_to_key_range_age_lte_30,
-//         WhereQuery(HashMap::from_iter(vec![(
-//             FieldPath(vec!["age".to_string()]),
-//             WhereNode::Inequality(WhereInequality {
-//                 lte: Some(WhereValue(30.0.into())),
-//                 ..Default::default()
-//             }),
-//         )])),
-//         &[&["age"]],
-//         &[IndexDirection::Ascending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             Vec::new(),
-//         )
-//         .unwrap(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Ascending],
-//             vec![Cow::Borrowed(&IndexValue::Number(30.0))]
-//         )
-//         .unwrap()
-//         .wildcard()
-//     );
-
-//     test_to_key_range!(
-//         test_to_key_range_age_lt_50_desc,
-//         WhereQuery(HashMap::from_iter(vec![(
-//             FieldPath(vec!["age".to_string()]),
-//             WhereNode::Inequality(WhereInequality {
-//                 lt: Some(WhereValue(50.0.into())),
-//                 ..Default::default()
-//             }),
-//         )])),
-//         &[&["age"]],
-//         &[IndexDirection::Descending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Descending],
-//             vec![Cow::Borrowed(&IndexValue::Number(50.0))]
-//         )
-//         .unwrap()
-//         .wildcard(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["age"]],
-//             &[IndexDirection::Descending],
-//             Vec::new(),
-//         )
-//         .unwrap()
-//         .wildcard()
-//     );
-
-//     test_to_key_range!(
-//         test_to_key_range_age_gt_30_name_eq_john,
-//         WhereQuery(HashMap::from_iter(vec![
-//             (
-//                 FieldPath(vec!["age".to_string()]),
-//                 WhereNode::Inequality(WhereInequality {
-//                     gt: Some(WhereValue(30.0.into())),
-//                     ..Default::default()
-//                 }),
-//             ),
-//             (
-//                 FieldPath(vec!["name".to_string()]),
-//                 WhereNode::Equality(WhereValue("John".into())),
-//             ),
-//         ])),
-//         &[&["name"], &["age"]],
-//         &[IndexDirection::Ascending, IndexDirection::Ascending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["name"], &["age"]],
-//             &[IndexDirection::Ascending, IndexDirection::Ascending],
-//             vec![
-//                 Cow::Owned(IndexValue::String("John".to_string().into())),
-//                 Cow::Borrowed(&IndexValue::Number(30.0)),
-//             ]
-//         )
-//         .unwrap()
-//         .wildcard(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["name"], &["age"]],
-//             &[IndexDirection::Ascending, IndexDirection::Ascending],
-//             vec![Cow::Owned(IndexValue::String("John".into())),]
-//         )
-//         .unwrap()
-//         .wildcard()
-//     );
-
-//     test_to_key_range!(
-//         test_to_key_range_name_eq_john_id_eq_rec1,
-//         WhereQuery(HashMap::from_iter(vec![
-//             (
-//                 FieldPath(vec!["name".to_string()]),
-//                 WhereNode::Equality(WhereValue("John".into())),
-//             ),
-//             (
-//                 FieldPath(vec!["id".to_string()]),
-//                 WhereNode::Equality(WhereValue("rec1".into())),
-//             ),
-//         ])),
-//         &[&["name"], &["id"]],
-//         &[IndexDirection::Ascending, IndexDirection::Ascending],
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["name"], &["id"]],
-//             &[IndexDirection::Ascending, IndexDirection::Ascending],
-//             vec![
-//                 Cow::Owned(IndexValue::String("John".to_string().into())),
-//                 Cow::Owned(IndexValue::String("rec1".to_string().into())),
-//             ]
-//         )
-//         .unwrap(),
-//         keys::Key::new_index(
-//             "namespace".to_string(),
-//             &[&["name"], &["id"]],
-//             &[IndexDirection::Ascending, IndexDirection::Ascending],
-//             vec![
-//                 Cow::Owned(IndexValue::String("John".to_string().into())),
-//                 Cow::Owned(IndexValue::String("rec1".to_string().into())),
-//             ]
-//         )
-//         .unwrap()
-//         .wildcard()
-//     );
-// }
+        let _: WhereQuery = serde_json::from_str(query_str).unwrap();
+    }
+}

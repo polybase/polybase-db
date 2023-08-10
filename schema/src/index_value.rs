@@ -11,6 +11,7 @@ pub enum IndexValueError {
 
 // TODO: refactor this into own module
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[serde(untagged)]
 pub enum IndexValue<'a> {
     Number(f64),
     Boolean(bool),

@@ -224,6 +224,9 @@ collection Account {
     }
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let pk_hex = public_key.to_hex().unwrap();
+
     let signer =
         Signer::from(move |body: &str| Signature::create(&private_key, SystemTime::now(), body));
 
@@ -242,7 +245,7 @@ collection Account {
         Account {
             id: "id1".to_string(),
             balance: 10.0,
-            owner: Some(schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap()),
+            owner: Some(public_key.clone()),
         }
     );
 
@@ -284,10 +287,18 @@ collection Account {
         }
     );
 
+    println!("pk_hex: {}", pk_hex);
+
     // Listing records with the same key succeeds
     assert_eq!(
         collection
-            .list(ListQuery::default(), Some(&signer))
+            .list(
+                ListQuery {
+                    where_query: Some(json!({"owner": pk_hex})),
+                    ..Default::default()
+                },
+                Some(&signer)
+            )
             .await
             .unwrap()
             .into_record_data(),

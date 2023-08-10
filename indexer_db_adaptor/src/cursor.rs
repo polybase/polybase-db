@@ -33,7 +33,7 @@ impl<'a> Serialize for Cursor<'a> {
     where
         S: serde::Serializer,
     {
-        let buf = bincode::serialize(&self.0).unwrap();
+        let buf = serde_json::to_vec(&self.0).unwrap();
         serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(buf))
     }
 }
@@ -48,7 +48,7 @@ impl<'de, 'a> Deserialize<'de> for Cursor<'a> {
             .decode(s.as_bytes())
             .map_err(serde::de::Error::custom)?;
         Ok(Self(
-            bincode::deserialize(&buf).map_err(serde::de::Error::custom)?,
+            serde_json::from_slice(&buf).map_err(serde::de::Error::custom)?,
         ))
     }
 }
