@@ -378,7 +378,7 @@ impl<'a> WhereQuery<'a> {
         })
     }
 
-    // TODO: consider
+    // TODO: needs optimizing, consider using RecordValue insead of IndexValue
     pub fn cast(&mut self, schema: &Schema) -> Result<()> {
         for (path, node) in &mut self.0 {
             let prop = schema.properties.get_path(path).ok_or(
@@ -393,7 +393,6 @@ impl<'a> WhereQuery<'a> {
             }
         }
 
-        self.0.iter_mut().for_each(|(k, v)| {});
         Ok(())
     }
 

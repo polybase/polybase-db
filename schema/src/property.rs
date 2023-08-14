@@ -157,3 +157,41 @@ pub fn properties_from_ast<'a>(
         _ => None,
     })
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::types::PrimitiveType;
+
+    #[test]
+    fn test_get_path_single_depth() {
+        let properties = PropertyList::new(vec![Property {
+            path: FieldPath::new(vec!["foo".to_string()]),
+            type_: Type::Primitive(PrimitiveType::String),
+            required: false,
+            index: false,
+            directives: vec![],
+        }]);
+
+        assert_eq!(
+            properties.get_path(&"foo".into()),
+            Some(&properties.properties[0])
+        );
+    }
+
+    #[test]
+    fn test_get_path_multi_depth() {
+        let properties = PropertyList::new(vec![Property {
+            path: FieldPath::new(vec!["foo".to_string(), "bar".to_string()]),
+            type_: Type::Primitive(PrimitiveType::String),
+            required: false,
+            index: false,
+            directives: vec![],
+        }]);
+
+        assert_eq!(
+            properties.get_path(&vec!["foo", "bar"].into()),
+            Some(&properties.properties[0])
+        );
+    }
+}

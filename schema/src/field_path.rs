@@ -68,11 +68,17 @@ impl FieldPath {
     }
 }
 
+impl From<&str> for FieldPath {
+    fn from(v: &str) -> Self {
+        Self(v.split('.').map(|s| s.to_string()).collect())
+    }
+}
+
 impl FromStr for FieldPath {
     type Err = ParseError;
 
     fn from_str(path: &str) -> Result<Self, Self::Err> {
-        Ok(Self(vec![path.to_string()]))
+        Ok(Self::from(path))
     }
 }
 
@@ -103,18 +109,6 @@ impl From<Vec<&String>> for FieldPath {
 impl From<Vec<&str>> for FieldPath {
     fn from(v: Vec<&str>) -> Self {
         Self(v.iter().map(|s| s.to_string()).collect())
-    }
-}
-
-// impl From<dyn AsRef<str>> for FieldPath {
-//     fn from(v: dyn AsRef<str>) -> Self {
-//         Self(vec![v.to_string()])
-//     }
-// }
-
-impl From<&str> for FieldPath {
-    fn from(v: &str) -> Self {
-        Self(vec![v.to_string()])
     }
 }
 
@@ -156,5 +150,35 @@ impl Serialize for FieldPath {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_from_str() {
+        let path = "foo.bar.baz";
+
+        let field_path = FieldPath::from_str(path).unwrap();
+        assert_eq!(
+            field_path,
+            FieldPath(vec![
+                "foo".to_string(),
+                "bar".to_string(),
+                "baz".to_string()
+            ])
+        );
+
+        let field_path = FieldPath::from(path);
+        assert_eq!(
+            field_path,
+            FieldPath(vec![
+                "foo".to_string(),
+                "bar".to_string(),
+                "baz".to_string()
+            ])
+        );
     }
 }
