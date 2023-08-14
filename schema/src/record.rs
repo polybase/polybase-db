@@ -1,5 +1,6 @@
 use crate::field_path::FieldPath;
 use crate::index_value::IndexValue;
+use crate::property::Property;
 use crate::publickey;
 use crate::schema::Schema;
 use crate::types::{ForeignRecord, PrimitiveType, Type};
@@ -89,13 +90,16 @@ pub enum RecordUserError {
     #[error("record reference missing field")]
     RecordReferenceUnexpectedFields { fields: String },
 
-    #[error("foreign record reference has incorrect collection id")]
+    #[error(
+        "foreign record reference has incorrect collection id, expected: \"{expected}\", got: \"{got}\""
+    )]
     ForeignRecordReferenceHasWrongCollectionId { expected: String, got: String },
 
     #[error("unexpected fields: {}", .fields.join(", "))]
     UnexpectedFields { fields: Vec<String> },
 }
 
+// TODO: RecordRoot should be a RecordValue of type ObjectValue
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde()]
 pub struct RecordRoot(pub HashMap<String, RecordValue>);
@@ -118,7 +122,34 @@ impl RecordRoot {
     // TODO: this should validate against the schema, do we need this, given
     // we do the conversion based on schema?
     pub fn validate(&self, schema: &Schema) -> Result<()> {
+        // Check we have a valid id
         self.id()?;
+
+        let mut keys = self
+            .0
+            .keys()
+            .map(|k| (k.as_str(), true))
+            .collect::<HashMap<_, _>>();
+
+        for prop in schema.properties.iter() {
+            if let Some(val) = self.0.get(prop.name()) {
+                keys.remove(prop.name());
+                if prop.required {
+                    return Err(RecordUserError::MissingField {
+                        field: prop.name().to_string(),
+                    })?;
+                }
+                val.validate_prop(prop)?;
+            }
+        }
+
+        // Check for extra fields
+        if !keys.is_empty() {
+            return Err(RecordUserError::UnexpectedFields {
+                fields: keys.keys().map(|k| k.to_string()).collect(),
+            })?;
+        }
+
         Ok(())
     }
 
@@ -321,6 +352,11 @@ pub enum RecordValue {
 
 impl RecordValue {
     pub fn cast(self, type_: &Type) -> Result<Self> {
+        // No casting needed
+        if self.is_type(type_) {
+            return Ok(self);
+        }
+
         let v = match type_ {
             // String
             Type::Primitive(PrimitiveType::String) => match self {
@@ -401,7 +437,72 @@ impl RecordValue {
         Ok(v?)
     }
 
-    pub fn validate(&self, type_: &Type) -> Result<()> {
+    pub fn validate_prop(&self, prop: &Property) -> Result<()> {
+        let type_ = &prop.type_;
+
+        // Check type is valid
+        if !self.is_type(type_) {
+            return Err(RecordUserError::InvalidFieldValueType {
+                value: serde_json::to_value(self)?,
+                expected_type: type_.to_string(),
+                field: Some(prop.path.path().to_string()),
+            })?;
+        }
+
+        // Check required type properties
+        self.validate_type(&prop.type_)?;
+
+        // Recursively check array/map/object types
+        match (&prop.type_, self) {
+            (Type::Array(a), RecordValue::Array(v)) => {
+                for value in v {
+                    value.validate_type(&a.value)?;
+                }
+                Ok(())
+            }
+            (Type::Map(m), RecordValue::Map(map)) => {
+                for (_, value) in map.iter() {
+                    value.validate_type(&m.value)?;
+                }
+                Ok(())
+            }
+            (Type::Object(m), RecordValue::Map(map)) => {
+                let mut keys = map
+                    .keys()
+                    .map(|k| (k.as_str(), true))
+                    .collect::<HashMap<_, _>>();
+
+                for prop in m.fields.iter() {
+                    if let Some(val) = map.get(prop.name()) {
+                        keys.remove(prop.name());
+                        if prop.required {
+                            return Err(RecordUserError::MissingField {
+                                field: prop.path.path().to_string(),
+                            })?;
+                        }
+
+                        val.validate_prop(prop)?;
+                    }
+                }
+
+                // Check for extra fields
+                if !keys.is_empty() {
+                    return Err(RecordUserError::UnexpectedFields {
+                        fields: keys
+                            .keys()
+                            .map(|k| format!("{}.{}", prop.path.path(), k))
+                            .collect(),
+                    })?;
+                }
+
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    pub fn validate_type(&self, type_: &Type) -> Result<()> {
+        // Check for required fields
         match (type_, self) {
             (
                 Type::ForeignRecord(ForeignRecord { collection }),
@@ -420,30 +521,12 @@ impl RecordValue {
                 }
                 Ok(())
             }
-            (Type::Array(a), RecordValue::Array(v)) => {
-                for value in v {
-                    value.validate(&a.value)?;
-                }
-                Ok(())
-            }
-            (Type::Map(m), RecordValue::Map(map)) => {
-                for (_, value) in map.iter() {
-                    value.validate(&m.value)?;
-                }
-                Ok(())
-            }
-            (Type::Object(m), RecordValue::Map(map)) => {
-                for p in m.fields.iter() {
-                    if let Some(value) = map.get(p.name()) {
-                        value.validate(type_)?;
-                    }
-                }
-                Ok(())
-            }
             _ => Ok(()),
         }
     }
 
+    /// Recursively check if the value is of the given type, for arrays/maps/objects it
+    /// checks that all sub-values are of the required type
     pub fn is_type(&self, type_: &Type) -> bool {
         match (type_, self) {
             (Type::Primitive(PrimitiveType::String), RecordValue::String(_)) => true,
@@ -451,7 +534,6 @@ impl RecordValue {
             (Type::Primitive(PrimitiveType::Boolean), RecordValue::Boolean(_)) => true,
             (Type::Primitive(PrimitiveType::Bytes), RecordValue::Bytes(_)) => true,
             (Type::PublicKey, RecordValue::PublicKey(_)) => true,
-            // TODO: Map over these types to check sub-types
             (Type::Array(a), RecordValue::Array(v)) => {
                 for value in v {
                     if !value.is_type(&a.value) {
@@ -485,8 +567,10 @@ impl RecordValue {
         }
     }
 
+    // TODO: should we not throw an error here, but filter bad results, as then we could
+    // pick up the error more easily during validation?
     pub fn try_from_json(type_: &Type, value: serde_json::Value) -> Result<Self> {
-        let v = match type_ {
+        let v: std::result::Result<RecordValue, RecordUserError> = match type_ {
             // String
             Type::Primitive(PrimitiveType::String) => match value {
                 serde_json::Value::String(s) => Ok(RecordValue::String(s)),
@@ -577,29 +661,22 @@ impl RecordValue {
                 _ => error_invalid_field_value_type(value, type_),
             },
             // // Foreign Record
-            Type::ForeignRecord(frt) => match value {
-                serde_json::Value::Object(o) => {
-                    let f_ref = ForeignRecordReference::try_from(o)?;
-                    // TODO: we should not be using short collection name here!
-                    #[allow(clippy::unwrap_used)]
-                    let short_collection_name = f_ref.collection_id.split('/').last().unwrap();
-                    if short_collection_name != frt.collection {
-                        return Err(
-                            RecordUserError::ForeignRecordReferenceHasWrongCollectionId {
-                                expected: frt.collection.to_string(),
-                                got: f_ref.collection_id.to_string(),
-                            },
-                        )?;
-                    }
-                    Ok(RecordValue::ForeignRecordReference(f_ref))
-                }
+            Type::ForeignRecord(_) => match value {
+                serde_json::Value::Object(o) => Ok(RecordValue::ForeignRecordReference(
+                    ForeignRecordReference::try_from(o)?,
+                )),
                 _ => error_invalid_field_value_type(value, type_),
             },
             // Anything else is an error
             _ => error_invalid_field_value_type(value, type_),
         };
 
-        Ok(v?)
+        let v = v?;
+
+        // Validate the conversion
+        v.validate_type(type_)?;
+
+        Ok(v)
     }
 
     pub fn default_from_type(type_: &Type) -> Self {
@@ -671,6 +748,7 @@ impl From<RecordValue> for serde_json::Value {
 }
 
 impl RecordValue {
+    // TODO: Remove
     pub fn walk<'a, E: std::error::Error>(
         &'a self,
         current_path: &mut Vec<Cow<'a, str>>,

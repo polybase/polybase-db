@@ -126,6 +126,10 @@ impl Gateway {
             "function after"
         );
 
+        if method == "constructor" && output.instance.get("id").is_none() {
+            return Err(GatewayUserError::ConstructorMustAssignId)?;
+        }
+
         if method != "constructor" && instance.get("id") != output.instance.get("id") {
             return Err(GatewayUserError::RecordIDModified)?;
         }
