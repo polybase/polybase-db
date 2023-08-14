@@ -5,7 +5,6 @@ use crate::{
     types::Type,
 };
 use polylang::stableast;
-use std::borrow::Cow;
 
 pub type Result<T> = std::result::Result<T, UserError>;
 
@@ -100,11 +99,15 @@ impl Method {
                     return Ok(RecordValue::Null);
                 }
 
-                RecordValue::try_from_json(&param.type_, arg.clone()).map_err(|e| {
-                    UserError::MethodInvalidArgumentType {
-                        parameter_name: param.name.to_string(),
-                        source: e,
-                    }
+                RecordValue::try_from_json_type(
+                    &param.type_,
+                    &param.name.as_str().into(),
+                    arg.clone(),
+                    false,
+                )
+                .map_err(|e| UserError::MethodInvalidArgumentType {
+                    parameter_name: param.name.to_string(),
+                    source: e,
                 })
             })
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -125,6 +128,7 @@ impl Method {
     }
 }
 
+// TODO: should we just make this a Property, as we can then use them interchangeably
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
     pub name: String,

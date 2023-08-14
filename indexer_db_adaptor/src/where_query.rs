@@ -1,9 +1,9 @@
 use super::cursor::{Cursor, CursorDirection};
 use schema::{
     field_path::FieldPath,
-    index::{self, EitherIndexField, Index, IndexDirection, IndexField},
+    index::{EitherIndexField, Index, IndexDirection, IndexField},
     index_value::IndexValue,
-    record::{self, RecordRoot, RecordUserError, RecordValue},
+    record::{self, RecordRoot, RecordValue},
     types::Type,
     Schema,
 };
@@ -388,8 +388,8 @@ impl<'a> WhereQuery<'a> {
             )?;
 
             match node {
-                WhereNode::Equality(val) => val.cast(&prop.type_)?,
-                WhereNode::Inequality(ineq) => ineq.cast(&prop.type_)?,
+                WhereNode::Equality(val) => val.cast(&prop.type_, path)?,
+                WhereNode::Inequality(ineq) => ineq.cast(&prop.type_, path)?,
             }
         }
 
@@ -407,7 +407,7 @@ impl<'a> WhereQuery<'a> {
                     let rv: RecordValue = RecordValue::from(v.clone());
                     let prop = schema.properties.get_path(k)?;
                     // TODO: we should return the error
-                    let v = rv.cast(&prop.type_).ok()?;
+                    let v = rv.cast(&prop.type_, k).ok()?;
                     Some((k, v))
                 }
                 _ => None,
@@ -450,9 +450,9 @@ pub enum WhereNode<'a> {
 pub struct WhereValue<'a>(pub IndexValue<'a>);
 
 impl<'a> WhereValue<'a> {
-    fn cast(&mut self, type_: &Type) -> Result<()> {
+    fn cast(&mut self, type_: &Type, path: &FieldPath) -> Result<()> {
         let rv: RecordValue = RecordValue::from(self.0.clone());
-        let v = rv.cast(type_)?;
+        let v = rv.cast(type_, path)?;
         // We've just converted from a RecordValue to a IndexValue
         #[allow(clippy::unwrap_used)]
         let index_value: IndexValue = v.try_into().unwrap();
@@ -478,21 +478,21 @@ pub struct WhereInequality<'a> {
 }
 
 impl WhereInequality<'_> {
-    pub fn cast(&mut self, type_: &Type) -> Result<()> {
+    pub fn cast(&mut self, type_: &Type, path: &FieldPath) -> Result<()> {
         if let Some(gt) = &mut self.gt {
-            gt.cast(type_)?;
+            gt.cast(type_, path)?;
         }
 
         if let Some(gte) = &mut self.gte {
-            gte.cast(type_)?;
+            gte.cast(type_, path)?;
         }
 
         if let Some(lt) = &mut self.lt {
-            lt.cast(type_)?;
+            lt.cast(type_, path)?;
         }
 
         if let Some(lte) = &mut self.lte {
-            lte.cast(type_)?;
+            lte.cast(type_, path)?;
         }
 
         Ok(())

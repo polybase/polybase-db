@@ -16,9 +16,6 @@ pub enum ReasonCode {
     #[display(fmt = "record/not-object")]
     RecordNotObject,
 
-    #[display(fmt = "record/field-not-object")]
-    RecordFieldNotObject,
-
     #[display(fmt = "record/id-modified")]
     RecordIDModified,
 
@@ -105,7 +102,6 @@ impl ReasonCode {
             ReasonCode::RecordIdNotString => ErrorCode::InvalidArgument,
             ReasonCode::RecordCollectionIdNotFound => ErrorCode::NotFound,
             ReasonCode::RecordNotObject => ErrorCode::InvalidArgument,
-            ReasonCode::RecordFieldNotObject => ErrorCode::InvalidArgument,
             ReasonCode::RecordIDModified => ErrorCode::FailedPrecondition,
             ReasonCode::RecordMissingField => ErrorCode::InvalidArgument,
             ReasonCode::RecordInvalidField => ErrorCode::InvalidArgument,

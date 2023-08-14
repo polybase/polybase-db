@@ -237,15 +237,13 @@ impl RecordRoot {
         Some(val)
     }
 
-    pub fn try_from_json(
-        schema: &Schema,
-        value: serde_json::Value,
-        always_cast: bool,
-    ) -> Result<Self> {
+    pub fn try_from_json(schema: &Schema, value: serde_json::Value, force: bool) -> Result<Self> {
         let mut map = HashMap::new();
+
+        // Check root must be an object
         let serde_json::Value::Object(mut value) = value else {
-        return Err(RecordUserError::RecordRootShouldBeAnObject { got: value }.into());
-    };
+            return Err(RecordUserError::RecordRootShouldBeAnObject { got: value }.into());
+        };
 
         // TODO: should we check for unexpected fields?
         for prop in schema.properties.iter() {
@@ -253,7 +251,7 @@ impl RecordRoot {
         else {
             // TODO: do we need to check required on sub fields?
             if prop.required {
-                if always_cast {
+                if force {
                     // Insert default for the type
                     map.insert(prop.path.name().to_string(), RecordValue::default_from_type(&prop.type_));
                     continue;
@@ -265,9 +263,11 @@ impl RecordRoot {
             }
         };
 
-            let value = RecordValue::try_from_json(&prop.type_, value)?;
+            let value = RecordValue::try_from_json_prop(prop, value, force)?;
             map.insert(name, value);
         }
+
+        // TODO: should we validate here?
 
         Ok(RecordRoot(map))
     }
@@ -292,35 +292,9 @@ impl IntoIterator for RecordRoot {
 pub fn json_to_record(
     schema: &Schema,
     value: serde_json::Value,
-    always_cast: bool,
+    force: bool,
 ) -> Result<RecordRoot> {
-    let mut map = HashMap::new();
-    let serde_json::Value::Object(mut value) = value else {
-        return Err(RecordUserError::RecordRootShouldBeAnObject { got: value }.into());
-    };
-
-    // TODO: should we check for unexpected fields?
-    for prop in schema.properties.iter() {
-        let Some((name, value)) = value.remove_entry(prop.path.name())
-        else {
-            if prop.required {
-                if always_cast {
-                    // Insert default for the type
-                    map.insert(prop.path.name().to_string(), RecordValue::default_from_type(&prop.type_));
-                    continue;
-                }
-
-                return Err(RecordUserError::MissingField { field: prop.path.to_string() }.into());
-            } else {
-                continue;
-            }
-        };
-
-        let value = RecordValue::try_from_json(&prop.type_, value)?;
-        map.insert(name, value);
-    }
-
-    Ok(RecordRoot(map))
+    RecordRoot::try_from_json(schema, value, force)
 }
 
 pub fn record_to_json(value: RecordRoot) -> serde_json::Value {
@@ -335,7 +309,6 @@ pub fn record_to_json(value: RecordRoot) -> serde_json::Value {
 
 // TODO: should we not have a Object type? Or allow Map key to be
 // more than just String
-
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub enum RecordValue {
     Number(f64),
@@ -351,7 +324,7 @@ pub enum RecordValue {
 }
 
 impl RecordValue {
-    pub fn cast(self, type_: &Type) -> Result<Self> {
+    pub fn cast(self, type_: &Type, path: &FieldPath) -> Result<Self> {
         // No casting needed
         if self.is_type(type_) {
             return Ok(self);
@@ -368,55 +341,55 @@ impl RecordValue {
                 RecordValue::Bytes(bytes) => Ok(RecordValue::String(
                     base64::engine::general_purpose::STANDARD.encode(bytes),
                 )),
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
             // Number
             Type::Primitive(PrimitiveType::Number) => match self {
                 RecordValue::String(s) => Ok(RecordValue::Number(s.parse::<f64>()?)),
                 RecordValue::Boolean(b) => Ok(RecordValue::Number(if b { 1.0 } else { 0.0 })),
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
             // Boolean
             Type::Primitive(PrimitiveType::Boolean) => match self {
                 RecordValue::Number(n) => Ok(RecordValue::Boolean(n == 0.0)),
                 RecordValue::String(s) => Ok(RecordValue::Boolean(s == "true")),
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
             // Bytes
             Type::Primitive(PrimitiveType::Bytes) => match self {
                 RecordValue::String(s) => Ok(RecordValue::Bytes(
                     base64::engine::general_purpose::STANDARD.decode(s.as_bytes())?,
                 )),
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
             // PublicKey
             Type::PublicKey => match self {
                 RecordValue::String(s) => {
                     Ok(RecordValue::PublicKey(publickey::PublicKey::from_hex(&s)?))
                 }
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
             // Array
             Type::Array(a) => match self {
                 RecordValue::Array(array) => {
                     let mut v = Vec::with_capacity(array.len());
-                    for value in array {
-                        v.push(value.cast(&a.value)?);
+                    for (i, value) in array.into_iter().enumerate() {
+                        v.push(value.cast(&a.value, &path.append(format!("[{}]", i)))?);
                     }
                     Ok(RecordValue::Array(v))
                 }
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
             // Map
             Type::Map(m) => match self {
                 RecordValue::Map(map) => {
                     let mut v = HashMap::with_capacity(map.len());
                     for (key, value) in map {
-                        v.insert(key.clone(), value.cast(&m.value)?);
+                        v.insert(key.clone(), value.cast(&m.value, &path.append(key))?);
                     }
                     Ok(RecordValue::Map(v))
                 }
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
             // Object
             Type::Object(m) => match self {
@@ -424,15 +397,15 @@ impl RecordValue {
                     let mut v = HashMap::with_capacity(map.len());
                     for p in m.fields.iter() {
                         if let Some(value) = map.remove(p.name()) {
-                            v.insert(p.name().to_string(), value.cast(&p.type_)?);
+                            v.insert(p.name().to_string(), value.cast(&p.type_, &p.path)?);
                         }
                     }
                     Ok(RecordValue::Map(v))
                 }
-                _ => error_invalid_field_value_type(self.into(), type_),
+                _ => error_invalid_field_value_type(self.into(), type_, path),
             },
-            Type::Unknown => error_invalid_field_value_type(self.into(), type_),
-            _ => error_invalid_field_value_type(self.into(), type_),
+            Type::Unknown => error_invalid_field_value_type(self.into(), type_, path),
+            _ => error_invalid_field_value_type(self.into(), type_, path),
         };
         Ok(v?)
     }
@@ -569,7 +542,34 @@ impl RecordValue {
 
     // TODO: should we not throw an error here, but filter bad results, as then we could
     // pick up the error more easily during validation?
-    pub fn try_from_json(type_: &Type, value: serde_json::Value) -> Result<Self> {
+    pub fn try_from_json_prop(
+        prop: &Property,
+        value: serde_json::Value,
+        force: bool,
+    ) -> Result<Self> {
+        let type_ = &prop.type_;
+
+        // Try to convert type
+        let mut v = Self::try_from_json_type(type_, &prop.path, value, force);
+
+        // Manually assign default value if conversion failed and force is true
+        if v.is_err() && force {
+            v = Ok(Self::default_from_type(type_));
+        }
+
+        // Validate the conversion
+        let v = v?;
+        v.validate_prop(prop)?;
+
+        Ok(v)
+    }
+
+    pub fn try_from_json_type(
+        type_: &Type,
+        path: &FieldPath,
+        value: serde_json::Value,
+        force: bool,
+    ) -> Result<Self> {
         let v: std::result::Result<RecordValue, RecordUserError> = match type_ {
             // String
             Type::Primitive(PrimitiveType::String) => match value {
@@ -578,7 +578,7 @@ impl RecordValue {
                 serde_json::Value::Bool(b) => Ok(RecordValue::String(b.to_string())),
                 serde_json::Value::Array(a) => Ok(RecordValue::String(serde_json::to_string(&a)?)),
                 serde_json::Value::Object(b) => Ok(RecordValue::String(serde_json::to_string(&b)?)),
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
             // Number
             Type::Primitive(PrimitiveType::Number) => match value {
@@ -587,7 +587,7 @@ impl RecordValue {
                 )),
                 serde_json::Value::String(s) => Ok(RecordValue::Number(s.parse::<f64>()?)),
                 serde_json::Value::Bool(b) => Ok(RecordValue::Number(if b { 1.0 } else { 0.0 })),
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
             // Boolean
             Type::Primitive(PrimitiveType::Boolean) => match value {
@@ -597,14 +597,14 @@ impl RecordValue {
                     Ok(RecordValue::Boolean(n.as_f64().unwrap_or(0.0) != 0.0))
                 }
                 serde_json::Value::String(s) => Ok(RecordValue::Boolean(s == "true")),
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
             // Bytes
             Type::Primitive(PrimitiveType::Bytes) => match value {
                 serde_json::Value::String(s) => Ok(RecordValue::Bytes(
                     base64::engine::general_purpose::STANDARD.decode(s.as_bytes())?,
                 )),
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
             // Public Key
             Type::PublicKey => match value {
@@ -614,30 +614,36 @@ impl RecordValue {
                 serde_json::Value::String(s) => {
                     Ok(RecordValue::PublicKey(publickey::PublicKey::from_hex(&s)?))
                 }
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
-            // // Array
+            // Array
             Type::Array(a) => match value {
                 serde_json::Value::Array(array) => {
                     let mut v = Vec::with_capacity(array.len());
                     for value in array {
-                        v.push(RecordValue::try_from_json(&a.value, value)?);
+                        v.push(RecordValue::try_from_json_type(
+                            &a.value, path, value, force,
+                        )?);
                     }
                     Ok(RecordValue::Array(v))
                 }
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
+            // Map
             Type::Map(m) => match value {
                 serde_json::Value::Object(map) => {
                     let mut v = HashMap::with_capacity(map.len());
                     for (key, value) in map {
-                        v.insert(key.clone(), RecordValue::try_from_json(&m.value, value)?);
+                        v.insert(
+                            key.clone(),
+                            RecordValue::try_from_json_type(&m.value, path, value, force)?,
+                        );
                     }
                     Ok(RecordValue::Map(v))
                 }
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
-            // // Object
+            // Object
             Type::Object(m) => match value {
                 serde_json::Value::Object(mut map) => {
                     let mut v = HashMap::with_capacity(map.len());
@@ -645,38 +651,33 @@ impl RecordValue {
                         if let Some(value) = map.remove(p.name()) {
                             v.insert(
                                 p.name().to_string(),
-                                RecordValue::try_from_json(&p.type_, value)?,
+                                RecordValue::try_from_json_prop(p, value, force)?,
                             );
                         }
                     }
                     Ok(RecordValue::Map(v))
                 }
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
             // // Record
             Type::Record => match value {
                 serde_json::Value::Object(o) => {
                     Ok(RecordValue::RecordReference(RecordReference::try_from(o)?))
                 }
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
-            // // Foreign Record
+            // Foreign Record
             Type::ForeignRecord(_) => match value {
                 serde_json::Value::Object(o) => Ok(RecordValue::ForeignRecordReference(
                     ForeignRecordReference::try_from(o)?,
                 )),
-                _ => error_invalid_field_value_type(value, type_),
+                _ => error_invalid_field_value_type(value, type_, path),
             },
             // Anything else is an error
-            _ => error_invalid_field_value_type(value, type_),
+            _ => error_invalid_field_value_type(value, type_, path),
         };
 
-        let v = v?;
-
-        // Validate the conversion
-        v.validate_type(type_)?;
-
-        Ok(v)
+        Ok(v?)
     }
 
     pub fn default_from_type(type_: &Type) -> Self {
@@ -693,7 +694,6 @@ impl RecordValue {
             Type::ForeignRecord(_) => {
                 RecordValue::ForeignRecordReference(ForeignRecordReference::default())
             }
-            // TODO: we should have explicit Object value
             Type::Object(_) => RecordValue::Map(HashMap::new()),
             Type::PublicKey => RecordValue::PublicKey(publickey::PublicKey::default()),
             // TODO: should we return a Result Err here instead?
@@ -705,11 +705,12 @@ impl RecordValue {
 fn error_invalid_field_value_type(
     value: serde_json::Value,
     expected_type: &Type,
+    path: &FieldPath,
 ) -> std::result::Result<RecordValue, RecordUserError> {
     Err(RecordUserError::InvalidFieldValueType {
         value,
         expected_type: expected_type.to_string(),
-        field: None,
+        field: Some(path.to_string()),
     })?
 }
 
