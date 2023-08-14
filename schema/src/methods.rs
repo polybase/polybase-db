@@ -1,7 +1,7 @@
 use crate::{
     directive::Directive,
     field_path::FieldPath,
-    record::{Converter, RecordError, RecordValue},
+    record::{RecordError, RecordValue},
     types::Type,
 };
 use polylang::stableast;
@@ -100,14 +100,11 @@ impl Method {
                     return Ok(RecordValue::Null);
                 }
 
-                Converter::convert(
-                    (&param.type_, arg.clone()),
-                    &mut vec![Cow::Borrowed(&param.name)],
-                    false,
-                )
-                .map_err(|e| UserError::MethodInvalidArgumentType {
-                    parameter_name: param.name.to_string(),
-                    source: e,
+                RecordValue::try_from_json(&param.type_, arg.clone()).map_err(|e| {
+                    UserError::MethodInvalidArgumentType {
+                        parameter_name: param.name.to_string(),
+                        source: e,
+                    }
                 })
             })
             .collect::<std::result::Result<Vec<_>, _>>()

@@ -82,6 +82,9 @@ pub enum ReasonCode {
     #[display(fmt = "indexer/query-inequality-not-last")]
     IndexerQueryInequalityNotLast,
 
+    #[display(fmt = "indexer/invalid-query-value")]
+    IndexerInvalidQueryValue,
+
     #[display(fmt = "indexer/invalid-cursor")]
     IndexerInvalidCursorKey,
 
@@ -118,12 +121,13 @@ impl ReasonCode {
             ReasonCode::CollectionIdExists => ErrorCode::AlreadyExists,
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,
-            ReasonCode::IndexerMissingIndex => ErrorCode::FailedPrecondition,
             ReasonCode::CollectionMismatch => ErrorCode::InvalidArgument,
             ReasonCode::CollectionRecordIdNotFound => ErrorCode::NotFound,
             ReasonCode::IndexerQueryInequalityNotLast => ErrorCode::InvalidArgument,
             ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
             ReasonCode::IndexerInvalidCursorKey => ErrorCode::InvalidArgument,
+            ReasonCode::IndexerMissingIndex => ErrorCode::FailedPrecondition,
+            ReasonCode::IndexerInvalidQueryValue => ErrorCode::InvalidArgument,
             ReasonCode::AuthInvalidSignature => ErrorCode::InvalidArgument,
             ReasonCode::Unauthorized => ErrorCode::PermissionDenied,
             ReasonCode::Internal => ErrorCode::Internal,
@@ -185,6 +189,12 @@ impl ReasonCode {
             }
             indexer_db_adaptor::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
                 ReasonCode::IndexerMissingIndex
+            }
+            indexer_db_adaptor::where_query::WhereQueryUserError::InvalidWhereQueryField{..} => {
+                ReasonCode::IndexerInvalidQueryValue
+            }
+            indexer_db_adaptor::where_query::WhereQueryUserError::InvalidWhereQueryValue{..} => {
+                ReasonCode::IndexerInvalidQueryValue
             }
         }
     }
@@ -284,6 +294,18 @@ impl ReasonCode {
             schema::record::RecordUserError::UnexpectedFields { .. } => {
                 ReasonCode::RecordInvalidField
             }
+            schema::record::RecordUserError::RecordReferenceInvalidType { .. } => {
+                ReasonCode::RecordInvalidField
+            }
+            schema::record::RecordUserError::RecordReferenceMissingField { .. } => {
+                ReasonCode::RecordInvalidField
+            }
+            schema::record::RecordUserError::RecordReferenceUnexpectedFields { .. } => {
+                ReasonCode::RecordInvalidField
+            }
+            schema::record::RecordUserError::ForeignRecordReferenceHasWrongCollectionId {
+                ..
+            } => ReasonCode::RecordInvalidField,
         }
     }
 

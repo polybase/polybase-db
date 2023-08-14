@@ -1,9 +1,11 @@
 use super::cursor::{Cursor, CursorDirection};
 use schema::{
     field_path::FieldPath,
-    index::{EitherIndexField, Index, IndexDirection, IndexField},
+    index::{self, EitherIndexField, Index, IndexDirection, IndexField},
     index_value::IndexValue,
-    record::{self, RecordRoot, RecordValue},
+    record::{self, RecordRoot, RecordUserError, RecordValue},
+    types::Type,
+    Schema,
 };
 use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::HashMap};
@@ -32,6 +34,16 @@ pub enum WhereQueryUserError {
 
     #[error("you cannot filter/sort by field {0}")]
     CannotFilterOrSortByField(String),
+
+    #[error("unexpected query field: {}", .field.as_deref().unwrap_or("unknown"))]
+    InvalidWhereQueryField { field: Option<String> },
+
+    #[error("where query value at field \"{}\" does not match the schema type, expected type: {expected_type}, got value: {value}", .field.as_deref().unwrap_or("unknown"))]
+    InvalidWhereQueryValue {
+        value: serde_json::Value,
+        expected_type: String,
+        field: Option<String>,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -366,14 +378,39 @@ impl<'a> WhereQuery<'a> {
         })
     }
 
+    // TODO: consider
+    pub fn cast(&mut self, schema: &Schema) -> Result<()> {
+        for (path, node) in &mut self.0 {
+            let prop = schema.properties.get_path(path).ok_or(
+                WhereQueryUserError::InvalidWhereQueryField {
+                    field: Some(path.to_string()),
+                },
+            )?;
+
+            match node {
+                WhereNode::Equality(val) => val.cast(&prop.type_)?,
+                WhereNode::Inequality(ineq) => ineq.cast(&prop.type_)?,
+            }
+        }
+
+        self.0.iter_mut().for_each(|(k, v)| {});
+        Ok(())
+    }
+
     /// Create a RecordRoot from the where_query using the equality filters
-    pub fn to_record_root(&self) -> RecordRoot {
+    pub fn to_record_root(&self, schema: &Schema) -> RecordRoot {
         let mut record_root = RecordRoot::default();
 
         self.0
             .iter()
             .filter_map(|(k, values)| match values {
-                WhereNode::Equality(WhereValue(v)) => Some((k, RecordValue::from(v.clone()))),
+                WhereNode::Equality(WhereValue(v)) => {
+                    let rv: RecordValue = RecordValue::from(v.clone());
+                    let prop = schema.properties.get_path(k)?;
+                    // TODO: we should return the error
+                    let v = rv.cast(&prop.type_).ok()?;
+                    Some((k, v))
+                }
                 _ => None,
             })
             .for_each(|(k, v)| {
@@ -413,6 +450,18 @@ pub enum WhereNode<'a> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct WhereValue<'a>(pub IndexValue<'a>);
 
+impl<'a> WhereValue<'a> {
+    fn cast(&mut self, type_: &Type) -> Result<()> {
+        let rv: RecordValue = RecordValue::from(self.0.clone());
+        let v = rv.cast(type_)?;
+        // We've just converted from a RecordValue to a IndexValue
+        #[allow(clippy::unwrap_used)]
+        let index_value: IndexValue = v.try_into().unwrap();
+        self.0 = index_value;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Serialize, Default, Clone)]
 pub struct WhereInequality<'a> {
     #[serde(rename = "$gt")]
@@ -427,6 +476,28 @@ pub struct WhereInequality<'a> {
     #[serde(rename = "$lte")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lte: Option<WhereValue<'a>>,
+}
+
+impl WhereInequality<'_> {
+    pub fn cast(&mut self, type_: &Type) -> Result<()> {
+        if let Some(gt) = &mut self.gt {
+            gt.cast(type_)?;
+        }
+
+        if let Some(gte) = &mut self.gte {
+            gte.cast(type_)?;
+        }
+
+        if let Some(lt) = &mut self.lt {
+            lt.cast(type_)?;
+        }
+
+        if let Some(lte) = &mut self.lte {
+            lte.cast(type_)?;
+        }
+
+        Ok(())
+    }
 }
 
 // Implementing Deserialize manually, so we can provide better error messages

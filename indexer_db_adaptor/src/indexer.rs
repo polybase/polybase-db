@@ -2,7 +2,7 @@ use crate::{
     adaptor::{self, IndexerAdaptor},
     cursor,
     list_query::ListQuery,
-    where_query::WhereQuery,
+    where_query::{self, WhereQuery},
 };
 use futures::stream::{FuturesUnordered, StreamExt};
 use schema::{
@@ -23,6 +23,9 @@ pub enum Error {
 
     #[error("user error: {0}")]
     User(#[from] UserError),
+
+    #[error("where query error: {0}")]
+    WhereQuery(#[from] where_query::WhereQueryError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -155,6 +158,8 @@ impl<A: IndexerAdaptor> Indexer<A> {
             (None, None) => {}
         }
 
+        where_query.cast(&schema)?;
+
         Ok(self
             .adaptor
             .list(collection_id, limit, where_query, order_by)
@@ -193,7 +198,7 @@ impl<A: IndexerAdaptor> Indexer<A> {
         public_key: Option<&PublicKey>,
     ) -> bool {
         // Convert where query to a record, so we can verify it
-        let record = where_query.to_record_root();
+        let record = where_query.to_record_root(schema);
 
         self.verify_read(collection_id, schema, &record, public_key)
             .await

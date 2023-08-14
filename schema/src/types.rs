@@ -1,18 +1,24 @@
-use crate::{field_path::FieldPath, property::PropertyList};
+use crate::{
+    field_path::FieldPath,
+    property::PropertyList,
+    publickey::PublicKey,
+    record::{ForeignRecordReference, RecordReference, RecordValue},
+};
+use base64::Engine;
 use polylang::stableast;
-use std::{boxed::Box, fmt::Display};
+use std::{boxed::Box, collections::HashMap, fmt::Display};
 
 pub use stableast::PrimitiveType;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Type {
     Primitive(PrimitiveType),
+    PublicKey,
     Array(Array),
     Map(Map),
-    Record,
     Object(Object),
+    Record,
     ForeignRecord(ForeignRecord),
-    PublicKey,
     Unknown,
 }
 

@@ -1,4 +1,5 @@
 {
   "rust-analyzer.check.command": "clippy",
-  "editor.tabSize": 4
+  "editor.tabSize": 4,
+  "rust-analyzer.showUnlinkedFileNotification": false
 }

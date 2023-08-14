@@ -14,6 +14,12 @@ pub enum PublicKeyError {
     #[error("invalid type for field {field:?}, expected string")]
     InvalidTypeExpectedString { field: &'static str },
 
+    #[error("invalid hex for public key")]
+    InvalidHexPublicKey,
+
+    #[error("invalid length for public key, must be 64 bytes")]
+    InvalidHexPublicKeyLength,
+
     #[error("invalid value {value:?} for field {field:?}")]
     InvalidValue { field: &'static str, value: String },
 
@@ -174,6 +180,14 @@ impl PublicKey {
         })
     }
 
+    pub fn from_hex(s: &str) -> Result<Self> {
+        let bytes =
+            hex::decode(s[2..].as_bytes()).map_err(|_| PublicKeyError::InvalidHexPublicKey)?; // Remove the 0x prefix
+        let bytes = <[u8; 64]>::try_from(bytes.as_slice())
+            .map_err(|_| PublicKeyError::InvalidHexPublicKeyLength)?;
+        Self::try_from(bytes)
+    }
+
     pub fn to_hex(&self) -> Result<String> {
         let key = self.to_secp256k1_key()?;
         let bytes = key.serialize_uncompressed();
@@ -187,120 +201,115 @@ impl PublicKey {
     }
 }
 
-impl TryFrom<serde_json::Value> for PublicKey {
+impl TryFrom<serde_json::Map<String, serde_json::Value>> for PublicKey {
     type Error = PublicKeyError;
 
-    fn try_from(value: serde_json::Value) -> Result<Self> {
-        match value {
-            serde_json::Value::Object(mut o) => {
-                let kty_v = o
-                    .remove("kty")
-                    .ok_or(PublicKeyError::MissingField { name: "kty" })?;
-                let crv_v = o
-                    .remove("crv")
-                    .ok_or(PublicKeyError::MissingField { name: "crv" })?;
-                let alg_v = o
-                    .remove("alg")
-                    .ok_or(PublicKeyError::MissingField { name: "alg" })?;
-                let use_v = o
-                    .remove("use")
-                    .ok_or(PublicKeyError::MissingField { name: "use" })?;
-                let x_v = o
-                    .remove("x")
-                    .ok_or(PublicKeyError::MissingField { name: "x" })?;
-                let y_v = o
-                    .remove("y")
-                    .ok_or(PublicKeyError::MissingField { name: "y" })?;
+    fn try_from(mut o: serde_json::Map<String, serde_json::Value>) -> Result<Self> {
+        let kty_v = o
+            .remove("kty")
+            .ok_or(PublicKeyError::MissingField { name: "kty" })?;
+        let crv_v = o
+            .remove("crv")
+            .ok_or(PublicKeyError::MissingField { name: "crv" })?;
+        let alg_v = o
+            .remove("alg")
+            .ok_or(PublicKeyError::MissingField { name: "alg" })?;
+        let use_v = o
+            .remove("use")
+            .ok_or(PublicKeyError::MissingField { name: "use" })?;
+        let x_v = o
+            .remove("x")
+            .ok_or(PublicKeyError::MissingField { name: "x" })?;
+        let y_v = o
+            .remove("y")
+            .ok_or(PublicKeyError::MissingField { name: "y" })?;
 
-                let kty = match kty_v {
-                    serde_json::Value::String(s) => s,
-                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "kty" }),
-                };
+        let kty = match kty_v {
+            serde_json::Value::String(s) => s,
+            _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "kty" }),
+        };
 
-                if kty != "EC" {
-                    return Err(PublicKeyError::InvalidValue {
-                        field: "kty",
-                        value: kty,
-                    });
-                }
-
-                let crv = match crv_v {
-                    serde_json::Value::String(s) => s,
-                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "crv" }),
-                };
-
-                if crv != "secp256k1" {
-                    return Err(PublicKeyError::InvalidValue {
-                        field: "crv",
-                        value: crv,
-                    });
-                }
-
-                let alg = match alg_v {
-                    serde_json::Value::String(s) => s,
-                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "alg" }),
-                };
-
-                if alg != "ES256K" {
-                    return Err(PublicKeyError::InvalidValue {
-                        field: "alg",
-                        value: alg,
-                    });
-                }
-
-                let use_ = match use_v {
-                    serde_json::Value::String(s) => s,
-                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "use" }),
-                };
-
-                if use_ != "sig" {
-                    return Err(PublicKeyError::InvalidValue {
-                        field: "use",
-                        value: use_,
-                    });
-                }
-
-                let x = match &x_v {
-                    serde_json::Value::String(s) => {
-                        base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
-                    }
-                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "x" }),
-                };
-
-                if x.len() != 32 {
-                    return Err(PublicKeyError::InvalidValue {
-                        field: "x",
-                        value: x_v.to_string(),
-                    });
-                }
-
-                let y = match &y_v {
-                    serde_json::Value::String(s) => {
-                        base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
-                    }
-                    _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "y" }),
-                };
-
-                if y.len() != 32 {
-                    return Err(PublicKeyError::InvalidValue {
-                        field: "y",
-                        value: y_v.to_string(),
-                    });
-                }
-
-                PublicKey::validate_secp256k1_key(&x, &y)?;
-
-                Ok(Self {
-                    kty,
-                    crv,
-                    alg,
-                    use_,
-                    x,
-                    y,
-                })
-            }
-            _ => Err(PublicKeyError::InvalidTypeExpectedObject),
+        if kty != "EC" {
+            return Err(PublicKeyError::InvalidValue {
+                field: "kty",
+                value: kty,
+            });
         }
+
+        let crv = match crv_v {
+            serde_json::Value::String(s) => s,
+            _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "crv" }),
+        };
+
+        if crv != "secp256k1" {
+            return Err(PublicKeyError::InvalidValue {
+                field: "crv",
+                value: crv,
+            });
+        }
+
+        let alg = match alg_v {
+            serde_json::Value::String(s) => s,
+            _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "alg" }),
+        };
+
+        if alg != "ES256K" {
+            return Err(PublicKeyError::InvalidValue {
+                field: "alg",
+                value: alg,
+            });
+        }
+
+        let use_ = match use_v {
+            serde_json::Value::String(s) => s,
+            _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "use" }),
+        };
+
+        if use_ != "sig" {
+            return Err(PublicKeyError::InvalidValue {
+                field: "use",
+                value: use_,
+            });
+        }
+
+        let x = match &x_v {
+            serde_json::Value::String(s) => {
+                base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
+            }
+            _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "x" }),
+        };
+
+        if x.len() != 32 {
+            return Err(PublicKeyError::InvalidValue {
+                field: "x",
+                value: x_v.to_string(),
+            });
+        }
+
+        let y = match &y_v {
+            serde_json::Value::String(s) => {
+                base64::engine::general_purpose::URL_SAFE.decode(s.as_bytes())?
+            }
+            _ => return Err(PublicKeyError::InvalidTypeExpectedString { field: "y" }),
+        };
+
+        if y.len() != 32 {
+            return Err(PublicKeyError::InvalidValue {
+                field: "y",
+                value: y_v.to_string(),
+            });
+        }
+
+        PublicKey::validate_secp256k1_key(&x, &y)?;
+
+        Ok(Self {
+            kty,
+            crv,
+            alg,
+            use_,
+            x,
+            y,
+        })
     }
 }
 

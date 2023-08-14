@@ -125,8 +125,8 @@ fn convert_serde_json_value_to_record_value(value: serde_json::Value) -> RecordV
 
 fn convert_serde_json_value_to_public_key(value: serde_json::Value) -> Option<RecordValue> {
     match value {
-        serde_json::Value::Object(_) => Some(RecordValue::PublicKey(
-            publickey::PublicKey::try_from(value).ok()?,
+        serde_json::Value::Object(map) => Some(RecordValue::PublicKey(
+            publickey::PublicKey::try_from(map).ok()?,
         )),
         _ => None,
     }

@@ -287,8 +287,6 @@ collection Account {
         }
     );
 
-    println!("pk_hex: {}", pk_hex);
-
     // Listing records with the same key succeeds
     assert_eq!(
         collection
@@ -310,9 +308,14 @@ collection Account {
         collection
             .list(ListQuery::default(), Some(&another_signer))
             .await
-            .unwrap()
-            .into_record_data(),
-        vec![]
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
     );
 }
 

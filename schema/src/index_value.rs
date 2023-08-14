@@ -9,7 +9,6 @@ pub enum IndexValueError {
     TryFromRecordValue,
 }
 
-// TODO: refactor this into own module
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 #[serde(untagged)]
 pub enum IndexValue<'a> {
