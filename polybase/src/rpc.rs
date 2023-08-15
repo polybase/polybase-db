@@ -20,7 +20,8 @@ use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
 use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
-use std::{cmp::min, sync::Arc, time::Duration};
+use std::collections::HashMap;
+use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
 
 struct RouteState {
     db: ArcDbIndexer,
@@ -420,6 +421,7 @@ struct ProveRequest {
     ctx_public_key: Option<abi::publickey::Key>,
     this: Option<serde_json::Value>,
     args: Vec<serde_json::Value>,
+    other_records: HashMap<String, Vec<serde_json::Value>>,
 }
 
 #[tracing::instrument(skip_all, fields(
@@ -434,7 +436,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
     let program = compile_program(&req.abi, &req.miden_code).map_err(|e| {
         HTTPError::new(
             ReasonCode::Internal,
-            Some(Box::new(AppError::MidenCompile(e))),
+            Some(Box::new(AppError::MidenCompile(Box::new(e)))),
         )
     })?;
 
@@ -447,7 +449,13 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
                     Some(Box::new(AppError::ABIError(err))),
                 )
             })?
-            .into(),
+            .try_into()
+            .map_err(|err| {
+                HTTPError::new(
+                    ReasonCode::Internal,
+                    Some(Box::new(AppError::ABIError(Box::new(err)))),
+                )
+            })?,
     );
 
     let this_hash = hash_this(
@@ -470,14 +478,14 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
             .map_err(|err| {
                 HTTPError::new(
                     ReasonCode::Internal,
-                    Some(Box::new(AppError::ABIError(err))),
+                    Some(Box::new(AppError::ABIError(Box::new(err)))),
                 )
             })?,
     )
     .map_err(|err| {
         HTTPError::new(
             ReasonCode::Internal,
-            Some(Box::new(AppError::ProveError(err))),
+            Some(Box::new(AppError::ProveError(Box::new(err)))),
         )
     })?;
 
@@ -487,17 +495,23 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
         this: this.clone(),
         this_hash,
         args: req.args.clone(),
+        other_records: req.other_records.clone(),
     };
 
     let output = polylang_prover::prove(&program, &inputs).map_err(|err| {
         HTTPError::new(
             ReasonCode::Internal,
-            Some(Box::new(AppError::ProveError(err))),
+            Some(Box::new(AppError::ProveError(Box::new(err)))),
         )
     })?;
 
     let program_info = program.to_program_info_bytes();
-    let new_this = Into::<serde_json::Value>::into(output.new_this);
+    let new_this = TryInto::<serde_json::Value>::try_into(output.new_this).map_err(|err| {
+        HTTPError::new(
+            ReasonCode::Internal,
+            Some(Box::new(AppError::ProveError(Box::new(err)))),
+        )
+    })?;
 
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "old": {
@@ -510,7 +524,7 @@ async fn prove(req: web::Json<ProveRequest>) -> Result<impl Responder, HTTPError
             "hash": output.new_hash,
         },
         "stack": {
-            "input": inputs.stack_values(),
+            "input": output.input_stack,
             "output": output.stack,
         },
         "programInfo": base64::engine::general_purpose::STANDARD.encode(program_info),

@@ -15,8 +15,8 @@ indexer_rocksdb = { path = "../indexer_rocksdb" }
 indexer_db_adaptor = { path = "../indexer_db_adaptor" }
 gateway = { path = "../gateway" }
 solid = { path = "../solid" }
-polylang-prover = { git = "https://github.com/polybase/polylang", rev = "e9da93f7db1bdd68c461e02e3a88f31f81455caf", version = "0.1.0" }
-abi = { git = "https://github.com/polybase/polylang", rev = "e9da93f7db1bdd68c461e02e3a88f31f81455caf", version = "0.1.0" }
+polylang-prover = { git = "https://github.com/polybase/polylang", rev = "91996dea0efa572666e6f82cbc9a1d2641082ebe", version = "0.1.0" }
+abi = { git = "https://github.com/polybase/polylang", rev = "91996dea0efa572666e6f82cbc9a1d2641082ebe", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", features = ["raw_value"] }
 serde_with = { version = "2.2", features = ["json"] }
