@@ -934,6 +934,7 @@ impl From<RecordReference> for serde_json::Value {
 #[derive(Debug, PartialEq, PartialOrd, Clone, Serialize, Deserialize, Default)]
 pub struct ForeignRecordReference {
     pub id: String,
+    #[serde(rename = "collectionId")]
     pub collection_id: String,
 }
 
