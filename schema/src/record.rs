@@ -96,10 +96,11 @@ pub enum RecordUserError {
     UnexpectedFields { fields: Vec<String> },
 }
 
+pub type RecordRootRaw = HashMap<String, RecordValue>;
+
 // TODO: RecordRoot should be a RecordValue of type ObjectValue
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde()]
-pub struct RecordRoot(pub HashMap<String, RecordValue>);
+pub struct RecordRoot(pub RecordRootRaw);
 
 impl RecordRoot {
     pub fn new() -> Self {
@@ -324,12 +325,12 @@ pub enum RecordValue {
     Boolean(bool),
     Null,
     String(String),
-    PublicKey(crate::publickey::PublicKey),
-    RecordReference(RecordReference),
-    ForeignRecordReference(ForeignRecordReference),
+    PublicKey(publickey::PublicKey),
     Bytes(Vec<u8>),
     Map(HashMap<String, RecordValue>),
     Array(Vec<RecordValue>),
+    RecordReference(RecordReference),
+    ForeignRecordReference(ForeignRecordReference),
 }
 
 impl RecordValue {

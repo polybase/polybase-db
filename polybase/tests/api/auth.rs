@@ -320,6 +320,99 @@ collection Account {
 }
 
 #[tokio::test]
+async fn read_auth_pk_array() {
+    let server = Server::setup_and_wait(None).await;
+
+    let schema = r#"
+collection Account {
+    id: string;
+    balance: number;
+    @read
+    owner: PublicKey[];
+
+    constructor (id: string, balance: number) {
+        this.id = id;
+        this.balance = balance;
+        this.owner = [];
+        this.owner.push(ctx.publicKey);
+        this.owner.push(ctx.publicKey);
+    }
+}
+    "#;
+
+    #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Account {
+        id: String,
+        balance: f64,
+        owner: Vec<schema::publickey::PublicKey>,
+    }
+
+    let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+
+    let signer =
+        Signer::from(move |body: &str| Signature::create(&private_key, SystemTime::now(), body));
+
+    let collection = server
+        .create_collection::<Account>("test/Account", schema, Some(&signer))
+        .await
+        .unwrap();
+
+    let account_id1_10 = collection
+        .create(json!(["id1", 10]), Some(&signer))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        account_id1_10,
+        Account {
+            id: "id1".to_string(),
+            balance: 10.0,
+            owner: vec![public_key.clone(), public_key.clone()],
+        }
+    );
+
+    // Trying to get the record with the same key succeeds
+    assert_eq!(
+        collection.get("id1", Some(&signer)).await.unwrap(),
+        account_id1_10
+    );
+
+    let (another_private_key, _) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let another_signer = Signer::from(move |body: &str| {
+        Signature::create(&another_private_key, SystemTime::now(), body)
+    });
+
+    // Trying to get the record with a different key fails
+    assert_eq!(
+        collection
+            .get("id1", Some(&another_signer))
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
+    );
+
+    // Trying to get the record without auth fails
+    assert_eq!(
+        collection.get("id1", None).await.unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
+    );
+}
+
+#[tokio::test]
 async fn call_auth() {
     let server = Server::setup_and_wait(None).await;
 
