@@ -278,6 +278,7 @@ impl IndexerAdaptor for MemoryStore {
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
         order_by: &[IndexField],
+        reverse: bool,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         let state = self.state.lock().await;
 
@@ -505,7 +506,7 @@ mod tests {
         store.commit(9, changes).await.unwrap();
 
         let records = store
-            .list(collection_id, None, WhereQuery::default(), &[])
+            .list(collection_id, None, WhereQuery::default(), &[], false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -575,7 +576,7 @@ mod tests {
         );
 
         let records = store
-            .list(collection_id, None, where_query, &[])
+            .list(collection_id, None, where_query, &[], false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -660,7 +661,7 @@ mod tests {
         }];
 
         let records = store
-            .list(collection_id, None, where_query, &order_by)
+            .list(collection_id, None, where_query, &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -689,7 +690,7 @@ mod tests {
         }];
 
         let records = store
-            .list(collection_id, None, where_query, &order_by)
+            .list(collection_id, None, where_query, &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -784,7 +785,7 @@ mod tests {
         ];
 
         let mut records = store
-            .list(collection_id, None, where_query, &order_by)
+            .list(collection_id, None, where_query, &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -847,7 +848,7 @@ mod tests {
         );
 
         let records = store
-            .list(collection_id, None, where_query, &[])
+            .list(collection_id, None, where_query, &[], false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -913,7 +914,7 @@ mod tests {
         }];
 
         let records = store
-            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .list(collection_id, None, WhereQuery::default(), &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -930,7 +931,7 @@ mod tests {
         }];
 
         let records = store
-            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .list(collection_id, None, WhereQuery::default(), &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -996,7 +997,7 @@ mod tests {
         );
 
         let records = store
-            .list(collection_id, None, where_query, &[])
+            .list(collection_id, None, where_query, &[], false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -1020,7 +1021,7 @@ mod tests {
         );
 
         let records = store
-            .list(collection_id, None, where_query, &[])
+            .list(collection_id, None, where_query, &[], false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -1075,7 +1076,7 @@ mod tests {
         }];
 
         let records = store
-            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .list(collection_id, None, WhereQuery::default(), &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -1091,7 +1092,7 @@ mod tests {
         }];
 
         let records = store
-            .list(collection_id, None, WhereQuery::default(), &order_by)
+            .list(collection_id, None, WhereQuery::default(), &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -1194,7 +1195,7 @@ mod tests {
         );
 
         let records = store
-            .list(account_collection, None, where_query, &[])
+            .list(account_collection, None, where_query, &[], false)
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -1301,7 +1302,13 @@ mod tests {
         }];
 
         let records = store
-            .list(account_collection, None, where_query.clone(), &order_by)
+            .list(
+                account_collection,
+                None,
+                where_query.clone(),
+                &order_by,
+                false,
+            )
             .await
             .unwrap()
             .collect::<Vec<_>>()
@@ -1317,7 +1324,7 @@ mod tests {
         }];
 
         let records = store
-            .list(account_collection, None, where_query, &order_by)
+            .list(account_collection, None, where_query, &order_by, false)
             .await
             .unwrap()
             .collect::<Vec<_>>()

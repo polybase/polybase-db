@@ -81,14 +81,11 @@ pub enum RecordUserError {
         field: Option<String>,
     },
 
-    #[error("record reference missing field")]
+    #[error("record reference missing \"{field}\" field")]
     RecordReferenceMissingField { field: String },
 
-    #[error("record reference missing field")]
+    #[error("record reference has invalid field type")]
     RecordReferenceInvalidType { field: String },
-
-    #[error("record reference missing field")]
-    RecordReferenceUnexpectedFields { fields: String },
 
     #[error(
         "foreign record reference has incorrect collection id, expected: \"{expected}\", got: \"{got}\""
@@ -307,6 +304,18 @@ pub fn record_to_json(value: RecordRoot) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
+pub fn foreign_record_to_json(value: RecordRoot, collection_id: &str) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+
+    for (field, value) in value {
+        map.insert(field, value.into());
+    }
+
+    map.insert("__collectionId".to_string(), collection_id.into());
+
+    serde_json::Value::Object(map)
+}
+
 // TODO: should we not have a Object type? Or allow Map key to be
 // more than just String
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
@@ -448,13 +457,12 @@ impl RecordValue {
                 for prop in m.fields.iter() {
                     if let Some(val) = map.get(prop.name()) {
                         keys.remove(prop.name());
-                        if prop.required {
-                            return Err(RecordUserError::MissingField {
-                                field: prop.path.path().to_string(),
-                            })?;
-                        }
 
                         val.validate_prop(prop)?;
+                    } else if prop.required {
+                        return Err(RecordUserError::MissingField {
+                            field: prop.path.path().to_string(),
+                        })?;
                     }
                 }
 
@@ -910,11 +918,6 @@ impl TryFrom<serde_json::Map<String, serde_json::Value>> for RecordReference {
         mut o: serde_json::Map<String, serde_json::Value>,
     ) -> std::result::Result<Self, RecordUserError> {
         let id = get_reference_field_value(&mut o, "id")?;
-        if !o.is_empty() {
-            return Err(RecordUserError::RecordReferenceUnexpectedFields {
-                fields: o.keys().cloned().collect::<Vec<_>>().join(", "),
-            })?;
-        }
         Ok(Self { id })
     }
 }
@@ -973,12 +976,8 @@ impl TryFrom<serde_json::Map<String, serde_json::Value>> for ForeignRecordRefere
         mut o: serde_json::Map<String, serde_json::Value>,
     ) -> std::result::Result<Self, RecordUserError> {
         let id = get_reference_field_value(&mut o, "id")?;
-        let collection_id = get_reference_field_value(&mut o, "collectionId")?;
-        if !o.is_empty() {
-            return Err(RecordUserError::RecordReferenceUnexpectedFields {
-                fields: o.keys().cloned().collect::<Vec<_>>().join(", "),
-            })?;
-        }
+        let collection_id = get_reference_field_value(&mut o, "collectionId")
+            .or_else(|_| get_reference_field_value(&mut o, "__collectionId"))?;
         Ok(Self { id, collection_id })
     }
 }
@@ -989,7 +988,7 @@ fn get_reference_field_value(
 ) -> std::result::Result<String, RecordUserError> {
     let val = match map.remove(prop) {
         Some(serde_json::Value::String(s)) => s,
-        Some(v) => {
+        Some(_) => {
             return Err(RecordUserError::RecordReferenceInvalidType {
                 field: prop.to_string(),
             })?

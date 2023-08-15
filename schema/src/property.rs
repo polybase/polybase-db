@@ -30,7 +30,7 @@ impl PropertyList {
     }
 
     pub fn get_path(&self, path: &FieldPath) -> Option<&Property> {
-        self.properties.iter().find(|p| p.path == *path)
+        self.iter_all().find(|p| p.path == *path)
     }
 
     /// Iterate through the top-level fields of a PropertyList

@@ -10,13 +10,6 @@ pub type Result<T> = std::result::Result<T, UserError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserError {
-    #[error("method {method_name} args invalid, expected {expected} got {actual}")]
-    MethodIncorrectNumberOfArguments {
-        method_name: String,
-        expected: usize,
-        actual: usize,
-    },
-
     #[error("invalid argument type for parameter {parameter_name:?}: {source}")]
     MethodInvalidArgumentType {
         parameter_name: String,
@@ -67,29 +60,6 @@ impl Method {
         }
     }
 
-    pub fn validate_args(&self, args: Vec<RecordValue>) -> Result<()> {
-        let required_args_len = self.parameters.iter().filter(|p| p.required).count();
-        if args.len() < required_args_len {
-            return Err(UserError::MethodIncorrectNumberOfArguments {
-                method_name: self.name.clone(),
-                expected: required_args_len,
-                actual: args.len(),
-            })?;
-        }
-
-        if args.len() > self.parameters.len() {
-            return Err(UserError::MethodIncorrectNumberOfArguments {
-                method_name: self.name.clone(),
-                expected: self.parameters.len(),
-                actual: args.len(),
-            })?;
-        }
-
-        // TODO: validate the arg values against the schema
-
-        Ok(())
-    }
-
     pub fn args_from_json(&self, args: &[serde_json::Value]) -> Result<Vec<RecordValue>> {
         self.parameters
             .iter()
@@ -99,7 +69,7 @@ impl Method {
                     return Ok(RecordValue::Null);
                 }
 
-                RecordValue::try_from_json_type(
+                let record = RecordValue::try_from_json_type(
                     &param.type_,
                     &param.name.as_str().into(),
                     arg.clone(),
@@ -108,7 +78,16 @@ impl Method {
                 .map_err(|e| UserError::MethodInvalidArgumentType {
                     parameter_name: param.name.to_string(),
                     source: e,
-                })
+                })?;
+
+                record.validate_type(&param.type_).map_err(|e| {
+                    UserError::MethodInvalidArgumentType {
+                        parameter_name: param.name.to_string(),
+                        source: e,
+                    }
+                })?;
+
+                Ok(record)
             })
             .collect::<std::result::Result<Vec<_>, _>>()
     }

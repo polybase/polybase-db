@@ -242,12 +242,14 @@ async fn get_records<'a>(
         })
         .collect::<Vec<_>>();
 
+    let cursor_after = query.after.0.clone();
+    let cursor_before = query.before.0.clone();
     let list_query = list_query::ListQuery {
         limit: Some(min(1000, query.limit.unwrap_or(100))),
         where_query: query.where_query.clone(),
         order_by: &sort_indexes,
-        cursor_after: query.after.0.clone(),
-        cursor_before: query.before.0.clone(),
+        cursor_after: cursor_after.clone(),
+        cursor_before: cursor_before.clone(),
     };
 
     let records = if let Some(since) = query.since {
@@ -279,16 +281,22 @@ async fn get_records<'a>(
         Ok(ListResponse {
             cursor: Cursors {
                 // TODO: implement cursor
-                before: records.first().map(|r| {
-                    cursor::Cursor(
-                        cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
-                    )
-                }),
-                after: records.last().map(|r| {
-                    cursor::Cursor(
-                        cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
-                    )
-                }),
+                before: records
+                    .first()
+                    .map(|r| {
+                        cursor::Cursor(
+                            cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
+                        )
+                    })
+                    .or(cursor_before),
+                after: records
+                    .last()
+                    .map(|r| {
+                        cursor::Cursor(
+                            cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
+                        )
+                    })
+                    .or(cursor_after),
             },
             data: records
                 .into_iter()

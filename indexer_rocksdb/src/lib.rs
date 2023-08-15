@@ -6,7 +6,6 @@ mod index;
 mod key_range;
 pub mod keys;
 mod proto;
-mod record;
 mod result_stream;
 pub mod snapshot;
 mod stableast_ext;

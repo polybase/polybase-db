@@ -48,7 +48,12 @@ impl Type {
     pub fn is_indexable(&self) -> bool {
         matches!(
             self,
-            Type::Primitive(_) | Type::Record | Type::ForeignRecord(_) | Type::PublicKey
+            Type::Primitive(PrimitiveType::Boolean)
+                | Type::Primitive(PrimitiveType::String)
+                | Type::Primitive(PrimitiveType::Number)
+                | Type::Record
+                | Type::ForeignRecord(_)
+                | Type::PublicKey
         )
     }
 

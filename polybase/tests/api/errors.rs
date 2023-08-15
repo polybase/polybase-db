@@ -145,7 +145,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"arr\" of type array".to_string(),
+            message: "cannot index field \"arr\" of type string[]".to_string(),
         }
     },
     collection_with_index_on_array_field,
@@ -170,7 +170,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"more.arr\" of type array".to_string(),
+            message: "cannot index field \"more.arr\" of type string[]".to_string(),
         }
     },
     collection_with_index_on_nested_array_field,
@@ -197,7 +197,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"m\" of type map".to_string(),
+            message: "cannot index field \"m\" of type map<string, string>".to_string(),
         }
     },
     collection_with_index_on_map_field,
@@ -222,7 +222,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"info\" of type object".to_string(),
+            message: "cannot index field \"info\" of type { info.name: string; }".to_string(),
         }
     },
     collection_with_index_on_object_field,

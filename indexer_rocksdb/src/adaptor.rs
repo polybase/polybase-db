@@ -21,11 +21,12 @@ use schema::{
     Schema,
 };
 use std::{
+    collections::HashMap,
     path::Path,
     pin::Pin,
     time::{Duration, SystemTime},
 };
-use tracing::{self, error, info, warn};
+use tracing::{self, error, warn};
 
 pub struct CollectionMetadata {
     pub last_record_updated_at: SystemTime,
@@ -107,6 +108,7 @@ impl RocksDBAdaptor {
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
         order_by: &[IndexField],
+        reverse: bool,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         let schema = self.get_schema(collection_id).await?.unwrap();
 
@@ -138,12 +140,19 @@ impl RocksDBAdaptor {
 
         // Looking at the provided sort order, to know if we need to reverse the results
         // based on the index direction
-        let reverse = index.should_list_in_reverse(order_by);
+        let reverse_index = index.should_list_in_reverse(order_by);
+
+        // Switch the order if we need to reverse the results
+        // let reverse_index = if reverse {
+        //     reverse_index
+        // } else {
+        //     !reverse_index
+        // };
 
         let res = futures::stream::iter(self.store.list(
             &key_range.lower,
             &key_range.upper,
-            reverse,
+            reverse_index,
         )?)
         .try_filter_map(|res| async {
             let (k, v) = res;
@@ -176,10 +185,10 @@ impl RocksDBAdaptor {
         let data_key = keys::Key::new_data(collection_id.to_string(), record_id.to_string())?;
 
         if collection_id == "Collection" && record_id != "Collection" {
-            let old_schema = self.get_schema(collection_id).await?;
+            let old_schema = self.get_schema(record_id).await?;
             if let Some(old_schema) = old_schema {
                 let new_schema = Schema::from_record(record)?;
-                self.rebuild(record_id, &old_schema, &new_schema).await?;
+                self.rebuild(record_id, &new_schema, &old_schema).await?;
             }
         }
 
@@ -327,8 +336,6 @@ impl RocksDBAdaptor {
         record: &RecordRoot,
         schema: &Schema,
     ) {
-        // let schema = self.get_schema(collection_id).await?.unwrap();
-
         let index_value = store::Value::IndexValue(proto::IndexRecord {
             id: match data_key.serialize() {
                 Ok(data) => data,
@@ -436,8 +443,6 @@ impl RocksDBAdaptor {
         new_schema: &Schema,
         old_schema: &Schema,
     ) -> Result<()> {
-        info!(id = collection_id, "Rebuilding index");
-
         // Check if we need to update the indexes
         if new_schema == old_schema {
             // Collection code was not changed, no need to rebuild anything
@@ -455,7 +460,7 @@ impl RocksDBAdaptor {
 
         // Loop through every record in the collection
         for entry in self.store.list(&start_key, &end_key, false)? {
-            let (_, value) = entry?;
+            let (id, value) = entry?;
 
             let index_record = proto::IndexRecord::decode(&value[..])?;
             let data_key = keys::Key::deserialize(&index_record.id)?;
@@ -488,6 +493,7 @@ impl RocksDBAdaptor {
 
             // Delete from the old collection object (loaded from old ast), to delete the old data and indexes
             self.delete(collection_id, record_id, old_schema).await?;
+
             // Insert into the new collection object, to create the new data and indexes
             self.set(collection_id, record_id, &new_data, new_schema)
                 .await?;
@@ -500,29 +506,42 @@ impl RocksDBAdaptor {
 #[async_trait::async_trait]
 impl IndexerAdaptor for RocksDBAdaptor {
     async fn commit(&self, height: usize, changes: Vec<IndexerChange>) -> adaptor::Result<()> {
-        for change in changes {
+        let mut schemas = HashMap::<String, Schema>::new();
+
+        for change in changes.iter() {
             match change {
                 IndexerChange::Set {
                     collection_id,
                     record_id,
                     record,
                 } => {
-                    let schema = self
-                        .get_schema(&collection_id)
-                        .await?
-                        .ok_or(Error::CollectionNotFound)?;
-                    self.set(&collection_id, &record_id, &record, &schema)
-                        .await?;
+                    if collection_id == "Collection" && !schemas.contains_key(record_id) {
+                        let schema = Schema::from_record(record)?;
+                        schemas.insert(record_id.to_string(), schema);
+                    }
+
+                    let schema = match schemas.entry(collection_id.to_string()) {
+                        std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+                        std::collections::hash_map::Entry::Vacant(v) => {
+                            let fetched_schema = self
+                                .get_schema(collection_id)
+                                .await?
+                                .ok_or(Error::CollectionNotFound)?;
+                            v.insert(fetched_schema.clone())
+                        }
+                    };
+
+                    self.set(collection_id, record_id, record, schema).await?;
                 }
                 IndexerChange::Delete {
                     collection_id,
                     record_id,
                 } => {
                     let schema = self
-                        .get_schema(&collection_id)
+                        .get_schema(collection_id)
                         .await?
                         .ok_or(Error::CollectionNotFound)?;
-                    self.delete(&collection_id, &record_id, &schema).await?;
+                    self.delete(collection_id, record_id, &schema).await?;
                 }
             }
         }
@@ -544,9 +563,10 @@ impl IndexerAdaptor for RocksDBAdaptor {
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
         order_by: &[IndexField],
+        reverse: bool,
     ) -> adaptor::Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         Ok(self
-            ._list(collection_id, limit, where_query, order_by)
+            ._list(collection_id, limit, where_query, order_by, reverse)
             .await?)
     }
 

@@ -137,6 +137,7 @@ impl IndexerAdaptor for PostgresAdaptor {
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
         order_by: &[IndexField],
+        reverse: bool,
     ) -> adaptor::Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         todo!()
     }

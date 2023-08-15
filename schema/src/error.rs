@@ -7,6 +7,9 @@ pub enum Error {
     #[error(transparent)]
     User(#[from] UserError),
 
+    #[error("methods error: {0}")]
+    Method(#[from] methods::UserError),
+
     #[error("serde_json error")]
     SerdeJSON(#[from] serde_json::Error),
 
@@ -28,9 +31,6 @@ pub enum Error {
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserError {
-    #[error("methods error: {0}")]
-    Method(#[from] methods::UserError),
-
     #[error("collection id is missing namespace")]
     CollectionIdMissingNamespace,
 
@@ -46,13 +46,10 @@ pub enum UserError {
     #[error("collection 'id' field cannot be optional")]
     CollectionIdFieldCannotBeOptional,
 
-    #[error("code is missing definition for collection {name}")]
-    MissingDefinitionForCollection { name: String },
-
     #[error("index field {field:?} not found in schema")]
     IndexFieldNotFoundInSchema { field: String },
 
-    #[error("cannot index field {field} of type {field_type}")]
+    #[error("cannot index field \"{field}\" of type {field_type}")]
     FieldTypeCannotBeIndexed { field: String, field_type: String },
 
     #[error("collection directive {directive:?} cannot have arguments")]

@@ -52,9 +52,6 @@ pub enum ReasonCode {
     #[display(fmt = "constructor/no-id-assigned")]
     ConstructorNoId,
 
-    #[display(fmt = "collection/invalid-call")]
-    CollectionRecordIdNotFound,
-
     #[display(fmt = "collection/mismatch")]
     CollectionMismatch,
 
@@ -118,7 +115,6 @@ impl ReasonCode {
             ReasonCode::CollectionInvalidId => ErrorCode::InvalidArgument,
             ReasonCode::CollectionInvalidSchema => ErrorCode::InvalidArgument,
             ReasonCode::CollectionMismatch => ErrorCode::InvalidArgument,
-            ReasonCode::CollectionRecordIdNotFound => ErrorCode::NotFound,
             ReasonCode::IndexerQueryInequalityNotLast => ErrorCode::InvalidArgument,
             ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch => ErrorCode::InvalidArgument,
             ReasonCode::IndexerInvalidCursorKey => ErrorCode::InvalidArgument,
@@ -134,29 +130,25 @@ impl ReasonCode {
         match err {
             db::UserError::FunctionNotFound { .. } => ReasonCode::FunctionNotFound,
             db::UserError::CollectionMismatch { .. } => ReasonCode::CollectionMismatch,
+            db::UserError::CollectionNotFound => ReasonCode::CollectionNotFound,
             db::UserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
             db::UserError::RecordIdNotString => ReasonCode::RecordIdNotString,
             db::UserError::RecordIdNotFound => ReasonCode::RecordCollectionIdNotFound,
             db::UserError::CollectionIdExists => ReasonCode::CollectionIdExists,
-            // TODO: is this checked?
-            // db::UserError::RecordIDModified => ReasonCode::RecordIDModified,
+            db::UserError::MethodIncorrectNumberOfArguments { .. } => {
+                ReasonCode::FunctionInvalidArgs
+            }
+            db::UserError::MissingDefinitionForCollection { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
             db::UserError::UnauthorizedCall => ReasonCode::Unauthorized,
-            db::UserError::Method(err) => Self::from_schema_method_error(err),
         }
     }
 
     pub fn from_gateway_error(err: &gateway::GatewayUserError) -> Self {
         match err {
-            // gateway::GatewayUserError::RecordNotFound { .. } => ReasonCode::RecordNotFound,
-
-            // gateway::GatewayUserError::RecordFieldNotObject => ReasonCode::RecordFieldNotObject,
             gateway::GatewayUserError::RecordIDModified => ReasonCode::RecordIDModified,
 
-            // gateway::GatewayUserError::CollectionNotFound { .. } => ReasonCode::CollectionNotFound,
-
-            // gateway::GatewayUserError::CollectionRecordIdNotFound => {
-            //     ReasonCode::CollectionRecordIdNotFound
-            // }
             gateway::GatewayUserError::UnauthorizedCall => ReasonCode::Unauthorized,
 
             gateway::GatewayUserError::JavaScriptException { .. } => {
@@ -192,6 +184,9 @@ impl ReasonCode {
             indexer_db_adaptor::where_query::WhereQueryUserError::InvalidWhereQueryValue{..} => {
                 ReasonCode::IndexerInvalidQueryValue
             }
+            indexer_db_adaptor::where_query::WhereQueryUserError::InequalitySortDirectionMismatch{..} => {
+                ReasonCode::IndexerMissingIndex
+            }
         }
     }
 
@@ -204,74 +199,48 @@ impl ReasonCode {
             indexer_db_adaptor::UserError::InvalidCursorBeforeAndAfterSpecified { .. } => {
                 ReasonCode::IndexerInvalidCursorKey
             }
-
             indexer_db_adaptor::UserError::UnauthorizedRead { .. } => ReasonCode::Unauthorized,
 
             indexer_db_adaptor::UserError::NoIndexFoundMatchingTheQuery { .. } => {
                 ReasonCode::IndexerMissingIndex
-            } // indexer_db_adaptor::CollectionUserError::NoIndexFoundMatchingTheQuery => {
-              //     ReasonCode::IndexerMissingIndex
-              // }
-              // indexer_db_adaptor::CollectionUserError::UnauthorizedRead => ReasonCode::Unauthorized,
-              // indexer_db_adaptor::CollectionUserError::InvalidCursorKey => {
-              //     ReasonCode::IndexerInvalidCursorKey
-              // }
-              // indexer_db_adaptor::CollectionUserError::InvalidCursorBeforeAndAfterSpecified => {
-              //     ReasonCode::IndexerInvalidCursorKey
-              // }
-              // indexer_db_adaptor::CollectionUserError::CollectionIdMissingNamespace => {
-              //     ReasonCode::CollectionInvalidId
-              // }
-              // indexer_db_adaptor::CollectionUserError::CollectionNameCannotStartWithDollarSign => {
-              //     ReasonCode::CollectionInvalidId
-              // }
-              // indexer_db_adaptor::CollectionUserError::MissingDefinitionForCollection { .. } => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::CollectionMissingIdField => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::CollectionIdFieldMustBeString => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::CollectionIdFieldCannotBeOptional => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::IndexFieldNotFoundInSchema { .. } => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnArray { .. } => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAMap { .. } => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeAnObject { .. } => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::IndexFieldCannotBeBytes { .. } => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::CollectionDirectiveCannotHaveArguments {
-              //     ..
-              // } => ReasonCode::CollectionInvalidSchema,
-              // indexer_db_adaptor::CollectionUserError::UnknownCollectionDirectives { .. } => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
-              // indexer_db_adaptor::CollectionUserError::RecordUserError(_) => {
-              //     ReasonCode::RecordInvalidField
-              // }
-              // indexer_db_adaptor::CollectionUserError::Schema(_) => {
-              //     ReasonCode::CollectionInvalidSchema
-              // }
+            }
+        }
+    }
+
+    pub fn from_schema_error(err: &schema::UserError) -> Self {
+        match err {
+            schema::UserError::CollectionIdMissingNamespace { .. } => {
+                ReasonCode::CollectionInvalidId
+            }
+            schema::UserError::CollectionNameCannotStartWithDollarSign { .. } => {
+                ReasonCode::CollectionInvalidId
+            }
+            schema::UserError::CollectionMissingIdField { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            schema::UserError::CollectionIdFieldMustBeString { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            schema::UserError::CollectionIdFieldCannotBeOptional { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            schema::UserError::IndexFieldNotFoundInSchema { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            schema::UserError::FieldTypeCannotBeIndexed { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            schema::UserError::CollectionDirectiveCannotHaveArguments { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
+            schema::UserError::UnknownCollectionDirectives { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
         }
     }
 
     pub fn from_schema_method_error(err: &schema::methods::UserError) -> Self {
         match err {
-            schema::methods::UserError::MethodIncorrectNumberOfArguments { .. } => {
-                ReasonCode::FunctionInvalidArgs
-            }
             schema::methods::UserError::MethodInvalidArgumentType { .. } => {
                 ReasonCode::FunctionInvalidArgs
             }
@@ -294,9 +263,6 @@ impl ReasonCode {
                 ReasonCode::RecordInvalidField
             }
             schema::record::RecordUserError::RecordReferenceMissingField { .. } => {
-                ReasonCode::RecordInvalidField
-            }
-            schema::record::RecordUserError::RecordReferenceUnexpectedFields { .. } => {
                 ReasonCode::RecordInvalidField
             }
             schema::record::RecordUserError::ForeignRecordReferenceHasWrongCollectionId {

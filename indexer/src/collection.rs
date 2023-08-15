@@ -367,7 +367,7 @@ pub fn validate_collection_record(record: &RecordRoot) -> Result<()> {
 
     let ast = serde_json::from_str::<polylang::stableast::Root>(ast)?;
 
-    let Some(collection) = collection_ast_from_root(ast, &Collection::normalize_name( name)) else {
+    let Some(collection) = collection_ast_from_root(ast, &Collection::normalize_name(name)) else {
         return Err(CollectionUserError::MissingDefinitionForCollection { name: name.to_owned() }.into());
     };
 

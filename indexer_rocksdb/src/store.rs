@@ -58,6 +58,7 @@ pub(crate) struct Store {
     state: Arc<Mutex<StoreState>>,
 }
 
+#[derive(Debug)]
 enum StoreOp {
     Put(Vec<u8>),
     Delete,

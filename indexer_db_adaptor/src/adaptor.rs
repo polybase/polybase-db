@@ -35,6 +35,7 @@ pub trait IndexerAdaptor: Send + Sync {
         limit: Option<usize>,
         where_query: WhereQuery<'_>,
         order_by: &[IndexField],
+        reverse: bool,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>>;
 
     async fn get_schema(&self, collection_id: &str) -> Result<Option<Schema>>;

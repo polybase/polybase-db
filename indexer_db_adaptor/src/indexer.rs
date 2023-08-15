@@ -145,24 +145,26 @@ impl<A: IndexerAdaptor> Indexer<A> {
         let mut where_query = where_query.clone();
 
         // Apply the cursor to the where_query
-        match (cursor_before, cursor_after) {
+        let reverse = match (cursor_before, cursor_after) {
             (Some(cursor_before), None) => {
-                where_query.apply_cursor(cursor_before, cursor::CursorDirection::Before, order_by)
+                where_query.apply_cursor(cursor_before, cursor::CursorDirection::Before, order_by);
+                true
             }
             (None, Some(cursor_after)) => {
-                where_query.apply_cursor(cursor_after, cursor::CursorDirection::After, order_by)
+                where_query.apply_cursor(cursor_after, cursor::CursorDirection::After, order_by);
+                false
             }
             (Some(_), Some(_)) => {
                 return Err(UserError::InvalidCursorBeforeAndAfterSpecified)?;
             }
-            (None, None) => {}
-        }
+            (None, None) => false,
+        };
 
         where_query.cast(&schema)?;
 
         Ok(self
             .adaptor
-            .list(collection_id, limit, where_query, order_by)
+            .list(collection_id, limit, where_query, order_by, reverse)
             .await?)
     }
 

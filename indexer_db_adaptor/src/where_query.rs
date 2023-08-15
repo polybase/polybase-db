@@ -19,9 +19,6 @@ pub enum WhereQueryError {
 
     #[error("record error")]
     RecordError(#[from] record::RecordError),
-
-    #[error("can only sort by inequality if it's the same direction")]
-    InequalitySortDirectionMismatch,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +41,9 @@ pub enum WhereQueryUserError {
         expected_type: String,
         field: Option<String>,
     },
+
+    #[error("can only sort by inequality if it's the same direction")]
+    InequalitySortDirectionMismatch,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -190,8 +190,7 @@ impl<'a> WhereQuery<'a> {
     pub fn apply_cursor(
         &mut self,
         cursor: Cursor,
-        dir: CursorDirection,
-        // TODO: does this include ID?
+        cursor_dir: CursorDirection,
         order_by: &[IndexField],
     ) {
         // let values = cursor.values.with_static();
@@ -200,7 +199,7 @@ impl<'a> WhereQuery<'a> {
             if let WhereNode::Inequality(node) = value {
                 // Determine which direction we want to continue in (which determines
                 // the inequality filter to update)
-                let forward = is_inequality_forwards(key, order_by, &dir);
+                let forward = is_inequality_forwards(key, order_by, &cursor_dir);
 
                 // TODO: Only add fields in the cursor, or should we add these as Null?
                 if let Some(cursor_field_value) = cursor.0.values.get(key) {
@@ -223,7 +222,7 @@ impl<'a> WhereQuery<'a> {
         // sending the last record in the previous query back to the user
         let id = FieldPath::id();
         if let std::collections::hash_map::Entry::Vacant(e) = self.0.entry(id.clone()) {
-            let forward = is_inequality_forwards(&id, order_by, &dir);
+            let forward = is_inequality_forwards(&id, order_by, &cursor_dir);
             let where_value = Some(WhereValue(cursor.0.record_id.with_static()));
 
             e.insert(match forward {
@@ -325,7 +324,7 @@ impl<'a> WhereQuery<'a> {
                 })
                 .unwrap_or(false)
             {
-                return Err(WhereQueryError::InequalitySortDirectionMismatch);
+                return Err(WhereQueryUserError::InequalitySortDirectionMismatch)?;
             }
 
             if let Some(last_req) = requirements.last_mut() {
@@ -421,7 +420,11 @@ impl<'a> WhereQuery<'a> {
 }
 
 /// Determines if the inequality projection should be forwards (gt/gte) or backwards (lt/lte)
-fn is_inequality_forwards(key: &FieldPath, order_by: &[IndexField], dir: &CursorDirection) -> bool {
+fn is_inequality_forwards(
+    key: &FieldPath,
+    order_by: &[IndexField],
+    cursor_dir: &CursorDirection,
+) -> bool {
     // Find the sort order direction for a key
     let order_for_key = order_by
         .iter()
@@ -429,13 +432,17 @@ fn is_inequality_forwards(key: &FieldPath, order_by: &[IndexField], dir: &Cursor
         .map(|field| field.direction)
         .unwrap_or(IndexDirection::Ascending);
 
+    should_invert(&order_for_key, cursor_dir)
+}
+
+fn should_invert(order_for_key: &IndexDirection, cursor_dir: &CursorDirection) -> bool {
     // Determine which direction we want to continue in (which determines
     // the inequality filter to update)
-    match (order_for_key, &dir) {
-        (IndexDirection::Ascending, CursorDirection::After) => false,
-        (IndexDirection::Ascending, CursorDirection::Before) => true,
-        (IndexDirection::Descending, CursorDirection::After) => true,
-        (IndexDirection::Descending, CursorDirection::Before) => false,
+    match (order_for_key, cursor_dir) {
+        (IndexDirection::Ascending, CursorDirection::After) => true,
+        (IndexDirection::Ascending, CursorDirection::Before) => false,
+        (IndexDirection::Descending, CursorDirection::After) => false,
+        (IndexDirection::Descending, CursorDirection::Before) => true,
     }
 }
 

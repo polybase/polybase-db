@@ -7,10 +7,13 @@ use indexer_db_adaptor::{adaptor::IndexerAdaptor, IndexerChange};
 use indexer_db_adaptor::{auth_user::AuthUser, list_query::ListQuery, Indexer};
 use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
 use parking_lot::Mutex;
-use schema::methods;
-use schema::record::{
-    self, json_to_record, record_to_json, ForeignRecordReference, RecordReference, RecordRoot,
-    RecordValue,
+use schema::{
+    self, methods,
+    record::{
+        self, foreign_record_to_json, json_to_record, record_to_json, ForeignRecordReference,
+        RecordReference, RecordRoot, RecordValue,
+    },
+    Schema,
 };
 use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
@@ -23,23 +26,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("collection not found")]
-    CollectionNotFound,
-
-    #[error("collection AST not found in collection record")]
-    CollectionASTNotFound,
-
-    #[error("collection AST is invalid: {0}")]
-    CollectionASTInvalid(String),
-
-    #[error("cannot update the Collection collection record")]
-    CollectionCollectionRecordUpdate,
-
-    #[error("invalid function args response")]
-    InvalidFunctionArgsResponse,
+    #[error("schema error: {0}")]
+    Schema(#[from] schema::Error),
 
     #[error("record error: {0}")]
     Record(#[from] record::RecordError),
+
+    #[error("record error: {0}")]
+    Method(#[from] methods::UserError),
 
     #[error("user error: {0}")]
     User(#[from] UserError),
@@ -61,10 +55,19 @@ pub enum Error {
 
     #[error("tokio send error")]
     TokioSend(#[from] mpsc::error::SendError<CallTxn>),
+
+    #[error("invalid function args response")]
+    InvalidFunctionArgsResponse,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum UserError {
+    #[error("collection not found")]
+    CollectionNotFound,
+
+    #[error("code is missing definition for collection {name}")]
+    MissingDefinitionForCollection { name: String },
+
     #[error("method {method_name:?} not found in collection {collection_id:?}")]
     FunctionNotFound {
         method_name: String,
@@ -94,8 +97,12 @@ pub enum UserError {
     #[error("record id already exists in collection")]
     CollectionIdExists,
 
-    #[error("methods error")]
-    Method(#[from] methods::UserError),
+    #[error("method {method_name} args invalid, expected {expected} got {actual}")]
+    MethodIncorrectNumberOfArguments {
+        method_name: String,
+        expected: usize,
+        actual: usize,
+    },
 
     #[error("you do not have permission to call this function")]
     UnauthorizedCall,
@@ -311,7 +318,23 @@ impl<A: IndexerAdaptor> Db<A> {
             }
         };
 
-        // TODO: validate parameters
+        // Check args length
+        let required_args_len = method.parameters.iter().filter(|p| p.required).count();
+        if args.len() < required_args_len {
+            return Err(UserError::MethodIncorrectNumberOfArguments {
+                method_name: method.name.clone(),
+                expected: required_args_len,
+                actual: args.len(),
+            })?;
+        }
+
+        if args.len() > method.parameters.len() {
+            return Err(UserError::MethodIncorrectNumberOfArguments {
+                method_name: method.name.clone(),
+                expected: method.parameters.len(),
+                actual: args.len(),
+            })?;
+        }
 
         // Get the js code to run
         let js_code = schema.generate_js();
@@ -346,13 +369,11 @@ impl<A: IndexerAdaptor> Db<A> {
         }
 
         // Get args as RecordValues (so we can validate them and find the references)
-        let arg_values = method.args_from_json(args).map_err(UserError::from)?;
-
-        // TODO: Validate args against schema
+        let input_args = method.args_from_json(args).map_err(Error::from)?;
 
         // Convert all record references to JSON
-        let extended_args =
-            futures::future::join_all(args.iter().zip(&arg_values).map(|(json, val)| async move {
+        let extended_input_args =
+            futures::future::join_all(args.iter().zip(&input_args).map(|(json, val)| async move {
                 match val {
                     // TODO(minor): clean up duplicate code
                     RecordValue::ForeignRecordReference(ForeignRecordReference {
@@ -367,7 +388,8 @@ impl<A: IndexerAdaptor> Db<A> {
                                 collection_id: collection_id.to_string(),
                                 record_id: id.to_string(),
                             })?;
-                        Ok(record_to_json(record))
+                        let record = foreign_record_to_json(record, collection_id);
+                        Ok(record)
                     }
                     RecordValue::RecordReference(RecordReference { id }) => {
                         let record = self
@@ -398,7 +420,7 @@ impl<A: IndexerAdaptor> Db<A> {
                 &js_code,
                 &method.name,
                 json_record,
-                &extended_args,
+                &extended_input_args,
                 auth.as_ref(),
             )
             .await?;
@@ -422,7 +444,7 @@ impl<A: IndexerAdaptor> Db<A> {
         // Check if already exists
         if let Ok(Some(_)) = self
             .indexer
-            .get(collection_id, &output_instance_id, public_key)
+            .get_without_auth_check(collection_id, &output_instance_id)
             .await
         {
             if method.name == "constructor" {
@@ -432,18 +454,31 @@ impl<A: IndexerAdaptor> Db<A> {
 
         // Check output args are same as input, otherwise something strange has happened,
         // possibly someone messing around with the JS code
-        if extended_args.len() != output.args.len() {
+        if extended_input_args.len() != output.args.len() {
             return Err(Error::InvalidFunctionArgsResponse)?;
         }
 
         // TODO: check we can't modify records in other collections
 
+        // Validate schema change
+        // Update of schema
+        if collection_id == "Collection" && method.name == "constructor" {
+            // Check schema is valid
+            let schema = Schema::from_record(&output_record).map_err(|err| match err {
+                schema::Error::CollectionNotFoundInAST { name } => {
+                    Error::User(UserError::MissingDefinitionForCollection { name })
+                }
+                _ => Error::from(err),
+            })?;
+            schema.validate()?;
+        }
+
         // Find changes in the args
         let mut changes: Vec<_> = futures::future::join_all(
-            extended_args
+            extended_input_args
                 .into_iter()
                 .zip(output.args)
-                .zip(arg_values)
+                .zip(input_args)
                 .filter(|(_, value)| {
                     matches!(
                         value,
@@ -483,19 +518,19 @@ impl<A: IndexerAdaptor> Db<A> {
         .into_iter()
         .collect::<Result<Vec<_>>>()?;
 
-        if method.name == "constructor" || output_record_changed {
+        if output.self_destruct {
+            changes.push(IndexerChange::Delete {
+                collection_id: collection_id.to_string(),
+                record_id: output_instance_id.to_string(),
+            });
+        } else if method.name == "constructor" || output_record_changed {
             // TODO: if we're creating a new collection, let's do more validation here!
             changes.push(IndexerChange::Set {
                 collection_id: collection_id.to_string(),
                 record_id: output_instance_id.to_string(),
                 record: output_record,
             });
-        } else if output.self_destruct {
-            changes.push(IndexerChange::Delete {
-                collection_id: collection_id.to_string(),
-                record_id: output_instance_id.to_string(),
-            });
-        }
+        };
 
         Ok((output_instance_id.to_string(), changes))
     }
@@ -562,7 +597,7 @@ impl<A: IndexerAdaptor> Db<A> {
             .collect::<Result<Vec<_>>>()?;
 
         // Get a list of changes for the indexer
-        let changes = future::join_all(
+        let mut changes = future::join_all(
             call_txns
                 .iter()
                 .map(|txn| async move { Ok(self.call_changes(txn).await?.1) }),
@@ -573,6 +608,19 @@ impl<A: IndexerAdaptor> Db<A> {
         .into_iter()
         .flatten()
         .collect::<Vec<_>>();
+
+        // Sort collection changes first
+        changes.sort_by_key(|item| {
+            if match item {
+                IndexerChange::Set { collection_id, .. } => collection_id,
+                IndexerChange::Delete { collection_id, .. } => collection_id,
+            } == "Collection"
+            {
+                0
+            } else {
+                1
+            }
+        });
 
         let height = manifest.height;
 
@@ -635,47 +683,6 @@ impl<A: IndexerAdaptor> Db<A> {
         let manifest: proposal::ProposalManifest = bincode::deserialize(&value)?;
         Ok(Some(manifest))
     }
-
-    // async fn validate_schema_update(
-    //     &self,
-    //     collection_id: &str,
-    //     record_id: &str,
-    //     record: &RecordRoot,
-    //     auth: Option<&AuthUser>,
-    // ) -> Result<()> {
-    //     let collection = self.indexer.collection(&collection_id).await?;
-
-    //     let old_record = collection
-    //         .get(&record_id, auth)
-    //         .await
-    //         .map_err(IndexerError::from)?
-    //         .ok_or(Error::CollectionNotFound)?;
-
-    //     let old_ast = old_record.get("ast").ok_or(Error::CollectionASTNotFound)?;
-
-    //     let RecordValue::String(old_ast) = old_ast
-    //         else {
-    //             return Err(Error::CollectionASTInvalid("Collection AST in old record is not a string".into()));
-    //         };
-
-    //     let RecordValue::String(new_ast) = record
-    //             .get("ast")
-    //             .ok_or(Error::CollectionASTNotFound)? else {
-    //         return Err(Error::CollectionASTInvalid("Collection AST in new record is not a string".into()));
-    //     };
-
-    //     validate_schema_change(
-    //         #[allow(clippy::unwrap_used)] // split always returns at least one element
-    //         record_id.split('/').last().unwrap(),
-    //         serde_json::from_str(&old_ast)?,
-    //         serde_json::from_str(new_ast)?,
-    //     )
-    //     .map_err(IndexerError::from)?;
-
-    //     validate_collection_record(record).map_err(IndexerError::from)?;
-
-    //     Ok(())
-    // }
 }
 
 fn get_key(namespace: &str, id: &str) -> [u8; 32] {
