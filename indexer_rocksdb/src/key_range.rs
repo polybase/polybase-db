@@ -1,5 +1,5 @@
 use crate::keys;
-use indexer_db_adaptor::where_query::{WhereNode, WhereQuery};
+use indexer::where_query::{WhereNode, WhereQuery};
 use schema::{field_path::FieldPath, index::IndexDirection, index_value::IndexValue, Schema};
 use std::borrow::Cow;
 
@@ -131,7 +131,7 @@ pub(crate) fn key_range<'a>(
 mod test {
     use super::*;
 
-    use indexer_db_adaptor::where_query::{WhereInequality, WhereQuery, WhereValue};
+    use indexer::where_query::{WhereInequality, WhereQuery, WhereValue};
     use schema::{field_path::FieldPath, index::IndexDirection};
     use std::collections::HashMap;
 

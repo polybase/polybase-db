@@ -3,8 +3,8 @@ use crate::mempool::Mempool;
 use crate::txn::{self, CallTxn};
 use futures_util::{future, StreamExt};
 use gateway::Gateway;
-use indexer_db_adaptor::{adaptor::IndexerAdaptor, IndexerChange};
-use indexer_db_adaptor::{auth_user::AuthUser, list_query::ListQuery, Indexer};
+use indexer::{adaptor::IndexerAdaptor, IndexerChange};
+use indexer::{auth_user::AuthUser, list_query::ListQuery, Indexer};
 use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
 use parking_lot::Mutex;
 use schema::{
@@ -42,7 +42,7 @@ pub enum Error {
     Gateway(#[from] gateway::GatewayError),
 
     #[error("indexer error")]
-    Indexer(#[from] indexer_db_adaptor::Error),
+    Indexer(#[from] indexer::Error),
 
     #[error("serialize error")]
     Serializer(#[from] bincode::Error),

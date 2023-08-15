@@ -7,7 +7,7 @@ use crate::{
 };
 use async_recursion::async_recursion;
 use futures::{StreamExt, TryStreamExt};
-use indexer_db_adaptor::{
+use indexer::{
     adaptor::{self, IndexerAdaptor},
     where_query::WhereQuery,
     IndexerChange,

@@ -15,7 +15,7 @@ base64 = "0.21"
 cid = "0.10"
 once_cell = "1.17.0"
 polylang = { git = "https://github.com/polybase/polylang", branch = "main", version = "0.1.0" }
-indexer_db_adaptor = { path = "../indexer_db_adaptor" }
+indexer = { path = "../indexer" }
 schema = { path = "../schema" }
 prost = "0.11"
 prost-types = "0.11"

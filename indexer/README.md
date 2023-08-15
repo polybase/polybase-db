@@ -1,4 +1,4 @@
-# indexer_db_adaptor
+# indexer
 
 WIP.
 

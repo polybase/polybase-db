@@ -113,26 +113,26 @@ impl From<db::UserError> for HTTPError {
     }
 }
 
-impl From<indexer_db_adaptor::cursor::Error> for HTTPError {
-    fn from(err: indexer_db_adaptor::cursor::Error) -> Self {
+impl From<indexer::cursor::Error> for HTTPError {
+    fn from(err: indexer::cursor::Error) -> Self {
         HTTPError::new(ReasonCode::Internal, Some(Box::new(err)))
     }
 }
 
-impl From<indexer_db_adaptor::where_query::WhereQueryError> for HTTPError {
-    fn from(err: indexer_db_adaptor::where_query::WhereQueryError) -> Self {
+impl From<indexer::where_query::WhereQueryError> for HTTPError {
+    fn from(err: indexer::where_query::WhereQueryError) -> Self {
         match err {
-            indexer_db_adaptor::where_query::WhereQueryError::UserError(e) => e.into(),
-            indexer_db_adaptor::where_query::WhereQueryError::RecordError(
+            indexer::where_query::WhereQueryError::UserError(e) => e.into(),
+            indexer::where_query::WhereQueryError::RecordError(
                 schema::record::RecordError::UserError(e),
             ) => e.into(),
-            indexer_db_adaptor::where_query::WhereQueryError::RecordError(e) => internal_error(e),
+            indexer::where_query::WhereQueryError::RecordError(e) => internal_error(e),
         }
     }
 }
 
-impl From<indexer_db_adaptor::where_query::WhereQueryUserError> for HTTPError {
-    fn from(err: indexer_db_adaptor::where_query::WhereQueryUserError) -> Self {
+impl From<indexer::where_query::WhereQueryUserError> for HTTPError {
+    fn from(err: indexer::where_query::WhereQueryUserError) -> Self {
         HTTPError::new(
             ReasonCode::from_where_query_error(&err),
             Some(Box::new(err)),
@@ -183,18 +183,18 @@ impl From<schema::methods::UserError> for HTTPError {
     }
 }
 
-impl From<indexer_db_adaptor::Error> for HTTPError {
-    fn from(err: indexer_db_adaptor::Error) -> Self {
+impl From<indexer::Error> for HTTPError {
+    fn from(err: indexer::Error) -> Self {
         match err {
-            indexer_db_adaptor::Error::User(e) => e.into(),
-            indexer_db_adaptor::Error::WhereQuery(e) => e.into(),
-            indexer_db_adaptor::Error::Adaptor(e) => internal_error(e),
+            indexer::Error::User(e) => e.into(),
+            indexer::Error::WhereQuery(e) => e.into(),
+            indexer::Error::Adaptor(e) => internal_error(e),
         }
     }
 }
 
-impl From<indexer_db_adaptor::UserError> for HTTPError {
-    fn from(err: indexer_db_adaptor::UserError) -> Self {
+impl From<indexer::UserError> for HTTPError {
+    fn from(err: indexer::UserError) -> Self {
         HTTPError::new(ReasonCode::from_indexer_error(&err), Some(Box::new(err)))
     }
 }

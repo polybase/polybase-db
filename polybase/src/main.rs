@@ -18,7 +18,7 @@ use crate::rpc::create_rpc_server;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
-use indexer_db_adaptor::Indexer;
+use indexer::Indexer;
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};

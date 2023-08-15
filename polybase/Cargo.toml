@@ -12,7 +12,7 @@ actix-web = "4"
 actix-server = "2.2"
 schema = { path = "../schema" }
 indexer_rocksdb = { path = "../indexer_rocksdb" }
-indexer_db_adaptor = { path = "../indexer_db_adaptor" }
+indexer = { path = "../indexer" }
 gateway = { path = "../gateway" }
 solid = { path = "../solid" }
 polylang-prover = { git = "https://github.com/polybase/polylang", rev = "91996dea0efa572666e6f82cbc9a1d2641082ebe", version = "0.1.0" }

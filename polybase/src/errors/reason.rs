@@ -165,43 +165,39 @@ impl ReasonCode {
         }
     }
 
-    pub fn from_where_query_error(
-        err: &indexer_db_adaptor::where_query::WhereQueryUserError,
-    ) -> Self {
+    pub fn from_where_query_error(err: &indexer::where_query::WhereQueryUserError) -> Self {
         match err {
-            indexer_db_adaptor::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
+            indexer::where_query::WhereQueryUserError::PathsAndDirectionsLengthMismatch {
                 ..
             } => ReasonCode::IndexerQueryPathsAndDirectionsLengthMismatch,
-            indexer_db_adaptor::where_query::WhereQueryUserError::InequalityNotLast => {
+            indexer::where_query::WhereQueryUserError::InequalityNotLast => {
                 ReasonCode::IndexerQueryInequalityNotLast
             }
-            indexer_db_adaptor::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
+            indexer::where_query::WhereQueryUserError::CannotFilterOrSortByField(..) => {
                 ReasonCode::IndexerMissingIndex
             }
-            indexer_db_adaptor::where_query::WhereQueryUserError::InvalidWhereQueryField{..} => {
+            indexer::where_query::WhereQueryUserError::InvalidWhereQueryField { .. } => {
                 ReasonCode::IndexerInvalidQueryValue
             }
-            indexer_db_adaptor::where_query::WhereQueryUserError::InvalidWhereQueryValue{..} => {
+            indexer::where_query::WhereQueryUserError::InvalidWhereQueryValue { .. } => {
                 ReasonCode::IndexerInvalidQueryValue
             }
-            indexer_db_adaptor::where_query::WhereQueryUserError::InequalitySortDirectionMismatch{..} => {
-                ReasonCode::IndexerMissingIndex
-            }
+            indexer::where_query::WhereQueryUserError::InequalitySortDirectionMismatch {
+                ..
+            } => ReasonCode::IndexerMissingIndex,
         }
     }
 
-    pub fn from_indexer_error(err: &indexer_db_adaptor::UserError) -> Self {
+    pub fn from_indexer_error(err: &indexer::UserError) -> Self {
         match err {
-            indexer_db_adaptor::UserError::CollectionNotFound { .. } => {
-                ReasonCode::CollectionNotFound
-            }
+            indexer::UserError::CollectionNotFound { .. } => ReasonCode::CollectionNotFound,
 
-            indexer_db_adaptor::UserError::InvalidCursorBeforeAndAfterSpecified { .. } => {
+            indexer::UserError::InvalidCursorBeforeAndAfterSpecified { .. } => {
                 ReasonCode::IndexerInvalidCursorKey
             }
-            indexer_db_adaptor::UserError::UnauthorizedRead { .. } => ReasonCode::Unauthorized,
+            indexer::UserError::UnauthorizedRead { .. } => ReasonCode::Unauthorized,
 
-            indexer_db_adaptor::UserError::NoIndexFoundMatchingTheQuery { .. } => {
+            indexer::UserError::NoIndexFoundMatchingTheQuery { .. } => {
                 ReasonCode::IndexerMissingIndex
             }
         }

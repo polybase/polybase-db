@@ -24,7 +24,6 @@ COPY Cargo.lock ./
 COPY Cargo.toml ./
 COPY polybase ./polybase/
 COPY indexer ./indexer/
-COPY indexer_db_adaptor ./indexer_db_adaptor
 COPY indexer_rocksdb ./indexer_rocksdb
 COPY gateway ./gateway/
 COPY solid ./solid/
@@ -46,7 +45,6 @@ COPY Cargo.lock ./
 COPY Cargo.toml ./
 COPY polybase ./polybase/
 COPY indexer ./indexer/
-COPY indexer_db_adaptor ./indexer_db_adaptor
 COPY indexer_rocksdb ./indexer_rocksdb
 COPY gateway ./gateway/
 COPY solid ./solid/

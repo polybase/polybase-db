@@ -1,5 +1,5 @@
 // use bincode::{deserialize, serialize};
-use indexer_db_adaptor::auth_user::AuthUser;
+use indexer::auth_user::AuthUser;
 use serde::{Deserialize, Serialize};
 use serde_json::{from_slice as deserialize, to_vec as serialize};
 use sha3::{Digest, Sha3_256};

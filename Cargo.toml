@@ -2,13 +2,11 @@
 
 members = [
     "polybase",
-    "indexer",
     "gateway",
     "solid",
     "schema",
-    "indexer_db_adaptor",
+    "indexer",
     "indexer_rocksdb",
-    "indexer_pg",
 ]
 
 [profile.release]

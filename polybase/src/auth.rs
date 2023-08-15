@@ -11,7 +11,7 @@ use schema::publickey::PublicKey;
 use serde::de::DeserializeOwned;
 
 use crate::errors::http::HTTPError;
-use indexer_db_adaptor::auth_user::AuthUser;
+use indexer::auth_user::AuthUser;
 
 pub type Result<T> = std::result::Result<T, AuthError>;
 

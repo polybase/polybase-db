@@ -1,6 +1,6 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-use indexer_db_adaptor::auth_user::AuthUser;
+use indexer::auth_user::AuthUser;
 use schema::{self, publickey::PublicKey};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Once};
