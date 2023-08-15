@@ -462,7 +462,7 @@ impl<A: IndexerAdaptor> Db<A> {
 
         // Validate schema change
         // Update of schema
-        if collection_id == "Collection" && method.name == "constructor" {
+        if collection_id == "Collection" {
             // Check schema is valid
             let schema = Schema::from_record(&output_record).map_err(|err| match err {
                 schema::Error::CollectionNotFoundInAST { name } => {

@@ -275,7 +275,7 @@ impl Schema {
         // Validate indexes
         for index in self.indexes.iter() {
             for index_field in &index.fields {
-                let Some(prop) = self.properties.iter_all().find(|p| p.path == index_field.path) else {
+                let Some(prop) = self.properties.get_path(&index_field.path) else {
                     return Err(UserError::IndexFieldNotFoundInSchema {
                         field: index_field.path.to_string(),
                     }
