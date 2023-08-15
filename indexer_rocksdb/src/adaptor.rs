@@ -143,11 +143,11 @@ impl RocksDBAdaptor {
         let reverse_index = index.should_list_in_reverse(order_by);
 
         // Switch the order if we need to reverse the results
-        // let reverse_index = if reverse {
-        //     reverse_index
-        // } else {
-        //     !reverse_index
-        // };
+        let reverse_index = if reverse {
+            !reverse_index
+        } else {
+            reverse_index
+        };
 
         let res = futures::stream::iter(self.store.list(
             &key_range.lower,
