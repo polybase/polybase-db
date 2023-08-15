@@ -52,6 +52,9 @@ pub enum UserError {
     #[error("cannot index field \"{field}\" of type {field_type}")]
     FieldTypeCannotBeIndexed { field: String, field_type: String },
 
+    #[error("cannot change type of fields: \"{fields}\", delete the fields and re-create them")]
+    SchemaFieldTypeChangeNotAllowed { fields: String },
+
     #[error("collection directive {directive:?} cannot have arguments")]
     CollectionDirectiveCannotHaveArguments { directive: String },
 

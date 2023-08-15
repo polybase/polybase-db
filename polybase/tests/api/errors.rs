@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::api::{Error, ErrorData, ListQuery, Server};
+use crate::api::{Error, ErrorData, Server};
 
 macro_rules! create_collection_test {
     ($error:expr, $test_name:ident, $collection_id:expr, $schema:expr, $signer:expr $(,)?) => {
@@ -758,6 +758,85 @@ async fn invalid_index_name_update() {
                 code: "invalid-argument".to_string(),
                 reason: "collection/invalid-schema".to_string(),
                 message: "index field \"id1\" not found in schema".to_string(),
+            }
+        }
+    );
+}
+
+#[tokio::test]
+async fn change_schema_type() {
+    let server = Server::setup_and_wait(None).await;
+
+    let schema = r#"
+    @public
+    collection Account {
+        id: string;
+    
+        constructor (id: string) {
+            this.id = id;
+        }
+    }"#;
+
+    let col = server
+        .create_collection_untyped("ns/Account", schema, None)
+        .await
+        .unwrap();
+
+    col.create(json!(["id1"]), None).await.unwrap();
+
+    let schema_with_col_ref = r#"
+    @public
+    collection Account {
+        id: string;
+        x: SomeCol;
+    
+        constructor (id: string) {
+            this.id = id;
+        }
+    }
+    "#;
+
+    let col = server
+        .update_collection_untyped("ns/Account", schema_with_col_ref, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        col.get("id1", None).await.unwrap(),
+        json!({
+            "id": "id1",
+            "x": {
+                "collectionId": "",
+                "id": "",
+            },
+        })
+    );
+
+    let schema_with_object = r#"
+    @public
+    collection Account {
+        id: string;
+        x: {
+            name: string;
+        };
+    
+        constructor (id: string) {
+            this.id = id;
+        }
+    }"#;
+
+    assert_eq!(
+        server
+            .update_collection_untyped("ns/Account", schema_with_object, None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "collection/invalid-schema".to_string(),
+                message:
+                    r#"cannot change type of fields: "x", delete the fields and re-create them"#
+                        .to_string(),
             }
         }
     );

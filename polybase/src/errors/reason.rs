@@ -224,6 +224,9 @@ impl ReasonCode {
             schema::UserError::CollectionIdFieldCannotBeOptional { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }
+            schema::UserError::SchemaFieldTypeChangeNotAllowed { .. } => {
+                ReasonCode::CollectionInvalidSchema
+            }
             schema::UserError::IndexFieldNotFoundInSchema { .. } => {
                 ReasonCode::CollectionInvalidSchema
             }

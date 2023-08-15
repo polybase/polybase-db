@@ -464,13 +464,19 @@ impl<A: IndexerAdaptor> Db<A> {
         // Update of schema
         if collection_id == "Collection" {
             // Check schema is valid
-            let schema = Schema::from_record(&output_record).map_err(|err| match err {
+            let new_schema = Schema::from_record(&output_record).map_err(|err| match err {
                 schema::Error::CollectionNotFoundInAST { name } => {
                     Error::User(UserError::MissingDefinitionForCollection { name })
                 }
                 _ => Error::from(err),
             })?;
-            schema.validate()?;
+            new_schema.validate()?;
+
+            // Existing schema update, validate its allowed
+            if method.name != "constructor" {
+                let old_schema = self.indexer.get_schema_required(record_id).await?;
+                old_schema.validate_schema_change(new_schema)?;
+            }
         }
 
         // Find changes in the args

@@ -244,10 +244,34 @@ impl Schema {
         )
     }
 
-    // TODO: validate that we can change to the new schem we need to do more checks than this
-    // - e.g. we need to check if a field is changing type which we should not allow
+    // Check if the user is attempting to change a schema field type
     pub fn validate_schema_change(&self, new_schema: Schema) -> Result<()> {
-        todo!()
+        let existing_types = self
+            .properties
+            .iter_all()
+            .map(|p| (p.path.to_string(), &p.type_))
+            .collect::<HashMap<_, _>>();
+
+        let changed_prop_types = new_schema
+            .properties
+            .iter_all()
+            .filter(|p| {
+                if let Some(existing_type) = existing_types.get(&p.path.to_string()) {
+                    **existing_type != p.type_
+                } else {
+                    false
+                }
+            })
+            .map(|p| format!("{}", p.path))
+            .collect::<Vec<_>>();
+
+        if !changed_prop_types.is_empty() {
+            return Err(UserError::SchemaFieldTypeChangeNotAllowed {
+                fields: changed_prop_types.join(", "),
+            })?;
+        }
+
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<()> {
