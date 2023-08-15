@@ -133,6 +133,7 @@ async fn main() -> Result<()> {
     setup_tracing(&config.log_level, &config.log_format).await?;
 
     // Create the underlying store
+    #[allow(clippy::unwrap_used)]
     let indexer_dir = util::get_indexer_dir(&config.root_dir).unwrap();
     let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
     // let memory_store = memory::MemoryStore::new();

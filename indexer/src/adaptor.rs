@@ -1,4 +1,4 @@
-use crate::{indexer::IndexerChange, where_query::WhereQuery};
+use crate::{where_query::WhereQuery, IndexerChange};
 use schema::{self, record::RecordRoot, Schema};
 use std::{pin::Pin, time::SystemTime};
 

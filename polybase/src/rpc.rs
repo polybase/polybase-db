@@ -1,6 +1,6 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-use crate::db::{Db, DbWaitResult};
+use crate::db::DbWaitResult;
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
 use crate::errors::metrics::MetricsData;
@@ -21,7 +21,7 @@ use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::collections::HashMap;
-use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
+use std::{cmp::min, sync::Arc, time::Duration};
 
 struct RouteState {
     db: ArcDbIndexer,
@@ -284,18 +284,18 @@ async fn get_records<'a>(
                 // TODO: implement cursor
                 before: records
                     .first()
-                    .map(|r| {
-                        cursor::Cursor(
-                            cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
-                        )
+                    .and_then(|r| {
+                        Some(cursor::Cursor(
+                            cursor::WrappedCursor::from_record(r, &query.where_query).ok()?,
+                        ))
                     })
                     .or(cursor_before),
                 after: records
                     .last()
-                    .map(|r| {
-                        cursor::Cursor(
-                            cursor::WrappedCursor::from_record(r, &query.where_query).unwrap(),
-                        )
+                    .and_then(|r| {
+                        Some(cursor::Cursor(
+                            cursor::WrappedCursor::from_record(r, &query.where_query).ok()?,
+                        ))
                     })
                     .or(cursor_after),
             },

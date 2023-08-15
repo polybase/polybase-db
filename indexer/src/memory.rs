@@ -1,6 +1,6 @@
 use crate::adaptor::{Error, IndexerAdaptor, Result};
-use crate::indexer::IndexerChange;
 use crate::where_query::{WhereInequality, WhereNode, WhereQuery};
+use crate::IndexerChange;
 use schema::{
     field_path::FieldPath,
     index::{IndexDirection, IndexField},

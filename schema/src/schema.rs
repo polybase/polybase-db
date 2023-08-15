@@ -376,7 +376,7 @@ fn map_to_reference<'a>(
     }
 }
 
-fn get_record_reference_from_value<'a>(value: &'a RecordValue) -> Option<Vec<Reference<'a>>> {
+fn get_record_reference_from_value(value: &RecordValue) -> Option<Vec<Reference>> {
     match value {
         RecordValue::ForeignRecordReference(record_ref) => {
             Some(vec![Reference::ForeignRecord(record_ref)])

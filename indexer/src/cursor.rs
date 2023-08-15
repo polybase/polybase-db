@@ -33,6 +33,7 @@ impl<'a> Serialize for Cursor<'a> {
     where
         S: serde::Serializer,
     {
+        #[allow(clippy::unwrap_used)]
         let buf = serde_json::to_vec(&self.0).unwrap();
         serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(buf))
     }
