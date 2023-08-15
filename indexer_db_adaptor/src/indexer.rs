@@ -297,11 +297,12 @@ impl<A: IndexerAdaptor> Indexer<A> {
         collection_id: &str,
         schema: &Schema,
         public_key: &PublicKey,
-        refs: impl Iterator<Item = (FieldPath, Reference<'a>)>,
+        refs: impl Iterator<Item = (FieldPath, Vec<Reference<'a>>)>,
     ) -> bool {
         // Create a future for each reference (recursive lookup)
         let mut futures = FuturesUnordered::new();
-        for (_, ref reference) in refs {
+        let refs = refs.flat_map(|(_, refs)| refs);
+        for reference in refs {
             let (collection_id, schema, record_id) = match reference {
                 Reference::Record(RecordReference { id }) => {
                     (collection_id, Cow::Borrowed(schema), id.as_str())

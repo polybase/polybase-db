@@ -163,7 +163,7 @@ impl Schema {
         &'a self,
         directives: &'a [DirectiveKind],
         record: &'a RecordRoot,
-    ) -> impl Iterator<Item = (FieldPath, Reference<'a>)> {
+    ) -> impl Iterator<Item = (FieldPath, Vec<Reference<'a>>)> {
         // Find any auth references
         unique_filter(
             self.fields_auth(directives)
@@ -177,7 +177,7 @@ impl Schema {
         &'a self,
         method: &str,
         record: &'a RecordRoot,
-    ) -> impl Iterator<Item = (FieldPath, Reference<'a>)> {
+    ) -> impl Iterator<Item = (FieldPath, Vec<Reference<'a>>)> {
         // Find any auth references
         unique_filter(
             self.fields_auth(&[DirectiveKind::Call])
@@ -330,25 +330,46 @@ fn match_public_key<'a>(
     record: &'a RecordRoot,
     public_key: &'a PublicKey,
 ) -> impl Fn(&'a Property) -> bool {
-    move |p| {
-        matches!(p.type_, Type::PublicKey)
-            && match record.get_path(&p.path) {
-                Some(RecordValue::PublicKey(pk)) => pk == public_key,
-                _ => false,
-            }
+    move |p| match record.get_path(&p.path) {
+        Some(RecordValue::PublicKey(pk)) => pk == public_key,
+        Some(RecordValue::Array(a)) => a.iter().any(|p| match p {
+            RecordValue::PublicKey(pk) => pk == public_key,
+            _ => false,
+        }),
+        _ => false,
     }
 }
 
-/// Performs a match on a property to determine if it is a public key and matches the provided
-/// public key
+/// Performs a match on a property to determine if it is a reference, and if it is it returns it
 fn map_to_reference<'a>(
     record: &'a RecordRoot,
-) -> impl Fn(&Property) -> Option<(FieldPath, Reference<'a>)> {
-    move |p| match record.get_path(&p.path)? {
+) -> impl Fn(&Property) -> Option<(FieldPath, Vec<Reference<'a>>)> {
+    move |p| {
+        Some((
+            p.path.clone(),
+            get_record_reference_from_value(record.get_path(&p.path)?)?,
+        ))
+    }
+}
+
+fn get_record_reference_from_value<'a>(value: &'a RecordValue) -> Option<Vec<Reference<'a>>> {
+    match value {
         RecordValue::ForeignRecordReference(record_ref) => {
-            Some((p.path.clone(), Reference::ForeignRecord(record_ref)))
+            Some(vec![Reference::ForeignRecord(record_ref)])
         }
-        RecordValue::RecordReference(record) => Some((p.path.clone(), Reference::Record(record))),
+        RecordValue::RecordReference(record) => Some(vec![Reference::Record(record)]),
+        RecordValue::Array(a) => {
+            let refs = a
+                .iter()
+                .filter_map(get_record_reference_from_value)
+                .flatten()
+                .collect::<Vec<_>>();
+            if refs.is_empty() {
+                None
+            } else {
+                Some(refs)
+            }
+        }
         _ => None,
     }
 }
@@ -464,6 +485,8 @@ mod test {
                 @read
                 name: PublicKey;
                 @read
+                multi: Test[];
+                @read
                 ignored: string;
                 @read
                 read: Test;
@@ -478,18 +501,31 @@ mod test {
                 .find_directive_references(
                     &[DirectiveKind::Read, DirectiveKind::Delegate],
                     &RecordRoot(
-                        [(
-                            "read".to_string(),
-                            RecordValue::RecordReference(RecordReference {
-                                id: "test".to_string()
-                            })
-                        )]
+                        [
+                            (
+                                "read".to_string(),
+                                RecordValue::RecordReference(RecordReference {
+                                    id: "test".to_string()
+                                }),
+                            ),
+                            (
+                                "multi".to_string(),
+                                RecordValue::Array(vec![
+                                    RecordValue::RecordReference(RecordReference {
+                                        id: "test".to_string()
+                                    }),
+                                    RecordValue::RecordReference(RecordReference {
+                                        id: "test2".to_string()
+                                    }),
+                                ]),
+                            )
+                        ]
                         .into()
                     )
                 )
                 .map(|(p, _)| p.to_string())
                 .collect::<Vec<_>>(),
-            vec!["read"],
+            vec!["multi", "read"],
         );
     }
 
@@ -500,6 +536,8 @@ mod test {
                 id: string;
                 @read
                 name: PublicKey;
+                @read
+                multi: Test[];
                 @read
                 ignored: string;
                 @read

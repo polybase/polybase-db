@@ -57,11 +57,31 @@ impl Type {
         )
     }
 
+    pub fn is_public_key(&self) -> bool {
+        match self {
+            Type::PublicKey => true,
+            Type::Array(a) => a.value.is_public_key(),
+            _ => false,
+        }
+    }
+
+    pub fn is_reference(&self) -> bool {
+        match self {
+            Type::Record => true,
+            Type::ForeignRecord(_) => true,
+            Type::Array(a) => a.value.is_reference(),
+            _ => false,
+        }
+    }
+
     pub fn is_authenticable(&self) -> bool {
-        matches!(
-            self,
-            Type::PublicKey | Type::Record | Type::ForeignRecord(_)
-        )
+        match self {
+            Type::PublicKey => true,
+            Type::Record => true,
+            Type::ForeignRecord(_) => true,
+            Type::Array(a) => a.value.is_authenticable(),
+            _ => false,
+        }
     }
 }
 
