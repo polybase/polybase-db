@@ -23,7 +23,9 @@ COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.lock ./
 COPY Cargo.toml ./
 COPY polybase ./polybase/
+COPY schema ./schema/
 COPY indexer ./indexer/
+COPY indexer_rocksdb ./indexer_rocksdb
 COPY gateway ./gateway/
 COPY solid ./solid/
 RUN cargo chef prepare --recipe-path /recipe.json
@@ -43,7 +45,9 @@ COPY .cargo/config.toml .cargo/config.toml
 COPY Cargo.lock ./
 COPY Cargo.toml ./
 COPY polybase ./polybase/
+COPY schema ./schema/
 COPY indexer ./indexer/
+COPY indexer_rocksdb ./indexer_rocksdb
 COPY gateway ./gateway/
 COPY solid ./solid/
 

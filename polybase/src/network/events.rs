@@ -1,4 +1,4 @@
-use indexer::snapshot::SnapshotChunk;
+use indexer_rocksdb::snapshot::SnapshotChunk;
 use serde::{Deserialize, Serialize};
 use solid::proposal::ProposalAccept;
 use solid::proposal::ProposalManifest;

@@ -1,6 +1,5 @@
 use super::db;
 use super::network;
-use indexer::IndexerError;
 use libp2p::{identity, multiaddr};
 
 mod code;
@@ -14,7 +13,7 @@ pub type Result<T> = std::result::Result<T, AppError>;
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("failed to initialize indexer")]
-    Indexer(#[from] IndexerError),
+    Indexer(#[from] indexer::Error),
 
     #[error("failed to join task")]
     JoinError(#[from] tokio::task::JoinError),

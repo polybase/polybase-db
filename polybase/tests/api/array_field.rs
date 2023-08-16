@@ -214,7 +214,7 @@ collection PublicKeyArrayDemo {
     #[serde(rename_all = "camelCase")]
     struct PublicKeyArrayDemo {
         id: String,
-        keys: Vec<indexer::PublicKey>,
+        keys: Vec<schema::publickey::PublicKey>,
     }
 
     let collection = server
@@ -223,10 +223,10 @@ collection PublicKeyArrayDemo {
         .unwrap();
 
     let (_private_key1, public_key1) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key1 = indexer::PublicKey::from_secp256k1_key(&public_key1).unwrap();
+    let public_key1 = schema::publickey::PublicKey::from_secp256k1_key(&public_key1).unwrap();
 
     let (_private_key2, public_key2) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key2 = indexer::PublicKey::from_secp256k1_key(&public_key2).unwrap();
+    let public_key2 = schema::publickey::PublicKey::from_secp256k1_key(&public_key2).unwrap();
 
     assert_eq!(
         collection
@@ -243,7 +243,7 @@ collection PublicKeyArrayDemo {
     );
 
     let (_private_key2, public_key3) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key3 = indexer::PublicKey::from_secp256k1_key(&public_key3).unwrap();
+    let public_key3 = schema::publickey::PublicKey::from_secp256k1_key(&public_key3).unwrap();
 
     assert_eq!(
         collection

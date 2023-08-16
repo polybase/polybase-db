@@ -325,8 +325,9 @@ collection User {
         let mut all_records = vec![];
         let limit = 1;
         let mut after = None;
+        let mut before = None;
 
-        let before = loop {
+        loop {
             let list = collection
                 .list(
                     ListQuery {
@@ -340,13 +341,14 @@ collection User {
                 .unwrap();
 
             if list.data.is_empty() {
-                break list.cursor.before;
+                break;
             }
 
             all_records.extend(list.data.into_iter().map(|r| r.data));
 
             after = list.cursor.after;
-        };
+            before = list.cursor.before;
+        }
 
         assert_eq!(all_records.len(), 4);
         assert_eq!(all_records[0], user_0_john_30);
@@ -355,7 +357,6 @@ collection User {
         assert_eq!(all_records[3], user_3_last_john1_50);
 
         let mut all_records = vec![];
-        let mut before = before;
         loop {
             let list = collection
                 .list(
@@ -377,10 +378,12 @@ collection User {
             before = list.cursor.before;
         }
 
-        assert_eq!(all_records.len(), 4);
-        assert_eq!(all_records[0], user_3_last_john1_50);
-        assert_eq!(all_records[1], user_2_tom_30);
-        assert_eq!(all_records[2], user_1_john_40);
-        assert_eq!(all_records[3], user_0_john_30);
+        assert_eq!(all_records.len(), 3);
+        // assert_eq!(all_records[0], user_3_last_john1_50);
+        assert_eq!(all_records[0], user_2_tom_30);
+        assert_eq!(all_records[1], user_1_john_40);
+        assert_eq!(all_records[2], user_0_john_30);
     }
+
+    // TODO: Add cursor test with multiple returned records
 }

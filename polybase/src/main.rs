@@ -18,6 +18,7 @@ use crate::rpc::create_rpc_server;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
+use indexer::Indexer;
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
@@ -47,7 +48,7 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
     // common filter - show only `warn` and above for external crates.
     let mut filter = tracing_subscriber::EnvFilter::try_new("warn")?;
 
-    for proj_crate in ["polybase", "indexer", "gateway", "solid"] {
+    for proj_crate in ["polybase", "indexer_rocksdb", "gateway", "solid"] {
         filter = filter.add_directive(format!("{proj_crate}={}", log_level).parse()?);
     }
 
@@ -90,6 +91,8 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
     Ok(())
 }
 
+pub type ArcDbIndexer = Arc<Db<indexer_rocksdb::adaptor::RocksDBAdaptor>>;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::parse();
@@ -129,12 +132,19 @@ async fn main() -> Result<()> {
     // setup tracing for the whole project
     setup_tracing(&config.log_level, &config.log_format).await?;
 
+    // Create the underlying store
+    #[allow(clippy::unwrap_used)]
+    let indexer_dir = util::get_indexer_dir(&config.root_dir).unwrap();
+    let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+    // let memory_store = memory::MemoryStore::new();
+    let indexer = Indexer::new(rocksdb_adaptor);
+
     // Database combines various components into a single interface
     // that is thread safe
     #[allow(clippy::unwrap_used)]
-    let db: Arc<Db> = Arc::new(
+    let db: ArcDbIndexer = Arc::new(
         Db::new(
-            config.root_dir.clone(),
+            indexer,
             DbConfig {
                 migration_batch_size: config.migration_batch_size,
                 ..Default::default()

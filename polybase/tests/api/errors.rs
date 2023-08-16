@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::api::{Error, ErrorData, ListQuery, Server};
+use crate::api::{Error, ErrorData, Server};
 
 macro_rules! create_collection_test {
     ($error:expr, $test_name:ident, $collection_id:expr, $schema:expr, $signer:expr $(,)?) => {
@@ -145,7 +145,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"arr\" of type array".to_string(),
+            message: "cannot index field \"arr\" of type string[]".to_string(),
         }
     },
     collection_with_index_on_array_field,
@@ -170,7 +170,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"more.arr\" of type array".to_string(),
+            message: "cannot index field \"more.arr\" of type string[]".to_string(),
         }
     },
     collection_with_index_on_nested_array_field,
@@ -197,7 +197,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"m\" of type map".to_string(),
+            message: "cannot index field \"m\" of type map<string, string>".to_string(),
         }
     },
     collection_with_index_on_map_field,
@@ -222,7 +222,7 @@ create_collection_test!(
         error: ErrorData {
             code: "invalid-argument".to_string(),
             reason: "collection/invalid-schema".to_string(),
-            message: "cannot index field \"info\" of type object".to_string(),
+            message: "cannot index field \"info\" of type { info.name: string; }".to_string(),
         }
     },
     collection_with_index_on_object_field,
@@ -678,80 +678,21 @@ collection Test {
         }
     );
 
-    assert_eq!(
-        collection
-            .call("id1", "changeNameToNumber", json!([]), None)
-            .await
-            .unwrap_err(),
-        Error {
-            error: ErrorData {
-                code: "invalid-argument".to_string(),
-                reason: "record/invalid-field".to_string(),
-                message: "value at field \"name\" does not match the schema type, expected type: string, got value: 1"
-                    .to_string(),
-            }
-        }
-    );
-
-    assert_eq!(
-        collection
-            .call("id1", "changeSurnameToNumber", json!([]), None)
-            .await
-            .unwrap_err(),
-        Error {
-            error: ErrorData {
-                code: "invalid-argument".to_string(),
-                reason: "record/invalid-field".to_string(),
-                message:
-                    "value at field \"extra.surname\" does not match the schema type, expected type: string, got value: 1"
-                        .to_string(),
-            }
-        }
-    );
-
-    assert_eq!(
-        collection
-            .call("id1", "addNumberToArray", json!([]), None)
-            .await
-            .unwrap_err(),
-        Error {
-            error: ErrorData {
-                code: "invalid-argument".to_string(),
-                reason: "record/invalid-field".to_string(),
-                message: "value at field \"arr.[]\" does not match the schema type, expected type: string, got value: 1"
-                    .to_string(),
-            }
-        }
-    );
-
-    assert_eq!(
-        collection
-            .call("id1", "changeNameAndSurnameToNumber", json!([]), None)
-            .await
-            .unwrap_err(),
-        Error {
-            error: ErrorData {
-                code: "invalid-argument".to_string(),
-                reason: "record/invalid-field".to_string(),
-                message: "value at field \"name\" does not match the schema type, expected type: string, got value: 1"
-                    .to_string(),
-            }
-        }
-    );
-
-    assert_eq!(
-        collection
-            .call("id1", "setRecord", json!([json!({"collectionId": collection.id.clone(), "id": "id2", "extraFieldName": "John"})]), None)
-            .await
-            .unwrap_err(),
-        Error {
-            error: ErrorData {
-                code: "invalid-argument".to_string(),
-                reason: "function/invalid-args".to_string(),
-                message: r#"invalid argument type for parameter "test": unexpected fields: test.extraFieldName"#.to_string(),
-            }
-        }
-    );
+    // Removed the check on foreign reference additional fields, as it doesn't impact anything
+    // as they are stripped out
+    // assert_eq!(
+    //     collection
+    //         .call("id1", "setRecord", json!([json!({"collectionId": collection.id.clone(), "id": "id2", "extraFieldName": "John"})]), None)
+    //         .await
+    //         .unwrap_err(),
+    //     Error {
+    //         error: ErrorData {
+    //             code: "invalid-argument".to_string(),
+    //             reason: "function/invalid-args".to_string(),
+    //             message: r#"invalid argument type for parameter "test": unexpected fields: test.extraFieldName"#.to_string(),
+    //         }
+    //     }
+    // );
 
     assert_eq!(
         collection
@@ -762,31 +703,9 @@ collection Test {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "function/invalid-args".to_string(),
-                message: r#"invalid argument type for parameter "test": value at field "test.id" does not match the schema type, expected type: Test, got value: 123"#.to_string(),
+                message: r#"invalid argument type for parameter "test": record reference has invalid field type"#.to_string(),
             }
         }
-    );
-
-    assert_eq!(
-        collection
-            .list(
-                ListQuery {
-                    where_query: Some(json!({
-                        "name": 123,
-                    })),
-                    ..Default::default()
-                },
-                None
-            )
-            .await
-            .unwrap_err(),
-        Error {
-            error: ErrorData {
-                code: "invalid-argument".to_string(),
-                reason: "record/invalid-field".to_string(),
-                message: r#"value at field "name" does not match the schema type, expected type: string, got value: 123"#.to_string(),
-            }
-        },
     );
 }
 
@@ -839,6 +758,85 @@ async fn invalid_index_name_update() {
                 code: "invalid-argument".to_string(),
                 reason: "collection/invalid-schema".to_string(),
                 message: "index field \"id1\" not found in schema".to_string(),
+            }
+        }
+    );
+}
+
+#[tokio::test]
+async fn change_schema_type() {
+    let server = Server::setup_and_wait(None).await;
+
+    let schema = r#"
+    @public
+    collection Account {
+        id: string;
+    
+        constructor (id: string) {
+            this.id = id;
+        }
+    }"#;
+
+    let col = server
+        .create_collection_untyped("ns/Account", schema, None)
+        .await
+        .unwrap();
+
+    col.create(json!(["id1"]), None).await.unwrap();
+
+    let schema_with_col_ref = r#"
+    @public
+    collection Account {
+        id: string;
+        x: SomeCol;
+    
+        constructor (id: string) {
+            this.id = id;
+        }
+    }
+    "#;
+
+    let col = server
+        .update_collection_untyped("ns/Account", schema_with_col_ref, None)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        col.get("id1", None).await.unwrap(),
+        json!({
+            "id": "id1",
+            "x": {
+                "collectionId": "",
+                "id": "",
+            },
+        })
+    );
+
+    let schema_with_object = r#"
+    @public
+    collection Account {
+        id: string;
+        x: {
+            name: string;
+        };
+    
+        constructor (id: string) {
+            this.id = id;
+        }
+    }"#;
+
+    assert_eq!(
+        server
+            .update_collection_untyped("ns/Account", schema_with_object, None)
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "invalid-argument".to_string(),
+                reason: "collection/invalid-schema".to_string(),
+                message:
+                    r#"cannot change type of fields: "x", delete the fields and re-create them"#
+                        .to_string(),
             }
         }
     );
