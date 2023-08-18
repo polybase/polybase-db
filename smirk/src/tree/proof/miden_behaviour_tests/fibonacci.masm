@@ -1,0 +1,49 @@
+# stack before: [n, ...]
+# stack after : [{0 | 1}, n, ...]
+proc.should_loop
+  dup
+  push.0
+  gt
+end
+
+# stack before: [n, ...]
+# stack after : [fib(n), ...]
+proc.fib.2
+
+  # let a = 1
+  push.0
+  loc_store.0
+
+  # let b = 2
+  push.1
+  loc_store.1
+
+  exec.should_loop
+  # stack: [{0 | 1}, n, ...]
+
+  while.true
+    # stack: [n, ...]
+    push.1
+    sub
+    # stack: [n - 1, ...]
+
+    loc_load.0 
+    loc_load.1
+    add
+    # stack: [a + b, n - 1, ...]
+
+    loc_load.1  # stack: [b, a + b, n - 1, ...]
+    loc_store.0 # stack: [a + b, n - 1, ...]
+    loc_store.1 # stack: [n - 1, ...]
+
+    exec.should_loop
+    # stack: [{0 | 1}, n - 1, ...]
+  end
+
+  loc_load.0
+end
+
+begin
+  exec.fib 
+end
+

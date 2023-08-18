@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-miden-crypto = "0.6"
 rocksdb = "0.21"
 thiserror = "1"
 hex = "0.4"
@@ -13,6 +12,13 @@ serde = { version = "1", features = ["derive"] }
 rmp-serde = "1"
 
 proptest = { version = "1", optional = true }
+test-strategy = { version = "0.3", optional = true }
+
+miden-crypto = { workspace = true }
+miden-processor = { workspace = true }
+miden-prover = { workspace = true }
+miden-verifier = { workspace = true }
+miden-assembly = { workspace = true }
 
 
 [dev-dependencies]

@@ -3143,7 +3143,16 @@ name = "miden-air"
 version = "0.5.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
- "miden-core",
+ "miden-core 0.5.0",
+ "winter-air",
+]
+
+[[package]]
+name = "miden-air"
+version = "0.6.0"
+source = "git+http://github.com/0xPolygonMiden/miden-vm#105ee9e241fafeac97fbcd14861b2eaed5548e1e"
+dependencies = [
+ "miden-core 0.6.1",
  "winter-air",
 ]
 
@@ -3152,8 +3161,17 @@ name = "miden-assembly"
 version = "0.5.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
- "miden-core",
- "num_enum",
+ "miden-core 0.5.0",
+ "num_enum 0.5.11",
+]
+
+[[package]]
+name = "miden-assembly"
+version = "0.6.1"
+source = "git+http://github.com/0xPolygonMiden/miden-vm#105ee9e241fafeac97fbcd14861b2eaed5548e1e"
+dependencies = [
+ "miden-core 0.6.1",
+ "num_enum 0.6.1",
 ]
 
 [[package]]
@@ -3162,6 +3180,17 @@ version = "0.5.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
  "miden-crypto 0.2.0",
+ "winter-crypto 0.6.4",
+ "winter-math 0.6.4",
+ "winter-utils 0.6.4",
+]
+
+[[package]]
+name = "miden-core"
+version = "0.6.1"
+source = "git+http://github.com/0xPolygonMiden/miden-vm#105ee9e241fafeac97fbcd14861b2eaed5548e1e"
+dependencies = [
+ "miden-crypto 0.6.0",
  "winter-crypto 0.6.4",
  "winter-math 0.6.4",
  "winter-utils 0.6.4",
@@ -3197,7 +3226,18 @@ version = "0.5.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
  "log",
- "miden-core",
+ "miden-core 0.5.0",
+ "winter-prover",
+]
+
+[[package]]
+name = "miden-processor"
+version = "0.6.1"
+source = "git+http://github.com/0xPolygonMiden/miden-vm#105ee9e241fafeac97fbcd14861b2eaed5548e1e"
+dependencies = [
+ "log",
+ "miden-air 0.6.0",
+ "miden-core 0.6.1",
  "winter-prover",
 ]
 
@@ -3207,8 +3247,19 @@ version = "0.5.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
  "log",
- "miden-air",
- "miden-processor",
+ "miden-air 0.5.0",
+ "miden-processor 0.5.0",
+ "winter-prover",
+]
+
+[[package]]
+name = "miden-prover"
+version = "0.6.0"
+source = "git+http://github.com/0xPolygonMiden/miden-vm#105ee9e241fafeac97fbcd14861b2eaed5548e1e"
+dependencies = [
+ "log",
+ "miden-air 0.6.0",
+ "miden-processor 0.6.1",
  "winter-prover",
 ]
 
@@ -3217,7 +3268,7 @@ name = "miden-stdlib"
 version = "0.4.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
- "miden-assembly",
+ "miden-assembly 0.5.0",
 ]
 
 [[package]]
@@ -3225,8 +3276,18 @@ name = "miden-verifier"
 version = "0.5.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
- "miden-air",
- "miden-core",
+ "miden-air 0.5.0",
+ "miden-core 0.5.0",
+ "winter-verifier",
+]
+
+[[package]]
+name = "miden-verifier"
+version = "0.6.0"
+source = "git+http://github.com/0xPolygonMiden/miden-vm#105ee9e241fafeac97fbcd14861b2eaed5548e1e"
+dependencies = [
+ "miden-air 0.6.0",
+ "miden-core 0.6.1",
  "winter-verifier",
 ]
 
@@ -3236,11 +3297,11 @@ version = "0.5.0"
 source = "git+https://github.com/0xPolygonMiden/miden-vm?tag=v0.5.0#4195475d75ab2d586bdb01d1ff3ea2cd626eaf7b"
 dependencies = [
  "log",
- "miden-assembly",
- "miden-processor",
- "miden-prover",
+ "miden-assembly 0.5.0",
+ "miden-processor 0.5.0",
+ "miden-prover 0.5.0",
  "miden-stdlib",
- "miden-verifier",
+ "miden-verifier 0.5.0",
 ]
 
 [[package]]
@@ -3554,7 +3615,16 @@ version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
 dependencies = [
- "num_enum_derive",
+ "num_enum_derive 0.5.11",
+]
+
+[[package]]
+name = "num_enum"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a015b430d3c108a207fd776d2e2196aaf8b1cf8cf93253e3a097ff3085076a1"
+dependencies = [
+ "num_enum_derive 0.6.1",
 ]
 
 [[package]]
@@ -3567,6 +3637,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96667db765a921f7b295ffee8b60472b686a51d4f21c2ee4ffdb94c7013b65a6"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.16",
 ]
 
 [[package]]
@@ -3987,7 +4069,7 @@ dependencies = [
  "base64 0.21.0",
  "console_error_panic_hook",
  "lazy_static",
- "miden-processor",
+ "miden-processor 0.5.0",
  "miden-stdlib",
  "miden-vm",
  "polylang_parser 0.1.0 (git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf)",
@@ -4006,7 +4088,7 @@ version = "0.1.0"
 source = "git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf#e9da93f7db1bdd68c461e02e3a88f31f81455caf"
 dependencies = [
  "abi",
- "miden-processor",
+ "miden-processor 0.5.0",
  "miden-stdlib",
  "miden-vm",
  "polylang 0.1.0 (git+https://github.com/polybase/polylang?rev=e9da93f7db1bdd68c461e02e3a88f31f81455caf)",
@@ -5190,7 +5272,11 @@ dependencies = [
  "criterion",
  "hex",
  "insta",
+ "miden-assembly 0.6.1",
  "miden-crypto 0.6.0",
+ "miden-processor 0.6.1",
+ "miden-prover 0.6.0",
+ "miden-verifier 0.6.0",
  "pretty_assertions",
  "proptest",
  "rand 0.8.5",
@@ -6859,6 +6945,9 @@ name = "winter-utils"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b903fda6a50cce2aa5a172a9269aca0f09b25df20afb1faa427db76d40779671"
+dependencies = [
+ "rayon",
+]
 
 [[package]]
 name = "winter-verifier"

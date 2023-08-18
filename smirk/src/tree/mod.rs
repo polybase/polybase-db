@@ -13,6 +13,8 @@ pub use impls::*;
 mod macros;
 pub mod visitor;
 
+mod path;
+
 mod proof;
 
 mod hash;
@@ -156,7 +158,7 @@ impl<K, V> MerkleTree<K, V> {
         self.inner = Some(Self::insert_node(self.inner.take(), key, value));
     }
 
-    #[allow(clippy::unnecesary_box_returns)]
+    #[allow(clippy::unnecessary_box_returns)]
     fn insert_node(node: Option<Box<TreeNode<K, V>>>, key: K, value: V) -> Box<TreeNode<K, V>>
     where
         K: Hashable + Ord,
@@ -437,11 +439,11 @@ impl<K: Hashable, V: Hashable> TreeNode<K, V> {
         self.hash
     }
 
-    /// The hash of the value contained in this node
+    /// The hash of the key-value pair contained in this node
     ///
     /// Note: this is unaffected by the value of child nodes
     #[inline]
-    pub fn hash_of_value(&self) -> Digest {
-        self.value.hash()
+    pub fn key_value_hash(&self) -> Digest {
+        key_value_hash(self.key(), self.value())
     }
 }

@@ -9,7 +9,9 @@ pub enum Operation<K, V> {
 }
 
 impl<K, V> Operation<K, V> {
-    fn key(&self) -> &K {
+    /// The key that this operation modifies
+    #[must_use]
+    pub fn key(&self) -> &K {
         match self {
             Operation::Insert(key, ..) => key,
         }
@@ -38,6 +40,12 @@ impl<K, V> Batch<K, V> {
         operations.sort_by(|a, b| a.key().cmp(b.key()));
         Self { operations }
     }
+
+    /// Get a slice to the operations in this batch
+    #[must_use]
+    pub fn operations(&self) -> &[Operation<K, V>] {
+        &self.operations
+    }
 }
 
 impl<K, V> FromIterator<Operation<K, V>> for Batch<K, V>
@@ -65,6 +73,45 @@ where
 
         if let Some(inner) = self.inner.as_mut() {
             inner.recalculate_hash_recursive();
+        }
+    }
+}
+
+#[cfg(any(test, feature = "proptest"))]
+mod pt_impls {
+    use std::fmt::Debug;
+
+    use proptest::{
+        arbitrary::StrategyFor,
+        prelude::{any, Arbitrary},
+        strategy::{Map, Strategy},
+    };
+
+    use super::{Batch, Operation};
+
+    impl<K, V> Arbitrary for Batch<K, V>
+    where
+        K: Debug + Arbitrary + Ord,
+        V: Debug + Arbitrary,
+    {
+        type Parameters = ();
+        type Strategy = Map<StrategyFor<Vec<Operation<K, V>>>, fn(Vec<Operation<K, V>>) -> Self>;
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            any::<Vec<Operation<K, V>>>().prop_map(Batch::from_operations)
+        }
+    }
+
+    impl<K, V> Arbitrary for Operation<K, V>
+    where
+        K: Debug + Arbitrary,
+        V: Debug + Arbitrary,
+    {
+        type Parameters = ();
+        type Strategy = Map<StrategyFor<(K, V)>, fn((K, V)) -> Self>;
+
+        fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
+            any::<(K, V)>().prop_map(|(k, v)| Operation::Insert(k, v))
         }
     }
 }

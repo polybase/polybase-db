@@ -2,5 +2,13 @@
 
 members = ["polybase", "indexer", "gateway", "solid", "smirk"]
 
+[workspace.dependencies]
+miden-crypto = "0.6"
+miden-prover = { git = "http://github.com/0xPolygonMiden/miden-vm", features = ["concurrent"] }
+miden-processor = { git = "http://github.com/0xPolygonMiden/miden-vm" }
+miden-verifier = { git = "http://github.com/0xPolygonMiden/miden-vm" }
+miden-assembly = { git = "http://github.com/0xPolygonMiden/miden-vm" }
+
 [profile.release]
 debug-assertions = true
+

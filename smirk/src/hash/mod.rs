@@ -29,7 +29,7 @@ mod proptest_impls;
 
 /// A Rescue-Prime Optimized digest
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Digest(RpoDigest);
+pub struct Digest(pub(crate) RpoDigest);
 
 impl Debug for Digest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -109,11 +109,46 @@ impl Digest {
     pub fn merge(&mut self, other: &Digest) {
         self.0 = Rpo256::merge(&[self.0, other.0]);
     }
+
+    /// Construct a [`Digest`] from the field elements of the underlying RPO hash
+    #[inline]
+    #[must_use]
+    pub fn from_elements(elements: [Felt; 4]) -> Self {
+        Self(RpoDigest::from(elements))
+    }
+
+    /// Return the field elements that make up this [`Digest`]
+    #[inline]
+    #[must_use]
+    pub fn to_elements(self) -> [Felt; 4] {
+        self.0.as_elements().try_into().unwrap()
+    }
+
+    /// Utility for seeing what's wrong with hash stuff
+    #[allow(unused)]
+    pub(crate) fn debug_print(&self) {
+        println!("debug print hash =====================");
+        println!("self    : {self}");
+        println!("elements: {:?}", self.0.as_elements());
+        let u64s = self
+            .0
+            .as_elements()
+            .iter()
+            .map(Felt::inner)
+            .collect::<Vec<_>>();
+        println!("u64s    : {:?}", &u64s);
+    }
 }
 
 impl From<RpoDigest> for Digest {
     fn from(value: RpoDigest) -> Self {
         Self(value)
+    }
+}
+
+impl From<Digest> for RpoDigest {
+    fn from(Digest(value): Digest) -> Self {
+        value
     }
 }
 

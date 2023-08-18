@@ -17,11 +17,11 @@ impl<K: Hashable, V: Hashable> MerkleTree<K, V> {
     ///   2 => "world",
     /// };
     ///
-    /// assert!(tree.prove(&1).is_some());
-    /// assert!(tree.prove(&2).is_some());
-    /// assert!(tree.prove(&3).is_none());
+    /// assert!(tree.path_for(&1).is_some());
+    /// assert!(tree.path_for(&2).is_some());
+    /// assert!(tree.path_for(&3).is_none());
     /// ```
-    pub fn prove<Q>(&self, key: &Q) -> Option<MerklePath>
+    pub fn path_for<Q>(&self, key: &Q) -> Option<MerklePath>
     where
         Q: Borrow<K> + ?Sized,
         K: Ord,
@@ -122,19 +122,19 @@ mod tests {
             3 => "foo",
         };
 
-        let path = tree.prove(&1).unwrap();
+        let path = tree.path_for(&1).unwrap();
 
         assert!(path.verify(&1, &"hello"));
         assert!(!path.verify(&2, &"hello"));
         assert!(!path.verify(&1, &"world"));
 
-        assert!(tree.prove(&4).is_none());
+        assert!(tree.path_for(&4).is_none());
     }
 
     #[proptest]
     fn all_proof_root_hash_match(tree: MerkleTree<i32, String>) {
         for node in tree.iter() {
-            let proof = tree.prove(node.key()).unwrap();
+            let proof = tree.path_for(node.key()).unwrap();
             assert_eq!(proof.root_hash(), tree.root_hash());
         }
     }
@@ -143,14 +143,14 @@ mod tests {
     #[proptest]
     fn proof_succeeds_iff_key_contained(tree: MerkleTree<u8, String>, key: u8) {
         let tree_contains_key = tree.contains(&key);
-        let proof_valid = tree.prove(&key).is_some();
+        let proof_valid = tree.path_for(&key).is_some();
 
         assert_eq!(tree_contains_key, proof_valid);
     }
 
     #[proptest]
     fn proof_is_valid(tree: MerkleTree<u8, String>, key: u8) {
-        let proof = tree.prove(&key);
+        let proof = tree.path_for(&key);
 
         let Some(value) = tree.get(&key) else { return Ok(()); };
         let proof = proof.unwrap();

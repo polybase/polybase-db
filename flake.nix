@@ -14,8 +14,8 @@
           overlays = [ (import rust-overlay) ];
         };
 
-        rustToolchain = pkgs.rust-bin.stable."1.68.0".default.override {
-          extensions = [ "rust-src" ];
+        rustToolchain = pkgs.rust-bin.stable."1.70.0".default.override {
+          extensions = [ "rust-src" "rust-analyzer" ];
         };
 
       in {

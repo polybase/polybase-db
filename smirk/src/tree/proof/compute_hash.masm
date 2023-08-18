@@ -1,0 +1,17 @@
+#! Pop 2 words (representing keys from the Rust side) from the stack. Push onto the stack:
+#!  - `1` if the first corresponds to a greater key than the second
+#!  - `-1` if the first corresponds to a smaller key than the second
+#!  - `0` if the first corresponds to the same key
+proc.compare_keys.1
+     
+
+
+end
+
+
+
+
+begin
+ 
+
+end

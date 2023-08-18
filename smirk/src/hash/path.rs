@@ -77,9 +77,9 @@ mod tests {
     use super::*;
 
     #[proptest]
-    fn proof_serialization_round_trip(tree: MerkleTree<i32, String>) {
+    fn path_serialization_round_trip(tree: MerkleTree<i32, String>) {
         for node in tree.iter() {
-            let proof = tree.prove(node.key()).unwrap();
+            let proof = tree.path_for(node.key()).unwrap();
             let bytes = proof.to_bytes();
             let proof_again = MerklePath::from_bytes(&bytes).unwrap();
 

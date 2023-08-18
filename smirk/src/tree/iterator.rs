@@ -41,6 +41,41 @@ impl<'a, K, V> MerkleTree<K, V> {
     }
 }
 
+impl<'a, K, V> IntoIterator for &'a MerkleTree<K, V> {
+    type Item = &'a TreeNode<K, V>;
+    type IntoIter = Iter<'a, K, V>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<K, V> Extend<(K, V)> for MerkleTree<K, V>
+where
+    K: Hashable + Ord,
+    V: Hashable,
+{
+    fn extend<T: IntoIterator<Item = (K, V)>>(&mut self, iter: T) {
+        let batch = iter
+            .into_iter()
+            .map(|(k, v)| Operation::Insert(k, v))
+            .collect();
+
+        self.apply(batch);
+    }
+}
+
+impl<K, V> Extend<Operation<K, V>> for MerkleTree<K, V>
+where
+    K: Hashable + Ord,
+    V: Hashable,
+{
+    fn extend<T: IntoIterator<Item = Operation<K, V>>>(&mut self, iter: T) {
+        let batch = iter.into_iter().collect();
+        self.apply(batch);
+    }
+}
+
 fn iter<'a, K, V>(node: &'a TreeNode<K, V>) -> Box<dyn Iterator<Item = &'a TreeNode<K, V>> + 'a> {
     let left_iter = node.left.iter().flat_map(|node| iter(node));
     let right_iter = node.right.iter().flat_map(|node| iter(node));
