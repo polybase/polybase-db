@@ -120,11 +120,11 @@ impl<A: IndexerAdaptor> Indexer<A> {
         Ok(Some(record))
     }
 
-    pub async fn list(
-        &self,
-        collection_id: &str,
-        query: ListQuery<'_>,
-        public_key: Option<&PublicKey>,
+    pub async fn list<'a>(
+        &'a self,
+        collection_id: &'a str,
+        query: ListQuery<'a>,
+        public_key: Option<&'a PublicKey>,
     ) -> Result<Pin<Box<dyn futures::Stream<Item = RecordRoot> + '_ + Send>>> {
         let schema = self.get_schema_required(collection_id).await?;
 
@@ -137,12 +137,12 @@ impl<A: IndexerAdaptor> Indexer<A> {
             return Err(UserError::NoIndexFoundMatchingTheQuery)?;
         };
 
-        if !self
-            .verify_list(collection_id, &schema, &query.where_query, public_key)
-            .await
-        {
-            return Err(UserError::UnauthorizedRead)?;
-        };
+        // if !self
+        //     .verify_list(collection_id, &schema, &query.where_query, public_key)
+        //     .await
+        // {
+        //     return Err(UserError::UnauthorizedRead)?;
+        // };
 
         let ListQuery {
             limit,
@@ -172,10 +172,26 @@ impl<A: IndexerAdaptor> Indexer<A> {
 
         where_query.cast(&schema)?;
 
-        Ok(self
-            .adaptor
-            .list(collection_id, limit, where_query, order_by, reverse)
-            .await?)
+        let schema = std::sync::Arc::new(schema);
+
+        Ok(Box::pin(
+            self.adaptor
+                .list(collection_id, limit, where_query, order_by, reverse)
+                .await?
+                .filter(move |r| {
+                    let r = r.clone();
+                    let schema = schema.clone();
+                    async move {
+                        self.verify_read(
+                            collection_id,
+                            &std::sync::Arc::clone(&schema),
+                            &r,
+                            public_key,
+                        )
+                        .await
+                    }
+                }),
+        ))
     }
 
     pub async fn last_record_update(
