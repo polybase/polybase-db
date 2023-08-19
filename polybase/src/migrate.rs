@@ -5,7 +5,7 @@ use indexer_rocksdb::{adaptor, RocksDBAdaptor};
 use schema::record::{RecordRoot, RecordValue};
 use schema::COLLECTION_SCHEMA;
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, warn};
 
 const VERSION_SYSTEM_KEY: &str = "database_version";
 
@@ -63,7 +63,13 @@ async fn migrate_to_v1(store: &RocksDBAdaptor) -> Result<()> {
             );
         }
 
-        store.set("Collection", &record_id, col, &schema).await?;
+        match store.set("Collection", &record_id, col, &schema).await {
+            Ok(_) => {}
+            Err(e) => warn!(
+                "error migrating collection: {} with err {}, record {:?}",
+                record_id, e, col
+            ),
+        };
     }
 
     // Udpate to v1
