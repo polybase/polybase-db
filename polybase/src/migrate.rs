@@ -24,7 +24,7 @@ pub(crate) async fn check_for_migration(store: &RocksDBAdaptor) -> Result<()> {
     let version = get_migration_version(store).await?;
 
     match version {
-        1 => migrate_to_v1(store).await,
+        0 => migrate_to_v1(store).await,
         _ => {
             info!(
                 version = version,
