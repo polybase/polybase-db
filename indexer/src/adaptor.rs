@@ -1,5 +1,6 @@
 use crate::{where_query::WhereQuery, IndexerChange};
 use schema::{self, record::RecordRoot, Schema};
+use serde::{Deserialize, Serialize};
 use std::{pin::Pin, time::SystemTime};
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -19,6 +20,12 @@ pub enum Error {
 
     #[error("Collection collection record not found for collection {id:?}")]
     CollectionCollectionRecordNotFound { id: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotValue {
+    pub key: Box<[u8]>,
+    pub value: Box<[u8]>,
 }
 
 /// The Store trait
@@ -51,4 +58,13 @@ pub trait IndexerAdaptor: Send + Sync {
     async fn set_system_key(&self, key: &str, data: &RecordRoot) -> Result<()>;
 
     async fn get_system_key(&self, key: &str) -> Result<Option<RecordRoot>>;
+
+    async fn snapshot(
+        &self,
+        chunk_size: usize,
+    ) -> Pin<Box<dyn futures::Stream<Item = Result<Vec<SnapshotValue>>> + '_ + Send>>;
+
+    async fn restore(&self, chunk: Vec<SnapshotValue>) -> Result<()>;
+
+    async fn reset(&self) -> Result<()>;
 }

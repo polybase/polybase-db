@@ -3,9 +3,11 @@ use crate::mempool::Mempool;
 use crate::txn::{self, CallTxn};
 use futures_util::{future, StreamExt};
 use gateway::Gateway;
-use indexer::{adaptor::IndexerAdaptor, IndexerChange};
+use indexer::{
+    adaptor::{IndexerAdaptor, SnapshotValue},
+    IndexerChange,
+};
 use indexer::{auth_user::AuthUser, list_query::ListQuery, Indexer};
-use indexer_rocksdb::snapshot::{SnapshotChunk, SnapshotIterator};
 use parking_lot::Mutex;
 use schema::{
     self, methods,
@@ -15,9 +17,9 @@ use schema::{
     },
     Schema,
 };
-use serde::{Deserialize, Serialize};
 use solid::proposal::{self};
 use std::cmp::min;
+use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
@@ -106,11 +108,6 @@ pub enum UserError {
 
     #[error("you do not have permission to call this function")]
     UnauthorizedCall,
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DbSnapshot {
-    pub index: Vec<u8>,
 }
 
 pub enum DbWaitResult<T> {
@@ -652,22 +649,25 @@ impl<A: IndexerAdaptor> Db<A> {
     }
 
     /// Reset all data in the database
-    pub fn reset(&self) -> Result<()> {
-        todo!()
-        //Ok(self.indexer.reset()?)
+    pub async fn reset(&self) -> Result<()> {
+        Ok(self.indexer.reset().await?)
     }
 
     /// Create a snapshot iterator, that can be used to iterate over the
     /// entire database in chunks
-    pub fn snapshot_iter(&self, _chunk_size: usize) -> SnapshotIterator {
-        todo!()
-        //self.indexer.snapshot(chunk_size)
+    pub async fn snapshot_iter(
+        &self,
+        chunk_size: usize,
+    ) -> Pin<Box<dyn futures::Stream<Item = Result<Vec<SnapshotValue>>> + '_ + Send>> {
+        self.indexer
+            .snapshot(chunk_size)
+            .await
+            .map(|s| s.map_err(Error::from))
+            .boxed()
     }
 
-    pub fn restore_chunk(&self, _chunk: SnapshotChunk) -> Result<()> {
-        todo!()
-        //self.indexer.restore(chunk)?;
-        //Ok(())
+    pub async fn restore_chunk(&self, chunk: Vec<SnapshotValue>) -> Result<()> {
+        Ok(self.indexer.restore(chunk).await?)
     }
 
     #[tracing::instrument(skip(self))]

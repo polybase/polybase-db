@@ -1,5 +1,6 @@
-use crate::adaptor::{Error, IndexerAdaptor, Result};
+use crate::adaptor::{Error, Result, SnapshotValue};
 use crate::where_query::{WhereInequality, WhereNode, WhereQuery};
+use crate::IndexerAdaptor;
 use crate::IndexerChange;
 use schema::{
     field_path::FieldPath,
@@ -416,6 +417,21 @@ impl IndexerAdaptor for MemoryStore {
         let state = self.state.lock().await;
 
         Ok(state.system_data.get(key).cloned())
+    }
+
+    async fn snapshot(
+        &self,
+        _: usize,
+    ) -> Pin<Box<dyn futures::Stream<Item = Result<Vec<SnapshotValue>>> + '_ + Send>> {
+        todo!()
+    }
+
+    async fn restore(&self, _: Vec<SnapshotValue>) -> Result<()> {
+        todo!()
+    }
+
+    async fn reset(&self) -> Result<()> {
+        todo!()
     }
 }
 

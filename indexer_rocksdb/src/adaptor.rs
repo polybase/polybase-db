@@ -2,13 +2,13 @@ use crate::keys;
 use crate::result_stream::convert_stream;
 use crate::{
     key_range::{self, key_range, KeyRange},
-    proto,
+    proto, snapshot,
     store::{self, Store},
 };
 use async_recursion::async_recursion;
 use futures::{StreamExt, TryStreamExt};
 use indexer::{
-    adaptor::{self, IndexerAdaptor},
+    adaptor::{self, IndexerAdaptor, SnapshotValue},
     where_query::WhereQuery,
     IndexerChange,
 };
@@ -90,6 +90,14 @@ impl RocksDBAdaptor {
         Self {
             store: Store::open(config).unwrap(),
         }
+    }
+
+    pub fn snapshot(&self, chunk_size: usize) -> snapshot::SnapshotIterator {
+        self.store.snapshot(chunk_size)
+    }
+
+    pub fn restore(&self, data: snapshot::SnapshotChunk) -> Result<()> {
+        Ok(self.store.restore(data)?)
     }
 
     pub async fn _get(&self, collection_id: &str, record_id: &str) -> Result<Option<RecordRoot>> {
@@ -612,6 +620,28 @@ impl IndexerAdaptor for RocksDBAdaptor {
 
     async fn get_system_key(&self, key: &str) -> adaptor::Result<Option<RecordRoot>> {
         Ok(self._get_system_record(key).await?)
+    }
+
+    async fn snapshot(
+        &self,
+        chunk_size: usize,
+    ) -> Pin<Box<dyn futures::Stream<Item = adaptor::Result<Vec<SnapshotValue>>> + '_ + Send>> {
+        let res = futures::stream::iter(self.store.snapshot(chunk_size));
+        let stream = Box::pin(res.map(|s| {
+            s.map_err(store::StoreError::from)
+                .map_err(Error::from)
+                .map_err(adaptor::Error::from)
+        }));
+
+        stream.boxed()
+    }
+
+    async fn restore(&self, chunk: Vec<SnapshotValue>) -> adaptor::Result<()> {
+        Ok(self.store.restore(chunk).map_err(Error::from)?)
+    }
+
+    async fn reset(&self) -> adaptor::Result<()> {
+        Ok(self.store.reset().map_err(Error::from)?)
     }
 }
 
