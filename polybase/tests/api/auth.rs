@@ -304,19 +304,30 @@ collection Account {
     );
 
     // Listing records with a different key returns 0 records
+    // TODO: remove this once we add pre-auth on list queries
     assert_eq!(
         collection
             .list(ListQuery::default(), Some(&another_signer))
             .await
-            .unwrap_err(),
-        Error {
-            error: ErrorData {
-                code: "permission-denied".to_string(),
-                reason: "unauthorized".to_string(),
-                message: "unauthorized read".to_string(),
-            }
-        }
+            .unwrap()
+            .into_record_data(),
+        vec![]
     );
+
+    // TODO: add this back in once we add pre-auth on list queries
+    // assert_eq!(
+    //     collection
+    //         .list(ListQuery::default(), Some(&another_signer))
+    //         .await
+    //         .unwrap_err(),
+    //     Error {
+    //         error: ErrorData {
+    //             code: "permission-denied".to_string(),
+    //             reason: "unauthorized".to_string(),
+    //             message: "unauthorized read".to_string(),
+    //         }
+    //     }
+    // );
 }
 
 #[tokio::test]
