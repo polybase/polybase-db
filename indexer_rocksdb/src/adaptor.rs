@@ -501,6 +501,10 @@ impl RocksDBAdaptor {
 
         Ok(())
     }
+
+    pub async fn store_commit(&self) -> Result<()> {
+        Ok(self.store.commit().await?)
+    }
 }
 
 #[async_trait::async_trait]
@@ -545,7 +549,7 @@ impl IndexerAdaptor for RocksDBAdaptor {
                 }
             }
         }
-        self.store.commit().await.map_err(Error::from)?;
+        self.store_commit().await?;
         Ok(())
     }
 

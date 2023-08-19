@@ -6,6 +6,7 @@ mod db;
 mod errors;
 mod hash;
 mod mempool;
+mod migrate;
 mod network;
 mod rpc;
 mod txn;
@@ -14,6 +15,7 @@ mod util;
 use crate::config::{Command, Config, LogFormat, LogLevel};
 use crate::db::{Db, DbConfig};
 use crate::errors::AppError;
+use crate::migrate::check_for_migration;
 use crate::rpc::create_rpc_server;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
@@ -136,6 +138,13 @@ async fn main() -> Result<()> {
     #[allow(clippy::unwrap_used)]
     let indexer_dir = util::get_indexer_dir(&config.root_dir).unwrap();
     let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+
+    // Check for migration
+    #[allow(clippy::expect_used)]
+    check_for_migration(&rocksdb_adaptor)
+        .await
+        .expect("migration check");
+
     // let memory_store = memory::MemoryStore::new();
     let indexer = Indexer::new(rocksdb_adaptor);
 

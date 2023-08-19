@@ -24,13 +24,13 @@ pub static COLLECTION_CODE: Lazy<&'static str> = Lazy::new(|| {
     collection Collection {
         id: string;
         name?: string;
-        lastRecordUpdated?: string;
+        createdAt?: string;
         code?: string;
         ast?: string;
         publicKey?: PublicKey;
     
         @index(publicKey);
-        @index([lastRecordUpdated, desc]);
+        @index([createdAt, desc]);
     
         constructor (id: string, code: string) {
             this.id = id;
