@@ -2,7 +2,7 @@
 
 // TODO: we should export schema from here, so that indexer builders
 // are using the correct schema
-use crate::adaptor::IndexerAdaptor;
+use crate::adaptor::{IndexerAdaptor, SnapshotValue};
 use crate::list_query::ListQuery;
 use crate::where_query::WhereQuery;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -73,6 +73,25 @@ pub enum IndexerChange {
 impl<A: IndexerAdaptor> Indexer<A> {
     pub fn new(adaptor: A) -> Self {
         Self { adaptor }
+    }
+
+    pub async fn snapshot(
+        &self,
+        chunk_size: usize,
+    ) -> Pin<Box<dyn futures::Stream<Item = Result<Vec<SnapshotValue>>> + '_ + Send>> {
+        self.adaptor
+            .snapshot(chunk_size)
+            .await
+            .map(|s| s.map_err(Error::from))
+            .boxed()
+    }
+
+    pub async fn restore(&self, chunk: Vec<SnapshotValue>) -> Result<()> {
+        Ok(self.adaptor.restore(chunk).await?)
+    }
+
+    pub async fn reset(&self) -> Result<()> {
+        Ok(self.adaptor.reset().await?)
     }
 
     pub async fn commit(&self, height: usize, changes: Vec<IndexerChange>) -> Result<()> {

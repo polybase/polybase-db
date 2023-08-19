@@ -290,7 +290,7 @@ async fn main() -> Result<()> {
         let mut last_commit = Instant::now();
 
         while !shutdown.load(Ordering::Relaxed) {
-            let network = Arc::clone(&network);
+            let network: Arc<Network> = Arc::clone(&network);
 
             tokio::select! {
                 // Db only produces CallTxn events, that should be propogated
@@ -378,7 +378,7 @@ async fn main() -> Result<()> {
 
                             // Reset the database
                             #[allow(clippy::expect_used)]
-                            db.reset().expect("Failed to reset database");
+                            db.reset().await.expect("Failed to reset database");
 
                             info!("Db reset ready for snapshot, sending accept");
 
@@ -401,8 +401,8 @@ async fn main() -> Result<()> {
                             // and this snapshot may take a while to complete
                             tokio::spawn(async move {
                                 // 100MB chunks
-                                let snapshot_iter = db.snapshot_iter(config.snapshot_chunk_size);
-                                for chunk in snapshot_iter {
+                                let mut snapshot_iter = db.snapshot_iter(config.snapshot_chunk_size).await;
+                                while let Some(chunk) = snapshot_iter.next().await {
                                     let peer_id = from_peer_id.clone();
                                     match chunk {
                                         Ok(chunk) => {
@@ -450,7 +450,7 @@ async fn main() -> Result<()> {
                             if let Some(chunk) = chunk {
                                 // We should panic if we are unable to restore
                                 #[allow(clippy::unwrap_used)]
-                                db.restore_chunk(chunk).unwrap();
+                                db.restore_chunk(chunk).await.unwrap();
                             } else {
                                 // We are finished, reset solid with the new proposal state from the snapshot
                                 #[allow(clippy::unwrap_used)]
