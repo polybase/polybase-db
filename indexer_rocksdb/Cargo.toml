@@ -1,6 +1,6 @@
 [package]
 name = "indexer_rocksdb"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2021"
 
 # Important - double-check the lib name
