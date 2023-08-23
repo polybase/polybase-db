@@ -15,7 +15,7 @@ use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Resp
 use base64::Engine;
 // use indexer::adaptor::IndexerAdaptor;
 use indexer::{auth_user::AuthUser, cursor, list_query, where_query};
-use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
+use polylang_prover::{compile_program, Inputs, ProgramExt};
 use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
