@@ -1,4 +1,4 @@
-use indexer::snapshot::SnapshotChunk;
+use indexer::adaptor::SnapshotValue;
 use serde::{Deserialize, Serialize};
 use solid::proposal::ProposalAccept;
 use solid::proposal::ProposalManifest;
@@ -35,7 +35,7 @@ pub enum NetworkEvent {
     /// A chunk of data for us to load into the database.
     SnapshotChunk {
         id: usize,
-        chunk: Option<SnapshotChunk>,
+        chunk: Option<Vec<SnapshotValue>>,
     },
 
     /// A transaction sent to another peer, which we should add to our Mempool

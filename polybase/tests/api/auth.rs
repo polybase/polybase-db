@@ -28,7 +28,8 @@ async fn get_collection_collection_records_with_invalid_signature_different_publ
     let (private_key, _) = secp256k1::generate_keypair(&mut rand::thread_rng());
 
     let (_, another_public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let another_public_key = indexer::PublicKey::from_secp256k1_key(&another_public_key).unwrap();
+    let another_public_key =
+        schema::publickey::PublicKey::from_secp256k1_key(&another_public_key).unwrap();
 
     let signer = Signer::from(move |body: &str| {
         let mut signature = Signature::create(&private_key, SystemTime::now(), body);
@@ -102,13 +103,13 @@ collection People {
     struct People {
         id: String,
         name: Option<String>,
-        public_key: Option<indexer::PublicKey>,
+        public_key: Option<schema::publickey::PublicKey>,
     }
 
     let server = Server::setup_and_wait(None).await;
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
-    let public_key = indexer::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
     let signer =
         Signer::from(move |body: &str| Signature::create(&private_key, SystemTime::now(), body));
 
@@ -219,10 +220,13 @@ collection Account {
     struct Account {
         id: String,
         balance: f64,
-        owner: Option<indexer::PublicKey>,
+        owner: Option<schema::publickey::PublicKey>,
     }
 
     let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+    let pk_hex = public_key.to_hex().unwrap();
+
     let signer =
         Signer::from(move |body: &str| Signature::create(&private_key, SystemTime::now(), body));
 
@@ -241,7 +245,7 @@ collection Account {
         Account {
             id: "id1".to_string(),
             balance: 10.0,
-            owner: Some(indexer::PublicKey::from_secp256k1_key(&public_key).unwrap()),
+            owner: Some(public_key.clone()),
         }
     );
 
@@ -286,7 +290,13 @@ collection Account {
     // Listing records with the same key succeeds
     assert_eq!(
         collection
-            .list(ListQuery::default(), Some(&signer))
+            .list(
+                ListQuery {
+                    where_query: Some(json!({"owner": pk_hex})),
+                    ..Default::default()
+                },
+                Some(&signer)
+            )
             .await
             .unwrap()
             .into_record_data(),
@@ -294,6 +304,7 @@ collection Account {
     );
 
     // Listing records with a different key returns 0 records
+    // TODO: remove this once we add pre-auth on list queries
     assert_eq!(
         collection
             .list(ListQuery::default(), Some(&another_signer))
@@ -301,6 +312,114 @@ collection Account {
             .unwrap()
             .into_record_data(),
         vec![]
+    );
+
+    // TODO: add this back in once we add pre-auth on list queries
+    // assert_eq!(
+    //     collection
+    //         .list(ListQuery::default(), Some(&another_signer))
+    //         .await
+    //         .unwrap_err(),
+    //     Error {
+    //         error: ErrorData {
+    //             code: "permission-denied".to_string(),
+    //             reason: "unauthorized".to_string(),
+    //             message: "unauthorized read".to_string(),
+    //         }
+    //     }
+    // );
+}
+
+#[tokio::test]
+async fn read_auth_pk_array() {
+    let server = Server::setup_and_wait(None).await;
+
+    let schema = r#"
+collection Account {
+    id: string;
+    balance: number;
+    @read
+    owner: PublicKey[];
+
+    constructor (id: string, balance: number) {
+        this.id = id;
+        this.balance = balance;
+        this.owner = [];
+        this.owner.push(ctx.publicKey);
+        this.owner.push(ctx.publicKey);
+    }
+}
+    "#;
+
+    #[derive(Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Account {
+        id: String,
+        balance: f64,
+        owner: Vec<schema::publickey::PublicKey>,
+    }
+
+    let (private_key, public_key) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let public_key = schema::publickey::PublicKey::from_secp256k1_key(&public_key).unwrap();
+
+    let signer =
+        Signer::from(move |body: &str| Signature::create(&private_key, SystemTime::now(), body));
+
+    let collection = server
+        .create_collection::<Account>("test/Account", schema, Some(&signer))
+        .await
+        .unwrap();
+
+    let account_id1_10 = collection
+        .create(json!(["id1", 10]), Some(&signer))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        account_id1_10,
+        Account {
+            id: "id1".to_string(),
+            balance: 10.0,
+            owner: vec![public_key.clone(), public_key.clone()],
+        }
+    );
+
+    // Trying to get the record with the same key succeeds
+    assert_eq!(
+        collection.get("id1", Some(&signer)).await.unwrap(),
+        account_id1_10
+    );
+
+    let (another_private_key, _) = secp256k1::generate_keypair(&mut rand::thread_rng());
+    let another_signer = Signer::from(move |body: &str| {
+        Signature::create(&another_private_key, SystemTime::now(), body)
+    });
+
+    // Trying to get the record with a different key fails
+    assert_eq!(
+        collection
+            .get("id1", Some(&another_signer))
+            .await
+            .unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
+    );
+
+    // Trying to get the record without auth fails
+    assert_eq!(
+        collection.get("id1", None).await.unwrap_err(),
+        Error {
+            error: ErrorData {
+                code: "permission-denied".to_string(),
+                reason: "unauthorized".to_string(),
+                message: "unauthorized read".to_string(),
+            }
+        }
     );
 }
 
@@ -341,8 +460,8 @@ collection Account {
     struct Account {
         id: String,
         balance: f64,
-        manager: indexer::PublicKey,
-        owner: indexer::PublicKey,
+        manager: schema::publickey::PublicKey,
+        owner: schema::publickey::PublicKey,
     }
 
     let collection = server
@@ -352,14 +471,16 @@ collection Account {
 
     let (owner_private_key, owner_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
-    let owner_public_key = indexer::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
+    let owner_public_key =
+        schema::publickey::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
     let owner_signer = Signer::from(move |body: &str| {
         Signature::create(&owner_private_key, SystemTime::now(), body)
     });
 
     let (manager_private_key, manager_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
-    let manager_public_key = indexer::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
+    let manager_public_key =
+        schema::publickey::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
     let manager_signer = Signer::from(move |body: &str| {
         Signature::create(&manager_private_key, SystemTime::now(), body)
     });
@@ -515,7 +636,7 @@ collection User {
     struct User {
         id: String,
         name: String,
-        pk: indexer::PublicKey,
+        pk: schema::publickey::PublicKey,
     }
 
     let user_collection = server
@@ -531,14 +652,16 @@ collection User {
     let (owner_private_key, owner_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
 
-    let owner_public_key = indexer::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
+    let owner_public_key =
+        schema::publickey::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
     let owner_signer = Signer::from(move |body: &str| {
         Signature::create(&owner_private_key, SystemTime::now(), body)
     });
 
     let (reader_private_key, reader_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
-    let reader_public_key = indexer::PublicKey::from_secp256k1_key(&reader_public_key).unwrap();
+    let reader_public_key =
+        schema::publickey::PublicKey::from_secp256k1_key(&reader_public_key).unwrap();
     let reader_signer = Signer::from(move |body: &str| {
         Signature::create(&reader_private_key, SystemTime::now(), body)
     });
@@ -753,8 +876,8 @@ collection Account {
     struct Account {
         id: String,
         balance: f64,
-        owner: indexer::PublicKey,
-        manager: indexer::PublicKey,
+        owner: schema::publickey::PublicKey,
+        manager: schema::publickey::PublicKey,
     }
 
     let account_collection = server
@@ -764,14 +887,16 @@ collection Account {
 
     let (owner_private_key, owner_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
-    let owner_public_key = indexer::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
+    let owner_public_key =
+        schema::publickey::PublicKey::from_secp256k1_key(&owner_public_key).unwrap();
     let owner_signer = Signer::from(move |body: &str| {
         Signature::create(&owner_private_key, SystemTime::now(), body)
     });
 
     let (manager_private_key, manager_public_key) =
         secp256k1::generate_keypair(&mut rand::thread_rng());
-    let manager_public_key = indexer::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
+    let manager_public_key =
+        schema::publickey::PublicKey::from_secp256k1_key(&manager_public_key).unwrap();
     let manager_signer = Signer::from(move |body: &str| {
         Signature::create(&manager_private_key, SystemTime::now(), body)
     });
@@ -972,7 +1097,7 @@ collection Manager {
     #[serde(rename_all = "camelCase")]
     struct Manager {
         id: String,
-        public_key: indexer::PublicKey,
+        public_key: schema::publickey::PublicKey,
     }
 
     let account_collection = server

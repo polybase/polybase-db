@@ -6,6 +6,7 @@ mod db;
 mod errors;
 mod hash;
 mod mempool;
+mod migrate;
 mod network;
 mod rpc;
 mod txn;
@@ -14,10 +15,12 @@ mod util;
 use crate::config::{Command, Config, LogFormat, LogLevel};
 use crate::db::{Db, DbConfig};
 use crate::errors::AppError;
+use crate::migrate::check_for_migration;
 use crate::rpc::create_rpc_server;
 use clap::Parser;
 use ed25519_dalek::{self as ed25519};
 use futures::StreamExt;
+use indexer::Indexer;
 use libp2p::PeerId;
 use libp2p::{identity, Multiaddr};
 use network::{events::NetworkEvent, Network, NetworkPeerId};
@@ -47,7 +50,7 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
     // common filter - show only `warn` and above for external crates.
     let mut filter = tracing_subscriber::EnvFilter::try_new("warn")?;
 
-    for proj_crate in ["polybase", "indexer", "gateway", "solid"] {
+    for proj_crate in ["polybase", "indexer_rocksdb", "gateway", "solid"] {
         filter = filter.add_directive(format!("{proj_crate}={}", log_level).parse()?);
     }
 
@@ -90,6 +93,8 @@ async fn setup_tracing(log_level: &LogLevel, log_format: &LogFormat) -> Result<(
     Ok(())
 }
 
+pub type ArcDbIndexer = Arc<Db<indexer_rocksdb::adaptor::RocksDBAdaptor>>;
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::parse();
@@ -129,12 +134,26 @@ async fn main() -> Result<()> {
     // setup tracing for the whole project
     setup_tracing(&config.log_level, &config.log_format).await?;
 
+    // Create the underlying store
+    #[allow(clippy::unwrap_used)]
+    let indexer_dir = util::get_indexer_dir(&config.root_dir).unwrap();
+    let rocksdb_adaptor = indexer_rocksdb::adaptor::RocksDBAdaptor::new(indexer_dir);
+
+    // Check for migration
+    #[allow(clippy::expect_used)]
+    check_for_migration(&rocksdb_adaptor)
+        .await
+        .expect("migration check");
+
+    // let memory_store = memory::MemoryStore::new();
+    let indexer = Indexer::new(rocksdb_adaptor);
+
     // Database combines various components into a single interface
     // that is thread safe
     #[allow(clippy::unwrap_used)]
-    let db: Arc<Db> = Arc::new(
+    let db: ArcDbIndexer = Arc::new(
         Db::new(
-            config.root_dir.clone(),
+            indexer,
             DbConfig {
                 migration_batch_size: config.migration_batch_size,
                 ..Default::default()
@@ -271,7 +290,7 @@ async fn main() -> Result<()> {
         let mut last_commit = Instant::now();
 
         while !shutdown.load(Ordering::Relaxed) {
-            let network = Arc::clone(&network);
+            let network: Arc<Network> = Arc::clone(&network);
 
             tokio::select! {
                 // Db only produces CallTxn events, that should be propogated
@@ -359,7 +378,7 @@ async fn main() -> Result<()> {
 
                             // Reset the database
                             #[allow(clippy::expect_used)]
-                            db.reset().expect("Failed to reset database");
+                            db.reset().await.expect("Failed to reset database");
 
                             info!("Db reset ready for snapshot, sending accept");
 
@@ -382,8 +401,8 @@ async fn main() -> Result<()> {
                             // and this snapshot may take a while to complete
                             tokio::spawn(async move {
                                 // 100MB chunks
-                                let snapshot_iter = db.snapshot_iter(config.snapshot_chunk_size);
-                                for chunk in snapshot_iter {
+                                let mut snapshot_iter = db.snapshot_iter(config.snapshot_chunk_size).await;
+                                while let Some(chunk) = snapshot_iter.next().await {
                                     let peer_id = from_peer_id.clone();
                                     match chunk {
                                         Ok(chunk) => {
@@ -431,7 +450,7 @@ async fn main() -> Result<()> {
                             if let Some(chunk) = chunk {
                                 // We should panic if we are unable to restore
                                 #[allow(clippy::unwrap_used)]
-                                db.restore_chunk(chunk).unwrap();
+                                db.restore_chunk(chunk).await.unwrap();
                             } else {
                                 // We are finished, reset solid with the new proposal state from the snapshot
                                 #[allow(clippy::unwrap_used)]

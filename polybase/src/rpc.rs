@@ -1,26 +1,29 @@
 #![warn(clippy::unwrap_used, clippy::expect_used)]
 
-use crate::db::{Db, DbWaitResult};
+use crate::db::DbWaitResult;
 use crate::errors::http::HTTPError;
 use crate::errors::logger::SlogMiddleware;
 use crate::errors::metrics::MetricsData;
 use crate::errors::reason::ReasonCode;
 use crate::errors::AppError;
 use crate::txn::CallTxn;
+use crate::ArcDbIndexer;
 use crate::{auth, util::hash};
 use actix_cors::Cors;
 use actix_server::Server;
 use actix_web::{get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use base64::Engine;
-use indexer::AuthUser;
-use polylang_prover::{compile_program, Inputs, ProgramExt};
+// use indexer::adaptor::IndexerAdaptor;
+use indexer::{auth_user::AuthUser, cursor, list_query, where_query};
+use polylang_prover::{compile_program, hash_this, Inputs, ProgramExt};
+use schema::record;
 use serde::{de::IntoDeserializer, Deserialize, Serialize};
 use serde_with::serde_as;
 use std::collections::HashMap;
-use std::{borrow::Cow, cmp::min, sync::Arc, time::Duration};
+use std::{cmp::min, sync::Arc, time::Duration};
 
 struct RouteState {
-    db: Arc<Db>,
+    db: ArcDbIndexer,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
 }
@@ -78,14 +81,14 @@ async fn get_record(
 ) -> Result<impl Responder, HTTPError> {
     let (collection, record_id) = path.into_inner();
     let auth = body.auth;
-    let auth: Option<indexer::AuthUser> = auth.map(|a| a.into());
+    let auth: Option<AuthUser> = auth.map(|a| a.into());
 
     let record = if let Some(since) = query.since {
         match state
             .db
             .get_wait(
-                collection,
-                record_id,
+                &collection,
+                &record_id,
                 auth,
                 since,
                 Duration::from(query.wait_for),
@@ -96,12 +99,12 @@ async fn get_record(
             DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
     } else {
-        state.db.get(collection, record_id, auth).await?
+        state.db.get(&collection, &record_id, auth).await?
     };
 
     match record {
         Some(record) => {
-            let data = indexer::record_to_json(record).map_err(indexer::IndexerError::from)?;
+            let data = schema::record::record_to_json(record);
             if let Some(f) = &query.format {
                 if f == "nft" {
                     return Ok(HttpResponse::Ok().json(data));
@@ -124,11 +127,11 @@ enum Direction {
     Descending,
 }
 
-impl From<Direction> for indexer::Direction {
+impl From<Direction> for schema::index::IndexDirection {
     fn from(dir: Direction) -> Self {
         match dir {
-            Direction::Ascending => indexer::Direction::Ascending,
-            Direction::Descending => indexer::Direction::Descending,
+            Direction::Ascending => schema::index::IndexDirection::Ascending,
+            Direction::Descending => schema::index::IndexDirection::Descending,
         }
     }
 }
@@ -166,9 +169,9 @@ impl<'de> Deserialize<'de> for Seconds {
 }
 
 #[derive(Debug)]
-struct OptionalCursor(Option<indexer::Cursor>);
+struct OptionalCursor<'a>(Option<cursor::Cursor<'a>>);
 
-impl<'de> Deserialize<'de> for OptionalCursor {
+impl<'de> Deserialize<'de> for OptionalCursor<'_> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -178,7 +181,7 @@ impl<'de> Deserialize<'de> for OptionalCursor {
 
         let cursor = Option::<String>::deserialize(deserializer)?
             .filter(|s| !s.is_empty())
-            .map(|s| indexer::Cursor::deserialize(s.into_deserializer()))
+            .map(|s| cursor::Cursor::deserialize(s.into_deserializer()))
             .transpose()?;
 
         Ok(OptionalCursor(cursor))
@@ -187,16 +190,16 @@ impl<'de> Deserialize<'de> for OptionalCursor {
 
 #[serde_as]
 #[derive(Debug, Deserialize)]
-struct ListQuery {
+struct ListQuery<'a> {
     limit: Option<usize>,
     #[serde(default, rename = "where")]
     #[serde_as(as = "serde_with::json::JsonString")]
-    where_query: indexer::WhereQuery,
+    where_query: where_query::WhereQuery<'a>,
     #[serde(default)]
     #[serde_as(as = "serde_with::json::JsonString")]
     sort: Vec<(String, Direction)>,
-    before: OptionalCursor,
-    after: OptionalCursor,
+    before: OptionalCursor<'a>,
+    after: OptionalCursor<'a>,
     /// UNIX timestamp in seconds
     since: Option<f64>,
     #[serde(rename = "waitFor", default = "Seconds::sixty")]
@@ -204,54 +207,56 @@ struct ListQuery {
 }
 
 #[derive(Debug, Serialize)]
-struct Cursors {
-    before: Option<indexer::Cursor>,
-    after: Option<indexer::Cursor>,
+struct Cursors<'a> {
+    before: Option<cursor::Cursor<'a>>,
+    after: Option<cursor::Cursor<'a>>,
 }
 
 #[derive(Serialize)]
-struct ListResponse {
+struct ListResponse<'a> {
     data: Vec<GetRecordResponse>,
-    cursor: Cursors,
+    cursor: Cursors<'a>,
 }
 
 #[tracing::instrument(skip(state, body))]
 #[get("/{collection}/records")]
-async fn get_records(
+async fn get_records<'a>(
     req: HttpRequest,
     state: web::Data<RouteState>,
     path: web::Path<String>,
-    query: web::Query<ListQuery>,
+    query: web::Query<ListQuery<'a>>,
     body: auth::SignedJSON<()>,
 ) -> Result<impl Responder, HTTPError> {
     let collection = path.into_inner();
     let auth = body.auth;
-    let auth: Option<indexer::AuthUser> = auth.map(|a| a.into());
+    let auth: Option<AuthUser> = auth.map(|a| a.into());
 
     let sort_indexes = query
         .sort
         .iter()
         .map(|(path, dir)| {
-            indexer::CollectionIndexField::new(
-                path.split('.').map(|p| Cow::Owned(p.to_string())).collect(),
+            schema::index::IndexField::new(
+                path.split('.').map(|p| p.to_string()).collect(),
                 (*dir).into(),
             )
         })
         .collect::<Vec<_>>();
 
-    let list_query = indexer::ListQuery {
+    let cursor_after = query.after.0.clone();
+    let cursor_before = query.before.0.clone();
+    let list_query = list_query::ListQuery {
         limit: Some(min(1000, query.limit.unwrap_or(100))),
         where_query: query.where_query.clone(),
         order_by: &sort_indexes,
-        cursor_after: query.after.0.clone(),
-        cursor_before: query.before.0.clone(),
+        cursor_after: cursor_after.clone(),
+        cursor_before: cursor_before.clone(),
     };
 
     let records = if let Some(since) = query.since {
         match state
             .db
             .list_wait(
-                collection,
+                &collection,
                 list_query,
                 auth,
                 since,
@@ -263,7 +268,7 @@ async fn get_records(
             DbWaitResult::NotModified => return Ok(HttpResponse::NotModified().finish()),
         }
     } else {
-        state.db.list(collection, list_query, auth).await?
+        state.db.list(&collection, list_query, auth).await?
     };
 
     // for metrics data collection
@@ -275,37 +280,31 @@ async fn get_records(
 
         Ok(ListResponse {
             cursor: Cursors {
+                // TODO: implement cursor
                 before: records
                     .first()
-                    .map(|(c, _)| c.clone())
-                    .or_else(|| query.before.0.clone())
-                    // TODO: is this right?
-                    // The `after` cursor is the key of the last record the user received,
-                    // if they don't receive any records,
-                    // then querying again with the returned `before` should return the `after` record,
-                    // not just records before it.
-                    .or_else(|| {
-                        query.after.0.clone().map(|a| {
-                            #[allow(clippy::unwrap_used)]
-                            // Unwrap is safe because `a` is an index key, immediate_sucessor works on index keys
-                            a.immediate_successor().unwrap()
-                        })
-                    }),
+                    .and_then(|r| {
+                        Some(cursor::Cursor(
+                            cursor::WrappedCursor::from_record(r, &query.where_query).ok()?,
+                        ))
+                    })
+                    .or(cursor_before),
                 after: records
                     .last()
-                    .map(|(c, _)| c.clone())
-                    .or_else(|| query.after.0.clone()),
+                    .and_then(|r| {
+                        Some(cursor::Cursor(
+                            cursor::WrappedCursor::from_record(r, &query.where_query).ok()?,
+                        ))
+                    })
+                    .or(cursor_after),
             },
             data: records
                 .into_iter()
-                .map(|(_, r)| {
-                    Ok(GetRecordResponse {
-                        data: indexer::record_to_json(r)?,
-                        block: Default::default(),
-                    })
+                .map(|r| GetRecordResponse {
+                    data: record::record_to_json(r),
+                    block: Default::default(),
                 })
-                .collect::<Result<_, indexer::RecordError>>()
-                .map_err(indexer::IndexerError::from)?,
+                .collect(),
         })
     }
     .await;
@@ -367,7 +366,7 @@ async fn post_record(
 
     let record_id = db.call(txn).await?;
 
-    let Some(record) = state.db.get_without_auth_check(collection_id, record_id).await? else {
+    let Some(record) = state.db.get_without_auth_check(&collection_id, &record_id).await? else {
         return Err(HTTPError::new(
             ReasonCode::RecordNotFound,
             None,
@@ -375,7 +374,7 @@ async fn post_record(
     };
 
     Ok(web::Json(FunctionResponse {
-        data: indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
+        data: record::record_to_json(record),
     }))
 }
 
@@ -388,7 +387,7 @@ async fn call_function(
 ) -> Result<web::Json<FunctionResponse>, HTTPError> {
     let (collection_id, record_id, function) = path.into_inner();
 
-    let auth = body.auth.map(indexer::AuthUser::from);
+    let auth = body.auth.map(AuthUser::from);
     let db = Arc::clone(&state.db);
 
     let txn = CallTxn::new(
@@ -402,12 +401,12 @@ async fn call_function(
     let record_id = db.call(txn).await?;
     let record = state
         .db
-        .get_without_auth_check(collection_id, record_id)
+        .get_without_auth_check(&collection_id, &record_id)
         .await?;
 
     Ok(web::Json(FunctionResponse {
         data: match record {
-            Some(record) => indexer::record_to_json(record).map_err(indexer::IndexerError::from)?,
+            Some(record) => record::record_to_json(record),
             None => serde_json::Value::Null,
         },
     }))
@@ -548,7 +547,7 @@ async fn status(state: web::Data<RouteState>) -> Result<web::Json<StatusResponse
 #[tracing::instrument(skip(db))]
 pub fn create_rpc_server(
     rpc_laddr: String,
-    db: Arc<Db>,
+    db: ArcDbIndexer,
     whitelist: Arc<Option<Vec<String>>>,
     restrict_namespaces: Arc<bool>,
 ) -> Result<Server, std::io::Error> {

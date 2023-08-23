@@ -1,5 +1,5 @@
+use indexer::adaptor::SnapshotValue;
 use rocksdb::{IteratorMode, DB};
-use serde::{Deserialize, Serialize};
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -12,16 +12,9 @@ pub enum Error {
     BincodeError(#[from] bincode::Error),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SnapshotValue {
-    pub(crate) key: Box<[u8]>,
-    pub(crate) value: Box<[u8]>,
-}
-
 pub type SnapshotChunk = Vec<SnapshotValue>;
 
 pub struct SnapshotIterator<'a> {
-    // db: &'a DB,
     chunk_size: usize,
     iter: rocksdb::DBIteratorWithThreadMode<'a, rocksdb::DB>,
 }

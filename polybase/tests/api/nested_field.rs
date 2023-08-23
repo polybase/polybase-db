@@ -164,31 +164,39 @@ collection Account {
     }
 }"#;
 
-    let col = server
-        .create_collection_untyped("test/Account", schema, None)
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Account {
+        id: String,
+        info: Info,
+    }
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    #[serde_with::skip_serializing_none]
+    struct Info {
+        name: Option<String>,
+    }
+
+    let collection = server
+        .create_collection::<Account>("test/Account", schema, None)
         .await
         .unwrap();
 
-    let err = col
-        .create(
-            json!(["id1", {
-                "surname": "Doe",
-                "age": "30",
-            }]),
-            None,
-        )
-        .await
-        .unwrap_err();
-
-    assert_eq!(err.error.code, "invalid-argument");
-    assert_eq!(err.error.reason, "record/invalid-field");
-    assert!(
-        matches!(
-            err.error.message.as_str(),
-            "unexpected fields: info.age, info.surname"
-                | "unexpected fields: info.surname, info.age"
-        ),
-        "{}",
-        err.error.message
+    assert_eq!(
+        collection
+            .create(
+                json!(["id1", {
+                    "surname": "Doe",
+                    "age": "30",
+                }]),
+                None
+            )
+            .await
+            .unwrap(),
+        Account {
+            id: "id1".to_string(),
+            info: Info { name: None },
+        }
     );
 }

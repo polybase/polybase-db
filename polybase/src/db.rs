@@ -1,19 +1,25 @@
 use crate::hash;
 use crate::mempool::Mempool;
 use crate::txn::{self, CallTxn};
-use crate::util;
-use futures::TryStreamExt;
-use gateway::{Change, Gateway};
-use indexer::snapshot::{SnapshotChunk, SnapshotIterator};
+use futures_util::{future, StreamExt};
+use gateway::Gateway;
 use indexer::{
-    collection::validate_collection_record, validate_schema_change, Cursor, Indexer, ListQuery,
-    RecordRoot,
+    adaptor::{IndexerAdaptor, SnapshotValue},
+    IndexerChange,
 };
+use indexer::{auth_user::AuthUser, list_query::ListQuery, Indexer};
 use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
+use schema::{
+    self, methods,
+    record::{
+        self, foreign_record_to_json, json_to_record, record_to_json, ForeignRecordReference,
+        RecordReference, RecordRoot, RecordValue,
+    },
+    Schema,
+};
 use solid::proposal::{self};
 use std::cmp::min;
-use std::collections::HashSet;
+use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex as AsyncMutex;
@@ -22,28 +28,23 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    // #[error("existing change for this record exists")]
-    // RecordChangeExists,
-    #[error("collection not found")]
-    CollectionNotFound,
+    #[error("schema error: {0}")]
+    Schema(#[from] schema::Error),
 
-    #[error("collection AST not found in collection record")]
-    CollectionASTNotFound,
+    #[error("record error: {0}")]
+    Record(#[from] record::RecordError),
 
-    #[error("collection AST is invalid: {0}")]
-    CollectionASTInvalid(String),
+    #[error("record error: {0}")]
+    Method(#[from] methods::UserError),
 
-    #[error("cannot update the Collection collection record")]
-    CollectionCollectionRecordUpdate,
+    #[error("user error: {0}")]
+    User(#[from] UserError),
 
     #[error(transparent)]
     Gateway(#[from] gateway::GatewayError),
 
     #[error("indexer error")]
-    Indexer(#[from] indexer::IndexerError),
-
-    #[error("collection error")]
-    Collection(#[from] indexer::collection::CollectionError),
+    Indexer(#[from] indexer::Error),
 
     #[error("serialize error")]
     Serializer(#[from] bincode::Error),
@@ -54,15 +55,59 @@ pub enum Error {
     #[error("call txn error")]
     CallTxn(#[from] txn::CallTxnError),
 
-    // #[error("rollup error")]
-    // RollupError,
     #[error("tokio send error")]
     TokioSend(#[from] mpsc::error::SendError<CallTxn>),
+
+    #[error("invalid function args response")]
+    InvalidFunctionArgsResponse,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DbSnapshot {
-    pub index: Vec<u8>,
+#[derive(Debug, thiserror::Error)]
+pub enum UserError {
+    #[error("collection not found")]
+    CollectionNotFound,
+
+    #[error("code is missing definition for collection {name}")]
+    MissingDefinitionForCollection { name: String },
+
+    #[error("method {method_name:?} not found in collection {collection_id:?}")]
+    FunctionNotFound {
+        method_name: String,
+        collection_id: String,
+    },
+
+    #[error("collection mismatch, expected record in collection {expected_collection_id:?}, got {actual_collection_id:?}")]
+    CollectionMismatch {
+        expected_collection_id: String,
+        actual_collection_id: String,
+    },
+
+    #[error("record {record_id:?} was not found in collection {collection_id:?}")]
+    RecordNotFound {
+        record_id: String,
+        collection_id: String,
+    },
+
+    // #[error("record ID was modified during call")]
+    // RecordIDModified,
+    #[error("record does not have a id field")]
+    RecordIdNotFound,
+
+    #[error("record ID field is not a string")]
+    RecordIdNotString,
+
+    #[error("record id already exists in collection")]
+    CollectionIdExists,
+
+    #[error("method {method_name} args invalid, expected {expected} got {actual}")]
+    MethodIncorrectNumberOfArguments {
+        method_name: String,
+        expected: usize,
+        actual: usize,
+    },
+
+    #[error("you do not have permission to call this function")]
+    UnauthorizedCall,
 }
 
 pub enum DbWaitResult<T> {
@@ -85,29 +130,19 @@ impl Default for DbConfig {
     }
 }
 
-pub struct Db {
+pub struct Db<A: IndexerAdaptor> {
     mempool: Mempool<[u8; 32], CallTxn, usize, [u8; 32]>,
     gateway: Gateway,
-    indexer: Indexer,
+    indexer: Indexer<A>,
     sender: AsyncMutex<mpsc::Sender<CallTxn>>,
     receiver: AsyncMutex<mpsc::Receiver<CallTxn>>,
     config: DbConfig,
     out_of_sync_height: Mutex<Option<usize>>,
 }
 
-impl Db {
-    pub async fn new(root_dir: String, config: DbConfig) -> Result<Self> {
+impl<A: IndexerAdaptor> Db<A> {
+    pub async fn new(indexer: Indexer<A>, config: DbConfig) -> Result<Self> {
         let (sender, receiver) = mpsc::channel::<CallTxn>(100);
-
-        // Create the indexer
-        #[allow(clippy::unwrap_used)]
-        let indexer_dir = util::get_indexer_dir(&root_dir).unwrap();
-        let indexer = Indexer::new(indexer_dir)?;
-
-        // Check for any migrations
-        // indexer
-        //     .check_for_migration(config.migration_batch_size)
-        //     .await?;
 
         Ok(Self {
             mempool: Mempool::new(),
@@ -139,49 +174,55 @@ impl Db {
     #[tracing::instrument(skip(self))]
     pub async fn get_without_auth_check(
         &self,
-        collection_id: String,
-        record_id: String,
+        collection_id: &str,
+        record_id: &str,
     ) -> Result<Option<RecordRoot>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
-
-        let record = collection.get_without_auth_check(record_id).await;
-        record.map_err(|e| Error::Indexer(e.into()))
+        Ok(self
+            .indexer
+            .get_without_auth_check(collection_id, record_id)
+            .await?)
     }
 
-    #[tracing::instrument(skip(self))]
     pub async fn get(
         &self,
-        collection_id: String,
-        record_id: String,
-        auth: Option<indexer::AuthUser>,
+        collection_id: &str,
+        record_id: &str,
+        auth: Option<AuthUser>,
     ) -> Result<Option<RecordRoot>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
-        Ok(collection.get(record_id, auth.as_ref()).await?)
+        let public_key = auth.as_ref().map(|a| a.public_key());
+        Ok(self
+            .indexer
+            .get(collection_id, record_id, public_key)
+            .await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_wait(
         &self,
-        collection_id: String,
-        record_id: String,
-        auth: Option<indexer::AuthUser>,
+        collection_id: &str,
+        record_id: &str,
+        auth: Option<AuthUser>,
         since: f64,
         wait_for: Duration,
     ) -> Result<DbWaitResult<Option<RecordRoot>>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        let public_key = auth.as_ref().map(|a| a.public_key());
 
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
         // updated within the given time.
         let updated = wait_for_update(since, wait_for, || async {
-            Ok(collection
-                .get_record_metadata(&record_id)
-                .await?
-                .map(|m| m.updated_at))
+            Ok(self
+                .indexer
+                .last_record_update(collection_id, record_id)
+                .await?)
         })
         .await?;
 
         Ok(if updated {
-            DbWaitResult::Updated(collection.get(record_id, auth.as_ref()).await?)
+            DbWaitResult::Updated(
+                self.indexer
+                    .get(collection_id, record_id, public_key)
+                    .await?,
+            )
         } else {
             DbWaitResult::NotModified
         })
@@ -190,40 +231,29 @@ impl Db {
     #[tracing::instrument(skip(self, query))]
     pub async fn list(
         &self,
-        collection_id: String,
+        collection_id: &str,
         query: ListQuery<'_>,
-        auth: Option<indexer::AuthUser>,
-    ) -> Result<Vec<(Cursor, RecordRoot)>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
+        auth: Option<AuthUser>,
+    ) -> Result<Vec<RecordRoot>> {
+        let public_key = auth.as_ref().map(|a| a.public_key());
+        let stream = self.indexer.list(collection_id, query, public_key).await?;
 
-        #[allow(clippy::let_and_return)]
-        let records = Ok(collection
-            .list(query, &auth.as_ref())
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?);
-
-        records
+        Ok(stream.collect::<Vec<RecordRoot>>().await)
     }
 
     #[tracing::instrument(skip(self, query))]
     pub async fn list_wait(
         &self,
-        collection_id: String,
+        collection_id: &str,
         query: ListQuery<'_>,
-        auth: Option<indexer::AuthUser>,
+        auth: Option<AuthUser>,
         since: f64,
         wait_for: Duration,
-    ) -> Result<DbWaitResult<Vec<(Cursor, RecordRoot)>>> {
-        let collection = self.indexer.collection(collection_id.clone()).await?;
-
+    ) -> Result<DbWaitResult<Vec<RecordRoot>>> {
         // Wait for a record to create/update for a given amount of time, returns true if the record was created or
         // updated within the given time.
         let updated = wait_for_update(since, wait_for, || async {
-            Ok(collection
-                .get_metadata()
-                .await?
-                .map(|m| m.last_record_updated_at))
+            Ok(self.indexer.last_collection_update(collection_id).await?)
         })
         .await?;
 
@@ -237,91 +267,275 @@ impl Db {
     /// Applies a call txn
     #[tracing::instrument(skip(self))]
     pub async fn call(&self, txn: CallTxn) -> Result<String> {
-        let (record_id, changes) = self.validate_call(&txn).await?;
+        let (record_id, changes) = self.call_changes(&txn).await?;
         let hash = txn.hash()?;
 
         // Send txn event
         self.sender.lock().await.send(txn.clone()).await?;
 
         // Wait for txn to be committed
-        self.mempool.add_wait(hash, txn, changes).await;
+        self.mempool
+            .add_wait(hash, txn, to_change_keys(&changes))
+            .await;
 
         Ok(record_id)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn add_txn(&self, txn: CallTxn) -> Result<String> {
-        let (record_id, changes) = self.validate_call(&txn).await?;
+        let (record_id, changes) = self.call_changes(&txn).await?;
         let hash = txn.hash()?;
 
         // Wait for txn to be committed
-        self.mempool.add(hash, txn, changes);
+        self.mempool.add(hash, txn, to_change_keys(&changes));
 
         Ok(record_id)
     }
 
-    async fn validate_call(&self, txn: &CallTxn) -> Result<(String, Vec<[u8; 32]>)> {
+    async fn call_changes(&self, txn: &CallTxn) -> Result<(String, Vec<IndexerChange>)> {
         let CallTxn {
             collection_id,
-            function_name,
             record_id,
+            function_name: method,
             args,
             auth,
         } = txn;
-        // let indexer = Arc::clone(&self.indexer);
-        let mut output_record_id = record_id.clone();
-        let mut output_records = HashSet::new();
+
+        let schema = std::sync::Arc::new(self.indexer.get_schema_required(collection_id).await?);
+        let public_key = auth.as_ref().map(|a| a.public_key());
+
+        // Get the method
+        let method = match schema.get_method(method) {
+            Some(method) => method,
+            None => {
+                return Err(UserError::FunctionNotFound {
+                    method_name: method.to_string(),
+                    collection_id: collection_id.to_string(),
+                })?
+            }
+        };
+
+        // Check args length
+        let required_args_len = method.parameters.iter().filter(|p| p.required).count();
+        if args.len() < required_args_len {
+            return Err(UserError::MethodIncorrectNumberOfArguments {
+                method_name: method.name.clone(),
+                expected: required_args_len,
+                actual: args.len(),
+            })?;
+        }
+
+        if args.len() > method.parameters.len() {
+            return Err(UserError::MethodIncorrectNumberOfArguments {
+                method_name: method.name.clone(),
+                expected: method.parameters.len(),
+                actual: args.len(),
+            })?;
+        }
+
+        // Get the js code to run
+        let js_code = schema.generate_js();
+
+        // Get current record instance
+        let record = if method.name == "constructor" {
+            RecordRoot::new()
+        } else {
+            match self
+                .indexer
+                .get(collection_id, record_id, public_key)
+                .await?
+            {
+                Some(record) => record,
+                None => {
+                    return Err(UserError::RecordNotFound {
+                        record_id: record_id.to_string(),
+                        collection_id: collection_id.to_string(),
+                    })?
+                }
+            }
+        };
+
+        // Check user has permission to call
+        if method.name != "constructor"
+            && !self
+                .indexer
+                .verify_call(collection_id, &method.name, &schema, &record, public_key)
+                .await
+        {
+            return Err(UserError::UnauthorizedCall)?;
+        }
+
+        // Get args as RecordValues (so we can validate them and find the references)
+        let input_args = method.args_from_json(args).map_err(Error::from)?;
+
+        // Convert all record references to JSON
+        let extended_input_args =
+            futures::future::join_all(args.iter().zip(&input_args).map(|(json, val)| async move {
+                match val {
+                    // TODO(minor): clean up duplicate code
+                    RecordValue::ForeignRecordReference(ForeignRecordReference {
+                        id,
+                        collection_id,
+                    }) => {
+                        let record = self
+                            .indexer
+                            .get(collection_id, id, public_key)
+                            .await?
+                            .ok_or(UserError::RecordNotFound {
+                                collection_id: collection_id.to_string(),
+                                record_id: id.to_string(),
+                            })?;
+                        let record = foreign_record_to_json(record, collection_id);
+                        Ok(record)
+                    }
+                    RecordValue::RecordReference(RecordReference { id }) => {
+                        let record = self
+                            .indexer
+                            .get(collection_id, id, public_key)
+                            .await?
+                            .ok_or(UserError::RecordNotFound {
+                                collection_id: collection_id.to_string(),
+                                record_id: id.to_string(),
+                            })?;
+                        Ok(record_to_json(record))
+                    }
+                    // Keep all other values as JSON
+                    _ => Ok(json.clone()),
+                }
+            }))
+            .await
+            .into_iter()
+            .collect::<Result<Vec<serde_json::Value>>>()?;
+
+        let json_record = &record_to_json(record);
 
         // Get changes
-        let changes = self
+        let output = self
             .gateway
             .call(
-                &self.indexer,
-                collection_id.clone(),
-                function_name,
-                record_id.clone(),
-                args.clone(),
+                collection_id,
+                &js_code,
+                &method.name,
+                json_record,
+                &extended_input_args,
                 auth.as_ref(),
             )
             .await?;
 
-        // First we cache the result, as it will be committed later
-        for change in changes.iter() {
-            let (collection_id, record_id) = change.get_path();
-            let key = get_key(collection_id, record_id);
-            output_records.insert(key);
+        let output_record_changed = &output.instance != json_record;
 
-            // If we're creating a record then we need to get the record_id from
-            // the output from the contstructor call.
-            if let Change::Create {
-                collection_id: _,
-                record_id,
-                record: _,
-            } = &change
-            {
-                output_record_id = record_id.clone();
-            }
+        // Output record
+        let output_record = json_to_record(&schema, output.instance, false)?;
 
-            // Check if we are updating collection schema
-            if let Change::Update {
-                collection_id,
-                record_id,
-                record,
-                ..
-            } = &change
-            {
-                if collection_id == "Collection" {
-                    if record_id == "Collection" {
-                        return Err(Error::CollectionCollectionRecordUpdate);
-                    }
+        // Get output ID
+        let output_instance_id = match output_record.get("id") {
+            Some(id) => id.clone(),
+            None => return Err(UserError::RecordIdNotFound)?,
+        };
 
-                    self.validate_schema_update(collection_id, record_id, record, auth.as_ref())
-                        .await?;
-                }
+        // Check output ID is a string
+        let RecordValue::String(output_instance_id) = output_instance_id else {
+            return Err(UserError::RecordIdNotString)?;
+        };
+
+        // Check if already exists
+        if let Ok(Some(_)) = self
+            .indexer
+            .get_without_auth_check(collection_id, &output_instance_id)
+            .await
+        {
+            if method.name == "constructor" {
+                return Err(UserError::CollectionIdExists)?;
             }
         }
 
-        Ok((output_record_id, output_records.into_iter().collect()))
+        // Check output args are same as input, otherwise something strange has happened,
+        // possibly someone messing around with the JS code
+        if extended_input_args.len() != output.args.len() {
+            return Err(Error::InvalidFunctionArgsResponse)?;
+        }
+
+        // TODO: check we can't modify records in other collections
+
+        // Validate schema change
+        // Update of schema
+        if collection_id == "Collection" {
+            // Check schema is valid
+            let new_schema = Schema::from_record(&output_record).map_err(|err| match err {
+                schema::Error::CollectionNotFoundInAST { name } => {
+                    Error::User(UserError::MissingDefinitionForCollection { name })
+                }
+                _ => Error::from(err),
+            })?;
+            new_schema.validate()?;
+
+            // Existing schema update, validate its allowed
+            if method.name != "constructor" {
+                let old_schema = self.indexer.get_schema_required(record_id).await?;
+                old_schema.validate_schema_change(new_schema)?;
+            }
+        }
+
+        // Find changes in the args
+        let mut changes: Vec<_> = futures::future::join_all(
+            extended_input_args
+                .into_iter()
+                .zip(output.args)
+                .zip(input_args)
+                .filter(|(_, value)| {
+                    matches!(
+                        value,
+                        RecordValue::ForeignRecordReference(_) | RecordValue::RecordReference(_)
+                    )
+                })
+                .filter(|((input, output), _)| input != output)
+                .map(|((_, output), value)| {
+                    let schema = std::sync::Arc::clone(&schema);
+                    async move {
+                        match value {
+                            RecordValue::ForeignRecordReference(ForeignRecordReference {
+                                id,
+                                collection_id,
+                            }) => {
+                                let schema =
+                                    self.indexer.get_schema_required(&collection_id).await?;
+                                Ok(IndexerChange::Set {
+                                    collection_id,
+                                    record_id: id,
+                                    record: json_to_record(&schema, output, false)?,
+                                })
+                            }
+                            RecordValue::RecordReference(RecordReference { id }) => {
+                                Ok(IndexerChange::Set {
+                                    collection_id: collection_id.to_string(),
+                                    record_id: id,
+                                    record: json_to_record(&schema, output, false)?,
+                                })
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                }),
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+
+        if output.self_destruct {
+            changes.push(IndexerChange::Delete {
+                collection_id: collection_id.to_string(),
+                record_id: output_instance_id.to_string(),
+            });
+        } else if method.name == "constructor" || output_record_changed {
+            // TODO: if we're creating a new collection, let's do more validation here!
+            changes.push(IndexerChange::Set {
+                collection_id: collection_id.to_string(),
+                record_id: output_instance_id.to_string(),
+                record: output_record,
+            });
+        };
+
+        Ok((output_instance_id.to_string(), changes))
     }
 
     #[tracing::instrument(skip(self))]
@@ -366,19 +580,50 @@ impl Db {
     #[tracing::instrument(skip(self))]
     pub async fn commit(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let txns = &manifest.txns;
-        let mut keys = vec![];
 
-        for txn in txns.iter() {
-            let call_txn = CallTxn::deserialize(&txn.data)?;
-            let hash: [u8; 32] = call_txn.hash()?;
-            match self.commit_txn(call_txn).await {
-                Ok(_) => {}
-                Err(err) => {
-                    return Err(err);
-                }
-            };
-            keys.push(hash);
-        }
+        // Convert txns into CallTxn
+        let call_txns = txns
+            .iter()
+            .map(|txn| {
+                let call_txn = CallTxn::deserialize(&txn.data)?;
+                Ok(call_txn)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Get a list of keys to remove from the mempool
+        let keys = call_txns
+            .iter()
+            .map(|call_txn| {
+                let hash: [u8; 32] = call_txn.hash()?;
+                Ok(hash)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        // Get a list of changes for the indexer
+        let mut changes = future::join_all(
+            call_txns
+                .iter()
+                .map(|txn| async move { Ok(self.call_changes(txn).await?.1) }),
+        )
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+        // Sort collection changes first
+        changes.sort_by_key(|item| {
+            if match item {
+                IndexerChange::Set { collection_id, .. } => collection_id,
+                IndexerChange::Delete { collection_id, .. } => collection_id,
+            } == "Collection"
+            {
+                0
+            } else {
+                1
+            }
+        });
 
         let height = manifest.height;
 
@@ -386,7 +631,7 @@ impl Db {
         self.set_manifest(manifest).await?;
 
         // Commit all txns
-        self.indexer.commit().await?;
+        self.indexer.commit(height, changes).await?;
 
         // Commit changes in mempool (releasing unused txns and removing used ones). This will
         // also release all requests that were waiting for these txns to be committed.
@@ -403,172 +648,69 @@ impl Db {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
-    pub async fn commit_txn(&self, txn: CallTxn) -> Result<()> {
-        let CallTxn {
-            collection_id,
-            function_name,
-            record_id,
-            args,
-            auth,
-        } = &txn;
-        // let output_record_id = record_id.clone();
-
-        // Get changes
-        let changes = self
-            .gateway
-            .call(
-                &self.indexer,
-                collection_id.clone(),
-                function_name,
-                record_id.clone(),
-                args.clone(),
-                auth.as_ref(),
-            )
-            .await?;
-
-        for change in changes {
-            let (collection_id, record_id) = change.get_path();
-            let key = get_key(collection_id, record_id);
-
-            // Insert into indexer
-            match change {
-                Change::Create {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(key, collection_id, record_id, record).await?,
-                Change::Update {
-                    record,
-                    collection_id,
-                    record_id,
-                } => self.set(key, collection_id, record_id, record).await?,
-                Change::Delete {
-                    record_id,
-                    collection_id,
-                } => self.delete(key, collection_id, record_id).await?,
-            };
-        }
-
-        Ok(())
-    }
-
     /// Reset all data in the database
-    pub fn reset(&self) -> Result<()> {
-        Ok(self.indexer.reset()?)
+    pub async fn reset(&self) -> Result<()> {
+        Ok(self.indexer.reset().await?)
     }
 
     /// Create a snapshot iterator, that can be used to iterate over the
     /// entire database in chunks
-    pub fn snapshot_iter(&self, chunk_size: usize) -> SnapshotIterator {
-        self.indexer.snapshot(chunk_size)
+    pub async fn snapshot_iter(
+        &self,
+        chunk_size: usize,
+    ) -> Pin<Box<dyn futures::Stream<Item = Result<Vec<SnapshotValue>>> + '_ + Send>> {
+        self.indexer
+            .snapshot(chunk_size)
+            .await
+            .map(|s| s.map_err(Error::from))
+            .boxed()
     }
 
-    pub fn restore_chunk(&self, chunk: SnapshotChunk) -> Result<()> {
-        self.indexer.restore(chunk)?;
-        Ok(())
+    pub async fn restore_chunk(&self, chunk: Vec<SnapshotValue>) -> Result<()> {
+        Ok(self.indexer.restore(chunk).await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn set_manifest(&self, manifest: proposal::ProposalManifest) -> Result<()> {
         let b = bincode::serialize(&manifest)?;
-        let value = indexer::RecordValue::Bytes(b);
-        let mut record = indexer::RecordRoot::new();
+        let value = RecordValue::Bytes(b);
+        let mut record = RecordRoot::new();
         record.insert("manifest".to_string(), value);
-        Ok(self
-            .indexer
-            .set_system_key("manifest".to_string(), &record)
-            .await?)
+        Ok(self.indexer.set_system_key("manifest", &record).await?)
     }
 
     #[tracing::instrument(skip(self))]
     pub async fn get_manifest(&self) -> Result<Option<proposal::ProposalManifest>> {
-        let record = self.indexer.get_system_key("manifest".to_string()).await?;
-        let value = match record.and_then(|mut r| r.remove("manifest")) {
-            Some(indexer::RecordValue::Bytes(b)) => b,
+        let record = self.indexer.get_system_key("manifest").await?;
+        let value = match record.and_then(|mut r: RecordRoot| r.remove("manifest")) {
+            Some(RecordValue::Bytes(b)) => b,
             _ => return Ok(None),
         };
         let manifest: proposal::ProposalManifest = bincode::deserialize(&value)?;
         Ok(Some(manifest))
     }
-
-    #[tracing::instrument(skip(self))]
-    pub async fn delete(
-        &self,
-        _: [u8; 32],
-        collection_id: String,
-        record_id: String,
-    ) -> Result<()> {
-        // Get the indexer collection instance
-        let collection = self.indexer.collection(collection_id.clone()).await?;
-
-        // Update the indexer
-        collection.delete(record_id.clone()).await?;
-
-        Ok(())
-    }
-
-    async fn set(
-        &self,
-        _: [u8; 32],
-        collection_id: String,
-        record_id: String,
-        record: RecordRoot,
-    ) -> Result<()> {
-        // Get the indexer collection instance
-        let collection = self.indexer.collection(collection_id.clone()).await?;
-
-        // Update the indexer
-        collection.set(record_id.clone(), &record).await?;
-
-        Ok(())
-    }
-
-    async fn validate_schema_update(
-        &self,
-        collection_id: &str,
-        record_id: &str,
-        record: &RecordRoot,
-        auth: Option<&indexer::AuthUser>,
-    ) -> Result<()> {
-        let collection = self.indexer.collection(collection_id.to_owned()).await?;
-
-        let old_record = collection
-            .get(record_id.to_owned(), auth)
-            .await
-            .map_err(indexer::IndexerError::from)?
-            .ok_or(Error::CollectionNotFound)?;
-
-        let old_ast = old_record.get("ast").ok_or(Error::CollectionASTNotFound)?;
-
-        let indexer::RecordValue::String(old_ast) = old_ast
-            else {
-                return Err(Error::CollectionASTInvalid("Collection AST in old record is not a string".into()));
-            };
-
-        let indexer::RecordValue::String(new_ast) = record
-                .get("ast")
-                .ok_or(Error::CollectionASTNotFound)? else {
-            return Err(Error::CollectionASTInvalid("Collection AST in new record is not a string".into()));
-        };
-
-        validate_schema_change(
-            #[allow(clippy::unwrap_used)] // split always returns at least one element
-            record_id.split('/').last().unwrap(),
-            serde_json::from_str(old_ast)?,
-            serde_json::from_str(new_ast)?,
-        )
-        .map_err(indexer::IndexerError::from)?;
-
-        validate_collection_record(record).map_err(indexer::IndexerError::from)?;
-
-        Ok(())
-    }
 }
 
-fn get_key(namespace: &String, id: &String) -> [u8; 32] {
+fn get_key(namespace: &str, id: &str) -> [u8; 32] {
     let b = [namespace.as_bytes(), id.as_bytes()].concat();
     hash::hash_bytes(b)
+}
+
+fn to_change_keys(changes: &[IndexerChange]) -> Vec<[u8; 32]> {
+    changes
+        .iter()
+        .map(|change| match change {
+            IndexerChange::Set {
+                collection_id,
+                record_id,
+                ..
+            } => get_key(collection_id, record_id),
+            IndexerChange::Delete {
+                collection_id,
+                record_id,
+            } => get_key(collection_id, record_id),
+        })
+        .collect()
 }
 
 async fn wait_for_update<F, Fut>(since: f64, wait_for: Duration, check_updated: F) -> Result<bool>

@@ -1,16 +1,15 @@
 use crate::snapshot::{SnapshotChunk, SnapshotIterator};
-use parking_lot::Mutex;
-use prost::Message;
-use rocksdb::WriteBatch;
-use std::collections::HashMap;
-use std::mem;
-use std::{convert::AsRef, path::Path, sync::Arc};
-
 use crate::{
     keys::{self, Key},
     proto,
-    record::RecordRoot,
 };
+use parking_lot::Mutex;
+use prost::Message;
+use rocksdb::WriteBatch;
+use schema::record::RecordRoot;
+use std::collections::HashMap;
+use std::mem;
+use std::{convert::AsRef, path::Path, sync::Arc};
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
@@ -33,6 +32,9 @@ pub enum StoreError {
 
     #[error("snapshot error")]
     SnapshotError(#[from] crate::snapshot::Error),
+
+    #[error("prost decode error")]
+    ProstDecode(#[from] prost::DecodeError),
 }
 
 #[derive(Debug)]
@@ -50,11 +52,13 @@ impl<'a> Value<'a> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Store {
     pub(crate) db: Arc<rocksdb::DB>,
     state: Arc<Mutex<StoreState>>,
 }
 
+#[derive(Debug)]
 enum StoreOp {
     Put(Vec<u8>),
     Delete,
@@ -229,7 +233,7 @@ pub(crate) mod tests {
         ops::{Deref, DerefMut},
     };
 
-    use crate::IndexValue;
+    use schema::{index::IndexDirection, index_value::IndexValue};
 
     use super::*;
 
@@ -275,8 +279,8 @@ pub(crate) mod tests {
 
         let index = Key::new_index(
             "ns".to_string(),
-            &[&["name"]],
-            &[keys::Direction::Ascending],
+            &[&"name".into()],
+            &[IndexDirection::Ascending],
             vec![Cow::Owned(IndexValue::String("John".to_string().into()))],
         )
         .unwrap();

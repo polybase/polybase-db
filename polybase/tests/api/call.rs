@@ -128,7 +128,7 @@ collection Account {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "function/invalid-args".to_string(),
-                message: "incorrect number of arguments, expected 1, got 0".to_string(),
+                message: "method constructor args invalid, expected 1 got 0".to_string(),
             }
         }
     );
@@ -143,7 +143,7 @@ collection Account {
             error: ErrorData {
                 code: "invalid-argument".to_string(),
                 reason: "function/invalid-args".to_string(),
-                message: "incorrect number of arguments, expected 2, got 3".to_string(),
+                message: "method constructor args invalid, expected 2 got 3".to_string(),
             }
         }
     );
