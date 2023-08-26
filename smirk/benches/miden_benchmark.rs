@@ -135,5 +135,39 @@ fn merge_1m_tree(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, merge_1k_tree, merge_1m_tree);
+fn merge_1m_1k_tree(c: &mut Criterion) {
+    let mut rng = ChaChaRng::from_seed([0; 32]);
+    let tree1 = tree_size_n(&mut rng, 10);
+    let tree2 = tree_size_n(&mut rng, 20);
+
+    let input = (tree1, tree2);
+
+    let id = BenchmarkId::new("merge_large_trees", 15);
+
+    c.bench_with_input(id, &input, |b, (tree1, tree2)| {
+        b.iter(|| merge_trees(tree1, tree2))
+    });
+}
+
+fn merge_1b_tree(c: &mut Criterion) {
+    let size = 30;
+
+    let mut rng = ChaChaRng::from_seed([0; 32]);
+    let tree1 = tree_size_n(&mut rng, size);
+    let tree2 = tree_size_n(&mut rng, size);
+
+    let input = (tree1, tree2);
+
+    let id = BenchmarkId::new("merge_large_trees", size);
+
+    c.bench_with_input(id, &input, |b, (tree1, tree2)| {
+        b.iter(|| merge_trees(tree1, tree2))
+    });
+}
+
+criterion_group! {
+    name = benches;
+    config = Criterion::default().sample_size(10);
+    targets = merge_1k_tree, merge_1m_tree, merge_1m_1k_tree, merge_1b_tree
+}
 criterion_main!(benches);
