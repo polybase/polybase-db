@@ -1,4 +1,4 @@
-use std::{backtrace::Backtrace, borrow::Borrow, fmt::Debug};
+use std::{borrow::Borrow, fmt::Debug};
 
 use super::Digest;
 
@@ -15,15 +15,6 @@ where
 
         for new_hash in iter {
             hash.merge(new_hash.borrow());
-        }
-
-        if format!("{hash}")
-            .contains("e54944d3c80d00cc318e861d5d56c76a2b1bf9e7638422c0ec636e48ae8b4c0f")
-        {
-            let bt = Backtrace::capture();
-            println!("{bt}");
-            println!("{vec:?}");
-            // panic!("uh oh");
         }
 
         hash

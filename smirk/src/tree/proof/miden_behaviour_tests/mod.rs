@@ -124,6 +124,28 @@ fn merge_hash() {
 }
 
 #[test]
+fn merge_3_hashes() {
+    let stack = [1, 2, 3]
+        .map(|i| i.hash().to_elements())
+        .into_iter()
+        .flatten()
+        .collect();
+
+    let program = program!("./merge_3_hashes.masm");
+    let stack = StackInputs::new(stack);
+    let advice = MemAdviceProvider::default();
+    let options = ProofOptions::default();
+
+    let (stack_outputs, _proof) = miden_prover::prove(&program, stack, advice, options).unwrap();
+
+    let expected_hash: Digest = [1.hash(), 2.hash()].iter().collect();
+    let mut expected_elements = expected_hash.to_elements();
+    expected_elements.reverse();
+
+    assert_eq!(&stack_outputs.stack_top()[0..4], expected_elements);
+}
+
+#[test]
 fn fibonacci() {
     fn fib(n: u64) -> u64 {
         match n {

@@ -1,0 +1,15 @@
+# Compute the hash of a node. 
+# This is intended to have identical semantics to the function with the same name in Rust
+#
+# Stack before: [A, B, C, ...]
+# Stack after : [D, ...]
+#
+# where:
+#  - `A` is the key-value hash of this node - it must not be null
+#  - `B` is the key-value hash of the left subtree (or `0` if the subtree is null)
+#  - `C` is the key-value hash of the right subtree (or `0` if the subtree is null)
+#  - `D` is output
+export.hash_left_right_this
+  hmerge
+  hmerge
+end

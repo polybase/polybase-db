@@ -94,7 +94,7 @@ static PROGRAM: OnceLock<Program> = OnceLock::new();
 fn get_program() -> &'static Program {
     PROGRAM.get_or_init(|| {
         Assembler::default()
-            .compile(include_str!("./compute_hash.masm"))
+            .compile(include_str!("./asm/compute_hash.masm"))
             .unwrap()
     })
 }

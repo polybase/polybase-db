@@ -34,3 +34,7 @@ rand_chacha = "0.3"
 [[bench]]
 name = "tree_benchmark"
 harness = false
+
+[[bench]]
+name = "miden_benchmark"
+harness = false

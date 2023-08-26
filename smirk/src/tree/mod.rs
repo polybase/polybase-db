@@ -19,6 +19,7 @@ mod proof;
 
 mod hash;
 pub use hash::key_value_hash;
+pub(crate) use hash::hash_left_right_this;
 
 #[cfg(test)]
 mod tests;

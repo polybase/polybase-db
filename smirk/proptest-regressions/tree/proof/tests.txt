@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1358b8b6a9b2c3e71c800dc98e76b7c0cf923fc1d37940c7f2bb80deb28fadee # shrinks to input = _AnyProofIsValidArgs { tree: MerkleTree { inner: None }, batch: Batch { operations: [] } }

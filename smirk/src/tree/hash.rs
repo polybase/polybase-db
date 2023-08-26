@@ -1,5 +1,3 @@
-use std::iter::once;
-
 use crate::{
     hash::{Digest, Hashable},
     MerkleTree, TreeNode,
@@ -77,13 +75,23 @@ pub fn key_value_hash<K: Hashable + ?Sized, V: Hashable + ?Sized>(key: &K, value
     [key.hash(), value.hash()].into_iter().collect()
 }
 
-/// Helper to  a
+/// Helper to compute the hash of a node. All hashes are the output of [`key_value_hash`]
+///
+/// Don't change this without also changing `hash_left_right_this.masl`, which needs to stay in
+/// sync with the semantics of this function. (There's a test to make sure you read this comment
+/// anyways 😈)
 pub(crate) fn hash_left_right_this(
-    this: Digest,
+    mut this: Digest,
     left: Option<Digest>,
     right: Option<Digest>,
 ) -> Digest {
-    once(this).chain(left).chain(right).collect()
+    let left = left.unwrap_or(Digest::NULL);
+    let right = right.unwrap_or(Digest::NULL);
+
+    this.merge(&left);
+    this.merge(&right);
+
+    this
 }
 
 #[cfg(test)]
