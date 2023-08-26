@@ -1,5 +1,5 @@
 # Build binary
-FROM rust:1-bookworm AS workspace
+FROM rust:1.71.0-bookworm AS workspace
 
 RUN rustup component add rustfmt && \
     apt update && apt install -y libglib2.0-dev libssl-dev libclang-dev python3 protobuf-compiler libprotobuf-dev
@@ -13,7 +13,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 ENV SYSROOT=/dummy
 
 WORKDIR /build
-
 
 
 # Plan the build
