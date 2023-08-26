@@ -140,6 +140,10 @@ fn eat_field(start: &[u8]) -> (&[u8], &[u8]) {
     }
 
     let field_len = u16::from_le_bytes([start[0], start[1]]);
+    if field_len as usize + 2 > start.len() {
+        return (&[], &[]);
+    }
+
     let field = &start[2..field_len as usize + 2];
     let rest = &start[field_len as usize + 2..];
 
