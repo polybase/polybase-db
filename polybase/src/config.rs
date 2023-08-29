@@ -77,7 +77,7 @@ pub struct Config {
     #[arg(long, env = "SNAPSHOT_CHUNK_SIZE", default_value = "4194304")]
     pub snapshot_chunk_size: usize,
 
-    /// Size of the chunks of data sent during snapshot load
+    /// Minimum duration of time (in ms), since the last commit, before attempting a new proposal
     #[arg(long, env = "MIN_BLOCK_DURATION", default_value = "500")]
     pub min_block_duration: u64,
 
