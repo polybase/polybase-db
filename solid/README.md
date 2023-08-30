@@ -86,6 +86,51 @@ The number of nodes should always be an odd number to prevent a deadlock situati
 
 ### The Solid State Machine
 
+```mermaid
+%% Note: This content is sourced from docs/solid.mmd. See the instructions in that file. Any modifications to the code
+%% must be done in that file, and the changes copied over here.
+stateDiagram-v2
+  state CheckStartState <<choice>>
+  state CheckProposalHeight <<choice>>
+  state CheckAcceptedByQuorum <<choice>>
+  state CheckHasPendingCommits <<choice>>
+
+  [*] --> CheckStartState: Starting state
+  CheckStartState --> Genesis: New node startup
+  CheckStartState --> WithLastConfirmedProposal: Has last confirmed proposal
+  Genesis --> NewRound
+  WithLastConfirmedProposal --> NewRound
+
+  NewRound --> Propose
+
+  state CheckDuplicateProposal <<choice>>
+  Propose --> CheckDuplicateProposal
+  CheckDuplicateProposal --> DuplicateProposal: proposal is duplicate
+  DuplicateProposal --> ResetTimeouts
+  ResetTimeouts --> SkipAndChooseNewLeader
+  SkipAndChooseNewLeader --> NewRound
+  CheckDuplicateProposal --> CheckProposalHeight: proposal is not duplicate
+  CheckProposalHeight --> OutOfDate: height >= proposal height
+  OutOfDate --> ResetTimeouts
+  CheckProposalHeight --> Accept: height < proposal height
+
+
+  Accept --> CheckAcceptedByQuorum
+  CheckAcceptedByQuorum --> ResetTimeouts: proposal not accepted by majority of validators 
+  CheckAcceptedByQuorum --> Commit: proposal accepted by majority of validators
+
+  Commit --> CheckHasPendingCommits
+  CheckHasPendingCommits --> OutOfSync: if has pending commits
+  OutOfSync --> SyncWithNetwork
+  SyncWithNetwork --> NewRound
+  CheckHasPendingCommits --> IncrementHeight: if no pending commits
+  IncrementHeight --> NewRound
+```
+
+#### State Transitions
+
+### Proposals
+
 #### Accepts
 
 Accepts are sent to the next designated leader in the following scenarios: 
@@ -100,6 +145,7 @@ Accepts are either for a proposal:
     - confirmed height + 1 (when a valid proposal is received)
     - confirmed height (when no valid pending proposals exist)
 
+### Commits
 
 ### Leader Election
 
@@ -110,7 +156,7 @@ Leader election is done for every proposal/accept round (accounting for timeouts
 
 ```
 
-So this is not a Round-Robin procedure, but rather depends on the number of current peers (which is fixed at start-up for now), and the number of skips (i.e, since the last confirmed proposal) thus far. 
+So this is **not** a Round-Robin procedure (as in some consensus protocols), but rather depends on the number of current peers (which is fixed at start-up for now), and the number of skips (i.e, since the last confirmed proposal) thus far. 
 
 
 ## Todo
