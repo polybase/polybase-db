@@ -258,6 +258,11 @@ mod test {
             peers: vec![p1.clone(), p2.clone(), p3.clone()],
         });
 
+        assert!(
+            !proposal.majority_accept_breached(&0),
+            "Should not be breached"
+        );
+
         proposal.add_accept(&0, p1);
 
         assert!(

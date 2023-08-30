@@ -18,8 +18,8 @@ construct_uint! {
 /// Keys in the DHT keyspace identify both the participating nodes, as well as
 /// the records stored in the DHT.
 ///
-/// `Key`s have an XOR metric as defined in the Kademlia paper, i.e. the bitwise XOR of
-/// the hash digests, interpreted as an integer. See [`Key::distance`].
+/// `Key`s have an XOR metric as defined in the [Kademlia paper](https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf),
+///  i.e. the bitwise XOR of the hash digests, interpreted as an integer. See [`Key::distance`].
 #[derive(Clone, Debug)]
 pub struct Key<T> {
     preimage: T,
