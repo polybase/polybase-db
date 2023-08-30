@@ -54,12 +54,17 @@ References for BFT protocols:
 
 ## Overview of Solid
 
-`Solid` is a BFT consensus protocol.
+`Solid` is a [BFT](#bft-consensus-protocols) consensus protocol.
+
+Note that Solid itself is agnostic of the specific nature of the networking and higher-level protocols built on top of it. For instance, the `Polybase` crate is a project that implements custom networking and higher-level state machine protocols that make use of
+Solid's own state machines, but in theory, any other networking and operational model could make use of Solid as a consensus protocol. In brief, Solid is not necessarily specific to `Polybase`.
 
 Solid minimizes network communication. `accept` messages are sent only to the next designated leader (many to one). Once a leader accumulates `accept` messages from a majority of nodes (including itself), 
 it will then propose a new `proposal` to the network (one to many).
 
 If the network detects that no proposal has been received from the network within a given timeout period, then the node will then send an `accept` to the next designated leader, with a `skip` of 1. This process is repeated until a valid proposal is sent from a node.
+
+This is how a typical network using Solid might look like:
 
 ![Consensus Protocol Overview](docs/consensus.png)
 
@@ -84,7 +89,7 @@ The number of nodes should always be an odd number to prevent a deadlock situati
   * Validators - all the nodes of the system that vote for a proposal to be accepted (so all the available, non-malicious nodes in the system).
 
 
-### The Solid State Machine
+### The Solid State Machine and Transitions
 
 ```mermaid
 %% Note: This content is sourced from docs/solid.mmd. See the instructions in that file. Any modifications to the code
@@ -127,11 +132,43 @@ stateDiagram-v2
   IncrementHeight --> NewRound
 ```
 
-#### State Transitions
+### Solid States (and Conditions)
 
-### Proposals
+Note that the actual states that a node can be in are:
 
-#### Accepts
+  * Propose
+  * Accept, and
+  * Commit
+
+In addition, we consider a number of other pseudo-states (basically, events):
+
+  * Out of Sync
+  * Out of Date
+  * Duplicate Proposal
+
+Also note that these states and conditions are applicable to each node of the network at different stages of operation meaning that the states are not specific to any particular node unless explicitly
+noted as such, and any particular node can be in any of the states ate different points in time.
+
+The Solid states in the state transition diagram shown above are explained in the following sections. 
+
+#### Propose
+
+Only the leader node (i.e., the single node amongst all the nodes which has been chosen for this round) can put forth a proposal.
+
+A  proposal has the following general structure:
+
+  * last_proposal_hash - the hash of the last proposal.
+  * skips - the number of changes of leader that have occurred since the last leadership change.
+  * height - the height of the proposal (meaning the number of blocks that have already been committed in the network).
+  * leader_id - the id of the proposer/leader (See also [Leader Election](#leader-election)).
+  * txns - the changes included in the proposal, and 
+  * peers - the list of peers on the network
+
+The `txns` field is generic - any higher-level protocol (i.e., any solution built on top of Solid) can specify its own transaction format and thereby propose arbitrarily complex payloads.
+
+If the leader node does not have any proposals, or if the leader fails to put forth the proposal before the timeout period, the round is skipped and a new round is started with *possibly* a new leader. See [Leader Election])#Leader election).
+
+#### Accept
 
 Accepts are sent to the next designated leader in the following scenarios: 
  
@@ -145,7 +182,23 @@ Accepts are either for a proposal:
     - confirmed height + 1 (when a valid proposal is received)
     - confirmed height (when no valid pending proposals exist)
 
-### Commits
+#### Commit
+
+In the commit state, the proposal gooes through a final round of validation - if the node has pending commits in its local store/register/cache, then the node is considered to be out of sync, and as such transitions to the [Out of Sync](#out-of-sync) state. If not,
+the commit is carried through and the `height` is incremented by 1 in preparation for the next round.
+
+#### Out of Sync
+
+This condition implies that the node's state is behind that of the network. As such, Solid will notify the higher-level protocol, which is then responsible for handling this conditions. For instance, `Polybase` will handle this condition
+by attempting to update the state of this node by accepting snapshots from other nodes in the network.
+
+#### Out of Date
+
+This condition implies that the proposal is out-of-date or invalid, and as such, Solid again delegates the handling of the proposal to the higher-level protocol. For instance, `Polybase` will log and discard the proposal.
+
+#### Duplicate Proposal
+
+This condition implies that the proposal has already been seen by the network, and as such, Solid will delegate the appropriate follow-up to the higher-level protocol. For instance, `Polybase` will log and discard the duplicate proposal.
 
 ### Leader Election
 
