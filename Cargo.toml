@@ -8,6 +8,7 @@ members = [
     "indexer",
     "indexer_rocksdb",
 ]
+resolver = "2"
 
 [profile.release]
 debug-assertions = true
