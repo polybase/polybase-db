@@ -1,4 +1,12 @@
-use crate::{hash::Hashable, MerkleTree};
+use miden_crypto::{Felt, FieldElement};
+
+use crate::{
+    hash::{Digest, Hashable},
+    tree::proof::batch_hash::debug_batch_hash,
+    MerkleTree,
+};
+
+use super::proof::batch_hash::{prove_batch_hash, BatchHashProof};
 
 /// An operation that represents an update to the tree
 #[derive(Debug, Clone, Copy)]
@@ -16,6 +24,50 @@ impl<K, V> Operation<K, V> {
             Operation::Insert(key, ..) => key,
         }
     }
+
+    pub(crate) fn hash_triple(&self) -> [Digest; 3]
+    where
+        K: Hashable,
+        V: Hashable,
+    {
+        const INSERT_DISCRIMMINANT: Digest = make_discrimminant(1);
+
+        // as we add more variants, they should all follow this pattern
+        // it's actually cheaper to just calculate the hash in miden than to have a branch, even
+        // if we don't need the value hash
+        match self {
+            Self::Insert(k, v) => [INSERT_DISCRIMMINANT, k.hash(), v.hash()],
+        }
+    }
+}
+
+/// little helper to make things fit on one line
+const fn make_discrimminant(i: u64) -> Digest {
+    #[allow(clippy::manual_assert)]
+    if i == 0 {
+        panic!("this is too easy to confuse with `Digest::NULL`");
+    }
+
+    let mut elements = [Felt::ZERO; 4];
+    elements[3] = Felt::new(i);
+    Digest::from_elements_const(elements)
+}
+
+impl<K, V> Hashable for Operation<K, V>
+where
+    K: Hashable,
+    V: Hashable,
+{
+    fn hash(&self) -> Digest {
+        // we don't use the FromIter impl here because it saves perf in miden
+        // each FromIter call merges the first hash into [`Digest::NULL`], which is an extra hash
+        // merge we don't need here
+        //
+        // this MUST stay consistent with the hashing format in the miden asm, otherwise we'll get
+        // different results
+        let [a, b, c] = self.hash_triple();
+        a.merged_with(b.merged_with(c))
+    }
 }
 
 /// A batch of operations that can be applied to a [`MerkleTree`]
@@ -23,6 +75,7 @@ impl<K, V> Operation<K, V> {
 /// If there are multiple operations
 #[derive(Debug, Clone)]
 pub struct Batch<K, V> {
+    // these must remain sorted at all times
     operations: Vec<Operation<K, V>>,
 }
 
@@ -58,6 +111,51 @@ where
     }
 }
 
+impl<K, V> Hashable for Batch<K, V>
+where
+    K: Hashable + Ord,
+    V: Hashable,
+{
+    fn hash(&self) -> Digest {
+        self.operations.iter().map(Hashable::hash).collect()
+    }
+}
+
+impl<K, V> Batch<K, V>
+where
+    K: Hashable + Ord,
+    V: Hashable,
+{
+    /// Calculate the hash of a given [`Batch`], and generate a proof that this hash is correct
+    /// ```rust
+    /// # use smirk::tree::Batch;
+    /// let batch: Batch = todo!();
+    /// let proof = batch.hash_and_prove();
+    ///
+    /// assert_eq!(proof.hash(), batch.hash());
+    /// assert!(proof.verify().is_ok());
+    /// ```
+    #[must_use]
+    pub fn hash_and_prove(&self) -> BatchHashProof {
+        let hash = self.hash();
+        let proof = prove_batch_hash(self);
+
+        #[cfg(debug_assertions)]
+        {
+            if hash != proof.hash() {
+                debug_batch_hash(self);
+            }
+        }
+
+        assert_eq!(
+            hash,
+            proof.hash(),
+            "if these are different, something is very wrong"
+        );
+        proof
+    }
+}
+
 impl<K, V> MerkleTree<K, V>
 where
     K: Hashable + Ord,
@@ -78,12 +176,13 @@ where
 }
 
 #[cfg(any(test, feature = "proptest"))]
-mod pt_impls {
+pub mod proptest {
     use std::fmt::Debug;
 
     use proptest::{
         arbitrary::StrategyFor,
         prelude::{any, Arbitrary},
+        sample::SizeRange,
         strategy::{Map, Strategy},
     };
 
@@ -100,6 +199,14 @@ mod pt_impls {
         fn arbitrary_with((): Self::Parameters) -> Self::Strategy {
             any::<Vec<Operation<K, V>>>().prop_map(Batch::from_operations)
         }
+    }
+
+    pub fn batch<K, V>(len: impl Into<SizeRange>) -> impl Strategy<Value = Batch<K, V>>
+    where
+        K: Debug + Arbitrary + Ord,
+        V: Debug + Arbitrary,
+    {
+        proptest::collection::vec(any::<Operation<K, V>>(), len).prop_map(Batch::from_operations)
     }
 
     impl<K, V> Arbitrary for Operation<K, V>

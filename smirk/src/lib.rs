@@ -18,5 +18,8 @@ pub mod storage;
 mod tree;
 pub use tree::{batch, key_value_hash, visitor::Visitor, MerkleTree, TreeNode};
 
+/// A tree with the traditional structure
+mod tree2;
+
 #[cfg(test)]
 mod testing;

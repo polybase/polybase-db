@@ -1,0 +1,9 @@
+begin 
+  repeat.100
+    push.0
+  end
+
+  repeat.100
+    drop
+  end
+end

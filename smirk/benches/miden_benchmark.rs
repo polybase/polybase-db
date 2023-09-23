@@ -75,9 +75,14 @@ fn tree_size_n(rng: &mut impl Rng, n: usize) -> Tree {
 }
 
 fn random_hash(rng: &mut impl Rng) -> Digest {
-    let mut bytes = [0; 32];
-    rng.fill_bytes(&mut bytes);
-    Digest::calculate(&bytes)
+    loop {
+        let mut bytes = [0; 32];
+        rng.fill_bytes(&mut bytes);
+        match Digest::from_bytes(bytes) {
+            Some(digest) => return digest,
+            None => continue,
+        }
+    }
 }
 
 fn merge_trees(tree1: &Tree, tree2: &Tree) {
@@ -103,71 +108,37 @@ fn merge_trees(tree1: &Tree, tree2: &Tree) {
     black_box(proof);
 }
 
-fn merge_1k_tree(c: &mut Criterion) {
-    let size = 10;
+macro_rules! tree_merge_bench {
+    ($size1:literal, $size2:literal, $name:ident) => {
+        fn $name(c: &mut Criterion) {
+            let mut rng = ChaChaRng::from_seed([0; 32]);
+            let tree1 = tree_size_n(&mut rng, $size1);
+            let tree2 = tree_size_n(&mut rng, $size2);
+            println!("trees done");
 
-    let mut rng = ChaChaRng::from_seed([0; 32]);
-    let tree1 = tree_size_n(&mut rng, size);
-    let tree2 = tree_size_n(&mut rng, size);
+            let input = (tree1, tree2);
 
-    let input = (tree1, tree2);
+            let id = BenchmarkId::new("merge_trees", stringify!($name));
 
-    let id = BenchmarkId::new("merge_large_trees", size);
-
-    c.bench_with_input(id, &input, |b, (tree1, tree2)| {
-        b.iter(|| merge_trees(tree1, tree2))
-    });
+            c.bench_with_input(id, &input, |b, (tree1, tree2)| {
+                b.iter(|| merge_trees(tree1, tree2))
+            });
+        }
+    };
 }
 
-fn merge_1m_tree(c: &mut Criterion) {
-    let size = 20;
-
-    let mut rng = ChaChaRng::from_seed([0; 32]);
-    let tree1 = tree_size_n(&mut rng, size);
-    let tree2 = tree_size_n(&mut rng, size);
-
-    let input = (tree1, tree2);
-
-    let id = BenchmarkId::new("merge_large_trees", size);
-
-    c.bench_with_input(id, &input, |b, (tree1, tree2)| {
-        b.iter(|| merge_trees(tree1, tree2))
-    });
-}
-
-fn merge_1m_1k_tree(c: &mut Criterion) {
-    let mut rng = ChaChaRng::from_seed([0; 32]);
-    let tree1 = tree_size_n(&mut rng, 10);
-    let tree2 = tree_size_n(&mut rng, 20);
-
-    let input = (tree1, tree2);
-
-    let id = BenchmarkId::new("merge_large_trees", 15);
-
-    c.bench_with_input(id, &input, |b, (tree1, tree2)| {
-        b.iter(|| merge_trees(tree1, tree2))
-    });
-}
-
-fn merge_1b_tree(c: &mut Criterion) {
-    let size = 30;
-
-    let mut rng = ChaChaRng::from_seed([0; 32]);
-    let tree1 = tree_size_n(&mut rng, size);
-    let tree2 = tree_size_n(&mut rng, size);
-
-    let input = (tree1, tree2);
-
-    let id = BenchmarkId::new("merge_large_trees", size);
-
-    c.bench_with_input(id, &input, |b, (tree1, tree2)| {
-        b.iter(|| merge_trees(tree1, tree2))
-    });
-}
+tree_merge_bench!(10, 10, merge_1k_trees);
+tree_merge_bench!(20, 20, merge_1m_trees);
+tree_merge_bench!(10, 20, merge_1k_1m_trees);
+tree_merge_bench!(10, 27, merge_1k_100m_trees);
 
 criterion_group! {
     name = benches;
     config = Criterion::default().sample_size(10);
-    targets = merge_1k_tree, merge_1m_tree, merge_1m_1k_tree, merge_1b_tree
+    targets =
+        merge_1k_trees,
+        merge_1m_trees,
+        merge_1k_1m_trees,
+        merge_1k_100m_trees,
 }
 criterion_main!(benches);

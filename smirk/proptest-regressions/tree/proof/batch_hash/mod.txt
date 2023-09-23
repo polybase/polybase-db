@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1ea9814ae80261aef52d56e1541e0553dff76eeca47d39811154541914f6f000 # shrinks to input = _AnyBatchCanProveItselfArgs { batch: Batch { operations: [Insert(-1795858818, "\u{11d3d}🃴"), Insert(-1202928968, "�$\"𑤉Iz>&=&𐴜V'@û\u{1d242}<4𝼛\u{731}𑌐?K𐆖Ⱥ𝼙\\￤"), Insert(-843516537, "\u{c4a}6?(*ృ.⵰တ4")] } }

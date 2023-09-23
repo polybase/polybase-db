@@ -5288,6 +5288,7 @@ dependencies = [
  "test-strategy",
  "thiserror",
  "traversal",
+ "unarray",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@
 //! Leaving them here in case they're helpful to future contributors
 
 use miden_assembly::Assembler;
-use miden_crypto::Felt;
+use miden_crypto::{Felt, FieldElement};
 use miden_prover::{AdviceInputs, MemAdviceProvider, ProofOptions, StackInputs};
 
 use crate::hash::{Digest, Hashable};
@@ -62,6 +62,26 @@ fn reading_advice_stack() {
     assert_eq!(stack_outputs.stack_truncated(3), &[3, 2, 1]);
 }
 
+// When pushing multiple words, the first word popped is the first word put into the stack
+// But the elements are in reverse order
+#[test]
+fn reading_advice_stack_single_word() {
+    let to_word = |i| [Felt::ZERO, Felt::ZERO, Felt::ZERO, Felt::new(i)];
+    let words = (1..=5).map(to_word);
+    let advice = AdviceInputs::default().with_stack(words.flatten());
+
+    let program = Assembler::default().compile("begin adv_loadw end").unwrap();
+    let stack = StackInputs::default();
+    let advice = MemAdviceProvider::from(advice);
+    let options = ProofOptions::default();
+
+    let (stack_outputs, _proof) = miden_prover::prove(&program, stack, advice, options).unwrap();
+
+    let mut expected = to_word(1);
+    expected.reverse();
+    assert_eq!(stack_outputs.stack_top()[0..4], expected);
+}
+
 /// Calling `adv_push.1` 3x in a row does the same thing as `adv_push.3`
 #[test]
 fn popping_advice_stack_one_by_one_is_same_as_one_big_pop() {
@@ -102,25 +122,85 @@ fn reading_advice_map() {
     assert_eq!(stack_outputs.stack_truncated(4), &[4, 3, 2, 1]);
 }
 
+/// If it's important that we get elements back in the same format we send them, we should use
+/// `stack_top()`
 #[test]
-fn merge_hash() {
-    let stack = [1.hash().to_elements(), 2.hash().to_elements()]
-        .into_iter()
-        .flatten()
-        .collect();
+fn hash_round_trip() {
+    let stack_elements = 1.hash().to_elements();
 
-    let program = program!("./merge_hash.masm");
-    let stack = StackInputs::new(stack);
+    let program = Assembler::default().compile("begin end").unwrap();
+    let stack = StackInputs::new(stack_elements.to_vec());
     let advice = MemAdviceProvider::default();
     let options = ProofOptions::default();
 
     let (stack_outputs, _proof) = miden_prover::prove(&program, stack, advice, options).unwrap();
 
-    let expected_hash: Digest = [1.hash(), 2.hash()].iter().collect();
-    let mut expected_elements = expected_hash.to_elements();
-    expected_elements.reverse();
+    let elements: Vec<_> = stack_outputs.stack_top()[0..4]
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let hash_again = Digest::from_elements(elements.try_into().unwrap());
 
-    assert_eq!(&stack_outputs.stack_top()[0..4], expected_elements);
+    assert_eq!(hash_again, 1.hash());
+}
+
+#[test]
+fn merge_hash() {
+    let stack = [1.hash().to_elements(), 2.hash().to_elements()]
+        .map(|mut array| {
+            array.reverse();
+            array
+        })
+        .into_iter()
+        .flatten()
+        .collect();
+
+    println!("{stack:?}");
+
+    let program = program!("./merge_hash.masm");
+    let stack = StackInputs::new(stack);
+    let advice = MemAdviceProvider::default();
+
+    let iter = miden_processor::execute_iter(&program, stack, advice);
+
+    for state in iter {
+        let state = state.unwrap().stack;
+        println!("{state:?}");
+    }
+
+    // let (stack_outputs, _proof) = miden_prover::prove(&program, stack, advice, options).unwrap();
+    //
+
+    let rev = |value: i32| Digest::from_elements(value.hash().to_elements_rev());
+
+    let expected_hash: Digest = [2.hash(), 1.hash()].iter().collect();
+    let expected_hash2: Digest = [1.hash(), 2.hash()].iter().collect();
+    let expected_hash3: Digest = [rev(2), rev(1)].iter().collect();
+    let expected_hash4: Digest = [rev(1), rev(2)].iter().collect();
+
+    dbg!(
+        expected_hash.to_elements(),
+        expected_hash2.to_elements(),
+        expected_hash3.to_elements(),
+        expected_hash4.to_elements(),
+    );
+
+    panic!(
+        "{:?}\n{:?}\n{:?}\n{:?}",
+        expected_hash.to_elements(),
+        expected_hash2.to_elements(),
+        1.hash().to_elements(),
+        2.hash().to_elements()
+    );
+    // // let mut actual_hash = stack_outputs.stack_top()[0..4].to_vec();
+    // // actual_hash.reverse();
+    // // let actual_hash = Digest::from_elements(actual_hash.try_into().unwrap());
+    //
+    // assert_eq!(
+    //     stack_outputs.stack_top()[0..4].to_vec(),
+    //     expected_hash.to_elements().to_vec()
+    // );
 }
 
 #[test]
@@ -143,6 +223,44 @@ fn merge_3_hashes() {
     expected_elements.reverse();
 
     assert_eq!(&stack_outputs.stack_top()[0..4], expected_elements);
+}
+
+#[test]
+fn reading_advice_stack_by_word() {
+    let adv_stack = [1, 1, 1, 0, 2, 2, 2, 0, 3, 3, 3, 0]
+        .map(Felt::new)
+        .into_iter();
+    let advice = AdviceInputs::default().with_stack(adv_stack);
+
+    let program = program!("./reading_adv_stack_by_word.masm");
+    let stack = StackInputs::default();
+    let advice = MemAdviceProvider::from(advice);
+    let options = ProofOptions::default();
+
+    let (stack_outputs, _proof) = miden_prover::prove(&program, stack, advice, options).unwrap();
+
+    let expected = [1, 1, 1, 0, 2, 2, 2, 0, 3, 3, 3, 0];
+
+    assert_eq!(stack_outputs.stack_truncated(12), expected);
+}
+
+#[test]
+fn stack_is_deeper_than_16() {
+    let stack = [1, 1, 1, 0, 2, 2, 2, 0, 3, 3, 3, 0]
+        .map(Felt::new)
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let program = program!("./stack_is_deeper_than_16.masm");
+    let stack = StackInputs::new(stack.clone());
+    let advice = MemAdviceProvider::from(AdviceInputs::default());
+    let options = ProofOptions::default();
+
+    let (stack_outputs, _proof) = miden_prover::prove(&program, stack, advice, options).unwrap();
+
+    let expected = [0, 3, 3, 3, 0, 2, 2, 2, 0, 1, 1, 1];
+
+    assert_eq!(stack_outputs.stack_truncated(12), expected);
 }
 
 #[test]

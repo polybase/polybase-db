@@ -1,0 +1,64 @@
+# simple proc that pushes 0 if the top is 0, 1 otherwise
+# lets us work with loop counters a bit easier
+#
+# stack before: [n, ...]
+# stack after:  [{1 | 0}, n, ...] 
+proc.gt0
+  dup
+  push.0
+  gt
+end
+
+# load 3 hashes from advice and merge them
+#
+# stack before: [...]
+# stack after:  [NEW_HASH, ..]
+proc.get_next_op_hash
+  padw adv_loadw  # stack: [A, ...]
+  padw adv_loadw  # stack: [B, A, ...]
+  padw adv_loadw  # stack: [C, B, A, ...]
+
+  # stack: [C, B, A]
+
+  # merge c -> b = (cb)
+  hmerge
+  
+  # merge (cb) -> a = (cba)
+  hmerge
+
+  # stack: [CBA, ...]
+end 
+
+# stack: [n, 0, 0, 0]
+begin 
+
+  exec.gt0
+  # stack: [{1 | 0}, n, 0, 0, 0, H]
+
+  while.true
+    # stack: [n, 0, 0, 0, H]
+    
+    swapw
+    # stack: [H, n, 0, 0, 0]
+    
+    exec.get_next_op_hash
+    # stack: [H_2, H, n, 0, 0, 0]
+    
+    hmerge
+    # stack: [H_3, n, 0, 0, 0]
+
+    swapw
+    # stack: [n, 0, 0, 0, H_3]
+    
+    sub.1
+    # stack: [n - 1, 0, 0, 0, H_3]
+
+    exec.gt0
+    # stack: [{1 | 0}, n - 1, 0, 0, 0, H_3]
+
+  end
+
+  # stack: [n, 0, 0, 0, H] (n = 0)
+  dropw
+
+end

@@ -11,8 +11,11 @@ use crate::{
     MerkleTree,
 };
 
+pub mod batch_hash;
+
 mod advice;
 mod stack;
+mod utils;
 
 #[cfg(test)]
 mod tests;

@@ -110,11 +110,25 @@ impl Digest {
         self.0 = Rpo256::merge(&[self.0, other.0]);
     }
 
+    /// Return the result of `other` merged into `self`
+    #[inline]
+    #[must_use]
+    pub fn merged_with(self, other: Digest) -> Self {
+        Rpo256::merge(&[self.0, other.0]).into()
+    }
+
     /// Construct a [`Digest`] from the field elements of the underlying RPO hash
     #[inline]
     #[must_use]
     pub fn from_elements(elements: [Felt; 4]) -> Self {
-        Self(RpoDigest::from(elements))
+        Self(RpoDigest::new(elements))
+    }
+
+    /// not sure we want to make this const publicly yet - keep private for now
+    #[inline]
+    #[must_use]
+    pub(crate) const fn from_elements_const(elements: [Felt; 4]) -> Self {
+        Self(RpoDigest::new(elements))
     }
 
     /// Return the field elements that make up this [`Digest`]
@@ -122,6 +136,15 @@ impl Digest {
     #[must_use]
     pub fn to_elements(self) -> [Felt; 4] {
         self.0.as_elements().try_into().unwrap()
+    }
+
+    /// Return the field elements that make up this [`Digest`] in reverse order
+    #[inline]
+    #[must_use]
+    pub fn to_elements_rev(self) -> [Felt; 4] {
+        let mut arr = self.to_elements();
+        arr.reverse();
+        arr
     }
 
     /// Utility for seeing what's wrong with hash stuff

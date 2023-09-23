@@ -7,14 +7,13 @@ where
     H: Borrow<Digest> + Debug,
 {
     fn from_iter<T: IntoIterator<Item = H>>(iter: T) -> Self {
-        let vec: Vec<_> = iter.into_iter().collect();
-        let mut iter = vec.iter();
+        // we actually don't want to do an optimization for the len = 1 case, since that's slower
+        // in miden
+        
+        let mut hash = Digest::NULL;
 
-        let Some(hash) = iter.next() else { return Digest::NULL };
-        let mut hash = *hash.borrow();
-
-        for new_hash in iter {
-            hash.merge(new_hash.borrow());
+        for h in iter {
+            hash.merge(h.borrow());
         }
 
         hash
