@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e75e29c4c3077051824c72c2bb11babe9e4ed2f3eb780a903db22e40bc9a7573 # shrinks to input = _CalculatedRootHashIsCorrectArgs { tree: Tree { tree: Empty { depth: 64 }, elements: {} }, element: Element(0x0000000000000000000000000000000000000000000000000000000000000000) }
+cc 725b06119ed5661b0c54c93cc938bd098fa21945b5c67c95b93205a4b103e1dd # shrinks to input = _CalculatedRootHashIsCorrectArgs { tree: Tree { tree: Empty { depth: 64 }, elements: {} }, element: Element(0x0000000000000000000000000000000000000000000000000000000000000000) }
+cc 7499fc2212b6c74b39fc686918f8841e6e31c6230ad4514a42fcfaee0cc597ae # shrinks to input = _CalculatedRootHashIsCorrectArgs { tree: Tree { tree: Empty { depth: 64 }, elements: {} }, element: Element(0x0000000000000000000000000000000000000000000000000000000000000000) }

@@ -121,7 +121,11 @@ impl RocksDBAdaptor {
         let schema = self.get_schema(collection_id).await?.unwrap();
 
         // Select the best index for the query
-        let Some(index) = schema.indexes.iter().find(|index| where_query.matches(index, order_by)) else {
+        let Some(index) = schema
+            .indexes
+            .iter()
+            .find(|index| where_query.matches(index, order_by))
+        else {
             // This should never be called, as we also do a check in the calling indexer
             return Err(Error::NoIndexFoundMatchingTheQuery)?;
         };
@@ -435,7 +439,7 @@ impl RocksDBAdaptor {
 
         let now = SystemTime::now();
         self.update_metadata(collection_id, &now).await?;
-        self.update_record_metadata(collection_id, record_id.clone(), &now)
+        self.update_record_metadata(collection_id, record_id, &now)
             .await?;
 
         self.delete_indexes(collection_id, record_id, &record, schema)
