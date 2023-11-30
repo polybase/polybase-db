@@ -58,7 +58,7 @@ async fn main() {
                         // Simulate delay
                         tokio::time::sleep(Duration::from_secs(1)).await;
 
-                        // Create the proposl manfiest
+                        // Create the proposal manifest
                         let manifest = ProposalManifest {
                             last_proposal_hash,
                             skips,

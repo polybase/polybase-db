@@ -530,7 +530,7 @@ async fn main() -> Result<()> {
                                 }
                             };
 
-                            // Create the proposl manfiest
+                            // Create the proposal manifest
                             let manifest = ProposalManifest {
                                 last_proposal_hash,
                                 skips,
