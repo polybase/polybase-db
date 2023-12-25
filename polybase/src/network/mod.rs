@@ -135,8 +135,8 @@ impl Network {
                                         }
                                         match swarm.behaviour_mut().rr.send_response(channel, protocol::Response) {
                                             Ok(_) => {},
-                                            Err(_) => {
-                                                error!(peer_id = ?peer,  "Failed to send response");
+                                            Err(err) => {
+                                                error!(peer_id = ?peer,  "Failed to send response: {:?}", err);
                                             }
                                         }
                                 }
