@@ -46,3 +46,61 @@ extraEnvVars:
      value: "/dns/polybase-rust-0.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-1.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001,/dns/polybase-rust-2.polybase-rust-headless.polybase.svc.cluster.local/tcp/5001"
    - name: MIGRATION_BATCH_SIZE
      value: "2000"
+
+deployments:
+- name: gateway
+  labels: 
+    app: polybase
+  replicaCount: 4
+  command: run 
+  imagePullPolicy: Always
+  podSecurityContext: false
+  livenessProbe:
+    enabled: false
+  readinessProbe:
+    enabled: false
+  startupProbe:
+    enabled: false
+  containerPorts:
+    public_api: 80
+    p2p: 8080
+  cloudsql:
+    usePrivateIP: true
+    project: prenet
+    region: us-central1
+    db_instance: polybase 
+    image: sql_proxy
+    tag: 1.0.0
+- name: indexer
+  labels: 
+    app: polybase
+  replicaCount: 16
+  command: run 
+  imagePullPolicy: Always
+  podSecurityContext: false
+  livenessProbe:
+    enabled: false
+  readinessProbe:
+    enabled: false
+  startupProbe:
+    enabled: false
+  containerPorts:
+    public_api: 80
+    p2p: 8080
+- name: prover
+  labels: 
+    app: polybase
+  replicaCount: 5
+  command: run 
+  imagePullPolicy: Always
+  podSecurityContext: false
+  livenessProbe:
+    enabled: false
+  readinessProbe:
+    enabled: false
+  startupProbe:
+    enabled: false
+  containerPorts:
+    public_api: 80
+    p2p: 8080
+
